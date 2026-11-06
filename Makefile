@@ -25,8 +25,8 @@ data:  ## 离线重建数据（用本地已缓存的官方 xlsx，不联网）
 fetch:  ## 在线抓取数据并生成快照 + manifest
 	$(PY) scripts/fetch_data.py
 
-quality:  ## 数据质量报告（缺日/跳变/重叠/期限覆盖）
-	$(PY) -m ficc.data.quality --config config/config.yaml
+quality:  ## 数据质量报告（缺日/跳变/重叠/期限覆盖 + 可疑跳变清单）
+	$(PY) -m ficc.data.quality --config config/config.yaml --suspect-report
 
 backfill:  ## 回补 2Y 期限点（2016-01-04~2019-01-25，可选）
 	$(PY) scripts/backfill_2y.py --throttle 0.3

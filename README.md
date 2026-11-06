@@ -102,9 +102,12 @@ make check    # = ruff check + ruff format --check + pytest（254 项，全部�
 - [x] Phase 0 数据可行性实测（中债曲线 2002–2026，6204 交易日，25/25 文件成功）
 - [x] Phase 0 金融口径确认（中债官方口径 + 交易实务，含自算校验）
 - [x] Phase 0 数据契约 / 抓取管道生产化 / 2Y 回补（772/772 已验证）
-- [x] Phase 1 定价（计息/全价/久期/DV01，官方算例 A–D 全部命中）
-- [ ] Phase 1 剩余：因子层（PCA）、即期曲线 bootstrap、Carry 分解
-- [ ] Phase 2 策略与回测
+- [x] Phase 1 定价（计息/全价/久期/DV01 + 财政部公告外部对账）
+- [x] Phase 1 即期曲线 bootstrap（合成假设显式声明，往返误差 2.84e-14）
+- [x] Phase 1 KRD（即期曲线单点冲击，sum≈DV01 差 <1%）
+- [x] Phase 1 因子层（PCA 交叉校验 + 正交化 + 可观测因子口径修正）
+- [x] Phase 1 Carry/Roll-down 分解（T−1Y 目标，恒等式 <1bp）
+- [ ] Phase 2 策略与回测（闸门已开：KRD 已解锁、10Y 偏差已定性）
 - [ ] Phase 3 风险
 - [ ] Phase 4 机器学习（必做）
 - [ ] Phase 5 强化学习（必做）

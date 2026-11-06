@@ -16,6 +16,8 @@
 >>> report = run_quality_checks(curve_long, jump_threshold_bp=20.0)
 >>> report.print_report()                     # 打印所有表格
 >>> report.jumps.head()                       # 跳变明细 DataFrame
+>>> suspects = detect_suspect_dates(curve_long)   # 横截面不一致可疑点（只标记不剔除）
+>>> suspects.head()
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -309,6 +311,365 @@ def _match_grid(tenors: np.ndarray, grid: Sequence[float]) -> tuple[np.ndarray, 
 
 
 # ---------------------------------------------------------------------------
+# 横截面一致性：可疑跳变点标记（只标记、不剔除、不改原始数据）
+# ---------------------------------------------------------------------------
+SUSPECT_COLUMNS: tuple[str, ...] = (
+    "date",
+    "tenor",
+    "term_label",
+    "kind",
+    "prev_value",
+    "value",
+    "next_value",
+    "delta_bp",
+    "median_cross_delta_bp",
+    "roundtrip_bp",
+    "severity",
+)
+SUSPECT_KINDS: tuple[str, ...] = (
+    "idiosyncratic_spike",
+    "reversal",
+    "level_outlier",
+)
+_SEVERITY_RANK: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+
+
+def _panel_from_long(long_df: pd.DataFrame) -> pd.DataFrame:
+    """长表 → 宽表面板（index=交易日，columns=期限，values=收益率%）。"""
+    work = long_df.loc[:, ["date", "tenor", "ytm_pct"]].copy()
+    work["date"] = pd.to_datetime(work["date"], errors="raise")
+    work["tenor"] = pd.to_numeric(work["tenor"], errors="raise")
+    work["ytm_pct"] = pd.to_numeric(work["ytm_pct"], errors="raise")
+    work = work.drop_duplicates(subset=["date", "tenor"], keep="last")
+    panel = work.pivot_table(
+        index="date", columns="tenor", values="ytm_pct", aggfunc="last"
+    ).sort_index()
+    panel.columns = pd.Index([float(t) for t in panel.columns], name="tenor")
+    return panel
+
+
+def _cross_median_other(panel_delta: pd.DataFrame) -> pd.DataFrame:
+    """每个期限的「同日其他期限日变动中位数」（bp），用于横截面一致性判据。"""
+    other = pd.DataFrame(np.nan, index=panel_delta.index, columns=panel_delta.columns, dtype=float)
+    if panel_delta.shape[1] < 3:
+        # 少于 3 个期限时无法定义横截面中位数（至少需要 2 个"其他期限"）
+        return other
+    for tenor in panel_delta.columns:
+        others = panel_delta.drop(columns=tenor)
+        other[tenor] = others.median(axis=1, skipna=True)
+    return other
+
+
+def _suspect_severity(
+    kind: str,
+    delta_bp: float,
+    roundtrip_bp: float,
+) -> str:
+    """可疑点严重度：按单日幅度 / 往返幅度分档。"""
+    if kind == "level_outlier":
+        return "high"
+    magnitude = abs(float(delta_bp)) if pd.notna(delta_bp) else 0.0
+    trip = float(roundtrip_bp) if pd.notna(roundtrip_bp) else 0.0
+    if magnitude >= 200.0 or trip >= 300.0:
+        return "high"
+    if magnitude >= 100.0 or trip >= 150.0:
+        return "medium"
+    return "low"
+
+
+def detect_suspect_dates(
+    long_df: pd.DataFrame,
+    *,
+    cfg: Any | None = None,
+    spike_bp: float = 50.0,
+    cross_median_bp: float = 10.0,
+    reversal_bp: float = 40.0,
+    level_min: float = 0.2,
+    level_max: float = 12.0,
+    level_bounds: Mapping[float, tuple[float, float]] | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> pd.DataFrame:
+    """标记**横截面不一致**的可疑跳变点（纯函数，无网络，可复现）。
+
+    背景
+    ----
+    中债官方年度文件在 2002–2005 存在"单日跳出去、随后立即跳回"的异常点
+    （例如 2002-04-26 的 30Y 10.5366% → 2.7586%；2004-08-18 短端
+    9.374% → 2.275%）。单纯 ``|Δ| > 100bp`` 会把真实行情（如 2013 钱荒）
+    与数据错误混在一起，因此这里用**横截面一致性**判据：
+
+    1. ``idiosyncratic_spike``：某期限日变动 ``> spike_bp``，而同日**其他期限
+       的日变动中位数** ``< cross_median_bp`` → 孤立异常点；
+    2. ``reversal``：``t-1→t`` 与 ``t→t+1`` 方向相反、两段幅度都超过阈值，
+       且 ``t`` 的变动显著偏离同日其他期限中位数 → 典型的"跳出去又跳回来"，
+       给出 ``roundtrip_bp = |Δ_t| + |Δ_{t+1}|``；
+    3. ``level_outlier``：收益率超出合理区间（默认 ``<0.2%`` 或 ``>12%``，
+       可用 ``level_bounds`` 按期限覆盖）。
+
+    **只标记、不剔除**：原始数据与版本目录不改；下游（PCA/因子）自行决定
+    按 date 排除或 winsor。
+
+    Parameters
+    ----------
+    long_df : pandas.DataFrame
+        长表（至少 ``date/tenor/ytm_pct``）；允许重复，内部按最后一条去重。
+    cfg : Config | None
+        预留配置入口（当前阈值由显式参数控制）。
+    spike_bp : float
+        单日跳变阈值（bp），默认 50。
+    cross_median_bp : float
+        「其他期限中位变动」的容忍上限（bp），默认 10。
+    reversal_bp : float
+        反向回跳的幅度阈值（bp），默认 40。
+    level_min, level_max : float
+        全局收益率合理区间（百分数），默认 0.2%–12%。
+    level_bounds : Mapping[float, tuple[float, float]] | None
+        按期限覆盖 ``(min, max)``；匹配容差 1e-6 年。
+    start, end : date | None
+        可选区间过滤（按交易日）。
+
+    Returns
+    -------
+    pandas.DataFrame
+        列：``date, tenor, term_label, kind, prev_value, value, next_value,
+        delta_bp, median_cross_delta_bp, roundtrip_bp, severity``；按严重度、
+        ``|delta_bp|`` 降序。无异常时返回空表（列齐全）。
+
+    Raises
+    ------
+    DataValidationError
+        输入为空表或缺少必需列。
+    """
+    if long_df is None or not isinstance(long_df, pd.DataFrame):
+        raise DataValidationError(f"可疑点检测：期望 DataFrame，实际 {type(long_df).__name__}")
+    if long_df.empty:
+        raise DataValidationError("可疑点检测：输入为空表")
+    missing = [c for c in ("date", "tenor", "ytm_pct") if c not in long_df.columns]
+    if missing:
+        raise DataValidationError(
+            f"可疑点检测：缺少必需列 {missing}；实际列 {list(long_df.columns)}"
+        )
+
+    work = long_df
+    if start is not None or end is not None:
+        work = long_df.copy()
+        work["date"] = pd.to_datetime(work["date"], errors="raise")
+        if start is not None:
+            work = work.loc[work["date"].dt.date >= start]
+        if end is not None:
+            work = work.loc[work["date"].dt.date <= end]
+        if work.empty:
+            return pd.DataFrame(columns=list(SUSPECT_COLUMNS))
+
+    panel = _panel_from_long(work)
+    if panel.empty or len(panel.index) < 2:
+        return pd.DataFrame(columns=list(SUSPECT_COLUMNS))
+
+    # 日变动（bp）：t-1→t；以及 t→t+1（用于 reversal 判定）
+    delta = panel.diff() * 100.0
+    delta_next = (panel.shift(-1) - panel) * 100.0
+    cross_median = _cross_median_other(delta)
+
+    spike = max(0.0, float(spike_bp))
+    cross_tol = max(0.0, float(cross_median_bp))
+    reversal = max(0.0, float(reversal_bp))
+
+    level_mask = (panel > float(level_max)) | (panel < float(level_min))
+    if level_bounds:
+        for tenor, (low, high) in level_bounds.items():
+            matches = [col for col in panel.columns if abs(float(col) - float(tenor)) <= 1e-6]
+            for col in matches:
+                level_mask[col] = (panel[col] > float(high)) | (panel[col] < float(low))
+
+    values = panel.to_numpy(dtype=float)
+    deltas = delta.to_numpy(dtype=float)
+    deltas_next = delta_next.to_numpy(dtype=float)
+    cross = cross_median.to_numpy(dtype=float)
+
+    idio_mask = (np.abs(deltas) > spike) & (np.abs(cross) < cross_tol)
+    reversal_mask = (
+        (deltas * deltas_next < 0)
+        & (np.abs(deltas) > spike)
+        & (np.abs(deltas_next) > reversal)
+        & (np.abs(deltas - cross) > spike)
+    )
+    outlier_mask = level_mask.to_numpy(dtype=bool)
+
+    dates = list(panel.index)
+    tenors = [float(t) for t in panel.columns]
+    records: list[dict[str, Any]] = []
+
+    def _emit(mask: np.ndarray, kind: str) -> None:
+        for row_idx, col_idx in np.argwhere(mask):
+            current = float(values[row_idx, col_idx])
+            previous = float(values[row_idx - 1, col_idx]) if row_idx > 0 else float("nan")
+            upcoming = (
+                float(values[row_idx + 1, col_idx]) if row_idx + 1 < len(dates) else float("nan")
+            )
+            change = float(deltas[row_idx, col_idx])
+            next_change = float(deltas_next[row_idx, col_idx])
+            trip = (
+                abs(change) + abs(next_change)
+                if kind == "reversal" and pd.notna(next_change)
+                else float("nan")
+            )
+            records.append(
+                {
+                    "date": dates[row_idx],
+                    "tenor": tenors[col_idx],
+                    "term_label": _tenor_label(tenors[col_idx]),
+                    "kind": kind,
+                    "prev_value": previous,
+                    "value": current,
+                    "next_value": upcoming,
+                    "delta_bp": change,
+                    "median_cross_delta_bp": float(cross[row_idx, col_idx]),
+                    "roundtrip_bp": trip,
+                    "severity": _suspect_severity(kind, change, trip),
+                }
+            )
+
+    _emit(idio_mask, "idiosyncratic_spike")
+    _emit(reversal_mask, "reversal")
+    _emit(outlier_mask, "level_outlier")
+
+    frame = pd.DataFrame(records, columns=list(SUSPECT_COLUMNS))
+    if frame.empty:
+        return frame
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["_severity_rank"] = frame["severity"].map(_SEVERITY_RANK).fillna(9)
+    frame["_abs_delta"] = frame["delta_bp"].abs().fillna(0.0)
+    frame = frame.sort_values(
+        ["_severity_rank", "_abs_delta", "roundtrip_bp"],
+        ascending=[True, False, False],
+        na_position="last",
+    )
+    return frame.drop(columns=["_severity_rank", "_abs_delta"]).reset_index(drop=True)
+
+
+def suspect_summary(suspects: pd.DataFrame) -> dict[str, Any]:
+    """可疑点摘要：总数、按 kind/年份/期限/严重度分布。"""
+    empty = {
+        "n_total": 0,
+        "n_high": 0,
+        "n_medium": 0,
+        "n_low": 0,
+        "by_kind": {},
+        "by_year": {},
+        "by_tenor": {},
+    }
+    if suspects is None or suspects.empty:
+        return empty
+    frame = suspects.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    by_year = {
+        str(int(year)): int(count)
+        for year, count in frame["date"].dt.year.value_counts().sort_index().items()
+    }
+    by_tenor = {
+        str(label): int(count)
+        for label, count in frame["term_label"].value_counts().sort_index().items()
+    }
+    by_kind = {str(kind): int(count) for kind, count in frame["kind"].value_counts().items()}
+    severity = frame["severity"].value_counts()
+    return {
+        "n_total": len(frame),
+        "n_high": int(severity.get("high", 0)),
+        "n_medium": int(severity.get("medium", 0)),
+        "n_low": int(severity.get("low", 0)),
+        "by_kind": by_kind,
+        "by_year": by_year,
+        "by_tenor": by_tenor,
+    }
+
+
+def default_suspect_path(cfg: Any | None = None) -> Path:
+    """默认可疑点清单路径：``reports/data_quality_suspect.csv``。"""
+    cfg = cfg or get_config()
+    return cfg.paths.abs("reports") / "data_quality_suspect.csv"
+
+
+def write_suspect_report(
+    long_df: pd.DataFrame,
+    *,
+    cfg: Any | None = None,
+    output: str | Path | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    **detect_kwargs: Any,
+) -> tuple[Path, pd.DataFrame, dict[str, Any]]:
+    """检测可疑点并写出 CSV（只标记，不修改任何原始数据）。
+
+    Returns
+    -------
+    (path, suspects, summary)
+    """
+    suspects = detect_suspect_dates(long_df, cfg=cfg, start=start, end=end, **detect_kwargs)
+    path = Path(output) if output is not None else default_suspect_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    suspects.to_csv(path, index=False, encoding="utf-8-sig")
+    summary = suspect_summary(suspects)
+    log.info("可疑跳变点清单：%d 条 → %s", len(suspects), path)
+    return path, suspects, summary
+
+
+def print_suspect_summary(
+    suspects: pd.DataFrame,
+    *,
+    output_path: Path | None = None,
+    top_n: int = 10,
+    file: Any | None = None,
+) -> None:
+    """打印可疑点摘要（总数 / 年份分布 / 期限分布 / TopN 最严重）。"""
+    out = file or sys.stdout
+    summary = suspect_summary(suspects)
+
+    def emit(text: str = "") -> None:
+        print(text, file=out)
+
+    emit("=" * 78)
+    emit("可疑跳变点报告（横截面不一致；仅标记，不剔除）")
+    emit("=" * 78)
+    if output_path is not None:
+        emit(f"  明细文件   : {output_path}")
+    emit(f"  检出总数   : {summary['n_total']}")
+    emit(
+        f"  严重度     : high={summary['n_high']} / medium={summary['n_medium']}"
+        f" / low={summary['n_low']}"
+    )
+    emit(f"  按类型     : {summary['by_kind']}")
+    emit(f"  按年份     : {summary['by_year']}")
+    emit(f"  按期限     : {summary['by_tenor']}")
+    if suspects is None or suspects.empty:
+        emit("  （无）")
+        emit("=" * 78)
+        return
+    emit("")
+    emit(f"-- Top{top_n} 最严重 --")
+    view = suspects.head(int(top_n)).loc[
+        :,
+        [
+            "date",
+            "term_label",
+            "kind",
+            "prev_value",
+            "value",
+            "delta_bp",
+            "median_cross_delta_bp",
+            "roundtrip_bp",
+            "severity",
+        ],
+    ]
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        emit(view.to_string(index=False))
+    emit("")
+    emit("说明：2002–2005 的孤立跳变多为官方文件异常；下游 PCA/因子分析可")
+    emit("      按 date 排除这些交易日，或对收益率做 winsor/稳健标准化。")
+    emit("=" * 78)
+
+
+# ---------------------------------------------------------------------------
 # 汇总报告
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -524,6 +885,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--jump-bp", type=float, default=20.0, help="跳变阈值（bp）")
     parser.add_argument("--max-rows", type=int, default=20, help="每张表最多打印行数")
     parser.add_argument("--json", default=None, help="把摘要写入 JSON 文件")
+    parser.add_argument(
+        "--suspect-report",
+        action="store_true",
+        help="检测横截面不一致的可疑跳变点并写出 CSV（只标记、不剔除）",
+    )
+    parser.add_argument(
+        "--suspect-out",
+        default=None,
+        help="可疑点 CSV 输出路径（默认 reports/data_quality_suspect.csv）",
+    )
+    parser.add_argument("--suspect-top", type=int, default=10, help="摘要打印 TopN 可疑点")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data) if args.data else _default_data_path(args.config)
@@ -555,6 +927,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(f"[quality] 摘要已写入 {out}")
+    if args.suspect_report:
+        try:
+            suspect_path, suspects, _ = write_suspect_report(
+                frame,
+                cfg=get_config(args.config),
+                output=args.suspect_out,
+                start=start,
+                end=end,
+            )
+        except DataValidationError as exc:
+            print(f"[quality] 可疑点检测失败：{exc}", file=sys.stderr)
+            return 1
+        print_suspect_summary(suspects, output_path=suspect_path, top_n=args.suspect_top)
     return 0
 
 

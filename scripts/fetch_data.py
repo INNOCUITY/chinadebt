@@ -28,6 +28,9 @@
     # AKShare 兜底（可选依赖；仅 2006 起、8 个期限点）
     python scripts/fetch_data.py --source akshare
 
+    # 只读已发布数据，标记横截面不一致的可疑跳变点（不改原始数据）
+    python scripts/fetch_data.py --suspect-report
+
 退出码
 ------
 0 = 成功；1 = 抓取/校验/写盘失败（旧数据保留，错误信息在 stderr）；2 = 参数错误。
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +49,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ficc.config import get_config  # noqa: E402
-from ficc.data.loader import LoadPaths, fetch_curve_data  # noqa: E402
+from ficc.data.loader import LoadPaths, fetch_curve_data, load_curve_long  # noqa: E402
+from ficc.data.quality import print_suspect_summary, write_suspect_report  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 
 log = get_logger("scripts.fetch_data")
@@ -82,6 +87,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="显式允许历史交易日减少（默认逐年覆盖退化会报错）",
     )
+    parser.add_argument(
+        "--suspect-report",
+        action="store_true",
+        help="只读已发布数据，标记横截面不一致的可疑跳变点（不抓取、不改原始数据）",
+    )
+    parser.add_argument(
+        "--suspect-out",
+        default=None,
+        help="可疑点 CSV 输出路径（默认 reports/data_quality_suspect.csv）",
+    )
+    parser.add_argument("--suspect-top", type=int, default=10, help="摘要打印 TopN 可疑点")
     return parser
 
 
@@ -133,9 +149,34 @@ def _print_summary(result) -> None:
     print("=" * 72)
 
 
+def _run_suspect_report(args: argparse.Namespace) -> int:
+    """只读已发布数据，输出可疑跳变清单（不触发抓取、不改原始数据）。"""
+    try:
+        cfg = get_config(args.config)
+        frame = load_curve_long(cfg=cfg)
+        start = date.fromisoformat(args.start) if args.start else None
+        end = date.fromisoformat(args.end) if args.end else None
+        suspect_path, suspects, _ = write_suspect_report(
+            frame,
+            cfg=cfg,
+            output=args.suspect_out,
+            start=start,
+            end=end,
+        )
+    except Exception as exc:
+        log.error("可疑点检测失败：%s", exc)
+        print(f"[suspect] 失败：{exc}", file=sys.stderr)
+        return 1
+    print_suspect_summary(suspects, output_path=suspect_path, top_n=args.suspect_top)
+    print(f"[suspect] 明细已写入 {suspect_path}（原始数据未改动）")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.suspect_report:
+        return _run_suspect_report(args)
     try:
         cfg = get_config(args.config)
         paths = LoadPaths.from_config(cfg, raw_spike=args.raw_spike_dir)

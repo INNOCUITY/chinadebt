@@ -19,6 +19,7 @@
 | `data/processed/repo_rates.parquet` | 旧路径兼容副本：资金面 FR/FDR 回购定盘利率宽表 | 5,454 行 / 2005-01-04 → 2026-11-06 |
 | `data/metadata/manifest.json` | 旧路径兼容 manifest（内容 = 当前版本 manifest） | 每条年度文件一条记录 |
 | `data/metadata/backfill_2y_report.json` | 2Y 回补报告（成功/失败逐日明细、`version_id`） | 按需生成 |
+| `reports/data_quality_suspect.csv` | **可疑跳变点清单**（横截面不一致，只标记不剔除） | 289 行（全样本，2026-11-06 实测） |
 
 生成命令：
 
@@ -277,7 +278,7 @@ data/
 
 ---
 
-## 6. 质量报告字段（`python -m ficc.data.quality`）
+## 6. 质量报告字段（`python -m ficc.data.quality --suspect-report`）
 
 `QualityReport.summary` 主要键：
 
@@ -300,6 +301,77 @@ data/
 * `coverage`：行=年份、列=期限标签 + `n_dates`，值=当年该期限覆盖的交易日占比（0–1）。
 * `missing_days`：`date / weekday / gap_id / gap_start / gap_end / gap_days`（每个缺失工作日一行，同一连续缺口共享 `gap_id`）。
 * `duplicates`：`date / tenor / n_rows / n_values / values / consistent`（年度文件重叠检测；`consistent=false` 即真冲突）。
+
+### 6.1 可疑跳变点清单：`reports/data_quality_suspect.csv`
+
+**用途**：标记**横截面不一致型**异常点（多为中债官方文件在 2002–2005 的孤立跳变），
+供 PCA/因子分析等下游按 date 排除或 winsor。**只标记，不剔除、不改原始数据**——
+是否过滤属于研究结论，不属于数据清洗。
+
+生成命令：
+
+```bash
+make quality                                  # 质量报告 + 可疑清单
+python scripts/fetch_data.py --suspect-report # 只读已发布数据，仅生成清单
+python -m ficc.data.quality --suspect-report --suspect-out reports/data_quality_suspect.csv
+```
+
+**检测判据**（`ficc.data.quality.detect_suspect_dates`，纯函数、无网络）：
+
+| `kind` | 判据 | 默认阈值 |
+|---|---|---|
+| `idiosyncratic_spike` | 单期限日变动 `|Δ| > spike_bp`，且同日**其他期限日变动中位数** `|median| < cross_median_bp` → 孤立异常点 | `spike_bp=50`；`cross_median_bp=10` |
+| `reversal` | `t-1→t` 与 `t→t+1` 方向相反、两段幅度均超阈值，且 t 的变动显著偏离同日其他期限中位数（跳出去又跳回来） | `spike_bp=50`；`reversal_bp=40` |
+| `level_outlier` | 收益率超出合理区间（默认全局 `[0.2%, 12%]`，可用 `level_bounds` 按期限分档） | `level_min=0.2`；`level_max=12` |
+
+相对 `|Δ|>100bp` 的朴素阈值，横截面判据能把**数据错误**与**真实行情**区分开：
+真实系统性行情里各期限同向变动（其他期限中位数不小），不会触发孤立/往返判据。
+
+**字段表**：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `date` | ISO date | 异常点所在的**当日**（`reversal` 为跳出去（或跳回）的那一天） |
+| `tenor` | float | 期限（年） |
+| `term_label` | str | 期限标签（`3M/1Y/10Y/30Y`…） |
+| `kind` | str | `idiosyncratic_spike` / `reversal` / `level_outlier` |
+| `prev_value` | float | 前一交易日收益率（%） |
+| `value` | float | 当日收益率（%） |
+| `next_value` | float | 下一交易日收益率（%） |
+| `delta_bp` | float | `(value - prev_value) × 100`，单位 bp |
+| `median_cross_delta_bp` | float | 同日**其他期限**日变动中位数（bp），用于横截面一致性判断 |
+| `roundtrip_bp` | float | `|Δ_t| + |Δ_{t+1}|`（仅 `reversal` 行有值，其余为 NaN） |
+| `severity` | str | `high` / `medium` / `low`（`|Δ|≥200bp` 或往返≥300bp 为 high；≥100/150 为 medium；`level_outlier` 恒为 high） |
+
+同一 `(date, tenor)` 可能同时命中不同类型（例如既 `idiosyncratic_spike` 又 `reversal`），
+报告按 `severity` 后 `|delta_bp|` 降序排列。
+
+**全样本实测（2026-11-06 数据）**：共 **289** 条（high 82 / medium 67 / low 140），
+按类型 147 / 139 / 3；按年份 `2002:86、2003:81、2004:112、2005:9、2013:1`；
+按期限 30Y:111、20Y:63、3M:25、6M:23、15Y:23 等。典型命中：
+
+| date | tenor | kind | delta_bp | roundtrip_bp | 说明 |
+|---|---|---|---|---|---|
+| 2002-04-26 | 30Y | reversal | +737.4 | 1515.2 | 10.5366% → 2.7586%，单日尖峰后跳回 |
+| 2004-08-18 | 3M | reversal | −709.9 | 765.0 | 9.3742% → 2.2754%，短端异常回归 |
+| 2004-08-18 | 1Y | reversal | −628.4 | 678.2 | 8.8229% → 2.5387% |
+| 2004-08-18 | 2Y | reversal | −525.4 | 568.5 | 8.1279% → 2.8742% |
+
+> 2013-06-27（3M −60bp，其他期限中位数 −3bp）也被标记，但属于"钱荒"真实极端行情，
+> 下游可结合宏观事件人工复核；标记≠剔除。
+
+**下游用法建议**：
+
+```python
+import pandas as pd
+sus = pd.read_csv("reports/data_quality_suspect.csv", parse_dates=["date"])
+panel = panel.drop(index=sorted(sus["date"].unique()))      # 按日排除（推荐，保留全期限一致性）
+# 或：对 (date, tenor) 命中点 winsorize/置 NaN，再由插值模块显式处理
+# PCA/因子：先剔除可疑日，或使用稳健协方差 + 收益率 winsor
+```
+
+**防护**：检测函数只读 `curve_long`，不写 `data/`；报告输出固定写入 `reports/`，
+不修改版本目录与 manifest。CLI 参数 `--suspect-out` 可改输出路径（测试用）。
 
 ---
 

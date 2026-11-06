@@ -10,7 +10,11 @@
   :func:`ytm_from_dirty_price` / :func:`ytm_from_clean_price`
 - 风险指标（:mod:`ficc.pricing.analytics`）：
   :func:`macaulay_duration` / :func:`mod_duration` / :func:`convexity` /
-  :func:`dv01` / :func:`dv01_finite_diff` / :func:`key_rate_durations`
+  :func:`dv01` / :func:`dv01_finite_diff` / :func:`spot_dv01` /
+  :func:`key_rate_durations`（即期曲线 KRD，鸭子类型接口）
+- carry / roll-down 分解（:mod:`ficc.pricing.carry`，只做分解、不做信号）：
+  :func:`carry_roll_down` / :func:`decompose_realized` / :func:`par_modified_duration` /
+  :func:`resolve_funding_rate_pct`
 
 约定：收益率一律为**百分数**；金额一律为**元/报价面值**（默认元/百元面值，
 面值取 ``config.pricing.face_value``）；报价用净价，结算与 PnL 用全价。
@@ -29,6 +33,7 @@ from ficc.pricing.analytics import (
     key_rate_durations,
     macaulay_duration,
     mod_duration,
+    spot_dv01,
 )
 from ficc.pricing.bond import (
     CF_COLUMNS,
@@ -37,6 +42,13 @@ from ficc.pricing.bond import (
     dirty_price_from_ytm,
     ytm_from_clean_price,
     ytm_from_dirty_price,
+)
+from ficc.pricing.carry import (
+    FundingRateUnavailableError,
+    carry_roll_down,
+    decompose_realized,
+    par_modified_duration,
+    resolve_funding_rate_pct,
 )
 from ficc.pricing.conventions import (
     Basis,
@@ -65,10 +77,12 @@ __all__ = [
     "Basis",
     "ConventionError",
     "CouponPeriod",
+    "FundingRateUnavailableError",
     "accrual_basis",
     "accrual_days",
     "accrued_interest",
     "annual_anniversaries",
+    "carry_roll_down",
     "cashflows",
     "clean_price_from_ytm",
     "convexity",
@@ -76,6 +90,7 @@ __all__ = [
     "coupon_period",
     "day_count",
     "days_in_year",
+    "decompose_realized",
     "dirty_price_from_ytm",
     "dv01",
     "dv01_finite_diff",
@@ -85,9 +100,12 @@ __all__ = [
     "macaulay_duration",
     "mod_duration",
     "next_coupon_date",
+    "par_modified_duration",
     "pricing_config",
     "quote_face_value",
+    "resolve_funding_rate_pct",
     "settlement_date",
+    "spot_dv01",
     "validate_settlement",
     "year_fraction",
     "ytm_from_clean_price",

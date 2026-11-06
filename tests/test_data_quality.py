@@ -224,3 +224,213 @@ def test_real_data_quality_smoke() -> None:
     row_2y = table.loc[table["tenor"].astype(float) == 2.0].iloc[0]
     assert row_2y["n_present"] == 5_432
     assert row_2y["missing"] == 772
+
+
+# ---------------------------------------------------------------------------
+# 横截面不一致：可疑跳变点标记（R-新，只标记不剔除）
+# ---------------------------------------------------------------------------
+from ficc.data.quality import (  # noqa: E402
+    SUSPECT_COLUMNS,
+    detect_suspect_dates,
+    suspect_summary,
+    write_suspect_report,
+)
+
+
+def _clean_panel_long(days: int = 120, *, seed_offset: float = 0.0) -> pd.DataFrame:
+    """构造无异常的平滑面板（11 个期限 × N 个交易日，日变动 < 0.1bp）。"""
+    dates = pd.bdate_range("2023-01-03", periods=days)
+    base = {tenor: 2.0 + 0.08 * tenor + seed_offset for tenor in CANONICAL_TENORS}
+    rows = []
+    for index, day in enumerate(dates):
+        for tenor, level in base.items():
+            rows.append(
+                {
+                    "date": day,
+                    "tenor": float(tenor),
+                    "ytm_pct": round(level + 0.0005 * index, 6),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _panel_wide(long_df: pd.DataFrame) -> pd.DataFrame:
+    return long_df.pivot(index="date", columns="tenor", values="ytm_pct").sort_index()
+
+
+def test_suspect_clean_panel_has_no_false_positive() -> None:
+    clean = _clean_panel_long()
+    suspects = detect_suspect_dates(clean)
+    assert suspects.empty
+    assert list(suspects.columns) == list(SUSPECT_COLUMNS)
+    assert suspect_summary(suspects)["n_total"] == 0
+
+
+def test_suspect_detects_idiosyncratic_spike() -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    dates = list(panel.index)
+    spike_date = dates[60]
+    clean.loc[
+        (clean["date"] == spike_date) & (clean["tenor"].astype(float) == 10.0),
+        "ytm_pct",
+    ] += 0.80  # +80bp 孤立尖峰（其他期限不动）
+    suspects = detect_suspect_dates(clean)
+
+    hits = suspects[
+        (suspects["date"] == spike_date)
+        & ((suspects["tenor"].astype(float) - 10.0).abs() < 1e-9)
+        & (suspects["kind"] == "idiosyncratic_spike")
+    ]
+    assert len(hits) == 1
+    row = hits.iloc[0]
+    assert row["delta_bp"] == pytest.approx(80.0, abs=0.5)
+    assert abs(row["median_cross_delta_bp"]) < 10.0
+    assert row["severity"] in {"low", "medium", "high"}
+    # 横截面其他期限不应被连带标记为同日的 idiosyncratic_spike
+    same_day = suspects[
+        (suspects["date"] == spike_date) & (suspects["kind"] == "idiosyncratic_spike")
+    ]
+    assert ((same_day["tenor"].astype(float) - 10.0).abs() > 1e-9).sum() == 0
+
+
+def test_suspect_detects_reversal_with_roundtrip() -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    dates = list(panel.index)
+    spike_date = dates[70]
+    next_date = dates[71]
+    tenor = 2.0
+    mask = (clean["date"] == spike_date) & ((clean["tenor"].astype(float) - tenor).abs() < 1e-9)
+    clean.loc[mask, "ytm_pct"] += 0.80  # 跳出去
+    # 次日回到原趋势（下一交易日的值本就等于趋势，因此自然"跳回来"）
+    suspects = detect_suspect_dates(clean)
+    hits = suspects[
+        (suspects["date"] == spike_date)
+        & ((suspects["tenor"].astype(float) - tenor).abs() < 1e-9)
+        & (suspects["kind"] == "reversal")
+    ]
+    assert len(hits) == 1
+    row = hits.iloc[0]
+    expected_roundtrip = 2 * 80.0  # ±80bp → 往返约 160bp
+    assert row["roundtrip_bp"] == pytest.approx(expected_roundtrip, abs=1.0)
+    assert row["delta_bp"] == pytest.approx(80.0, abs=0.5)
+    assert row["next_value"] < row["value"]
+    assert spike_date == pd.Timestamp(row["date"])
+    # 回跳日（t+1）也可能被标记，但 t 的 reversal 必须存在
+    assert next_date >= spike_date
+
+
+def test_suspect_detects_level_outlier() -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    day = list(panel.index)[80]
+    clean.loc[
+        (clean["date"] == day) & ((clean["tenor"].astype(float) - 30.0).abs() < 1e-9),
+        "ytm_pct",
+    ] = 15.0  # >12% 越界
+    suspects = detect_suspect_dates(clean)
+    hits = suspects[
+        (suspects["date"] == day)
+        & ((suspects["tenor"].astype(float) - 30.0).abs() < 1e-9)
+        & (suspects["kind"] == "level_outlier")
+    ]
+    assert len(hits) == 1
+    assert hits.iloc[0]["value"] == pytest.approx(15.0)
+    assert hits.iloc[0]["severity"] == "high"
+
+
+def test_suspect_requires_columns() -> None:
+    with pytest.raises(DataValidationError, match="缺少必需列"):
+        detect_suspect_dates(pd.DataFrame({"date": ["2024-01-02"], "tenor": [1.0]}))
+    with pytest.raises(DataValidationError, match="空表"):
+        detect_suspect_dates(pd.DataFrame())
+
+
+def test_write_suspect_report(tmp_path: Path) -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    spike_date = list(panel.index)[60]
+    clean.loc[
+        (clean["date"] == spike_date) & ((clean["tenor"].astype(float) - 10.0).abs() < 1e-9),
+        "ytm_pct",
+    ] += 0.80
+    output = tmp_path / "suspects.csv"
+    path, suspects, summary = write_suspect_report(clean, output=output)
+    assert path == output
+    assert output.exists()
+    written = pd.read_csv(output, parse_dates=["date"])
+    assert list(written.columns) == list(SUSPECT_COLUMNS)
+    assert len(written) == len(suspects) > 0
+    assert summary["n_total"] == len(suspects)
+    assert summary["by_year"]
+    assert summary["by_kind"].get("idiosyncratic_spike", 0) >= 1
+
+
+def test_suspect_quality_cli(tmp_path: Path, cfg) -> None:
+    """`python -m ficc.data.quality --suspect-report` 可写出清单并打印摘要。"""
+    from ficc.data.quality import main as quality_main
+
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    spike_date = list(panel.index)[60]
+    clean.loc[
+        (clean["date"] == spike_date) & ((clean["tenor"].astype(float) - 10.0).abs() < 1e-9),
+        "ytm_pct",
+    ] += 0.80
+    data_path = tmp_path / "curve.parquet"
+    clean.to_parquet(data_path, index=False)
+    output = tmp_path / "suspects.csv"
+    exit_code = quality_main(
+        [
+            "--data",
+            str(data_path),
+            "--suspect-report",
+            "--suspect-out",
+            str(output),
+            "--max-rows",
+            "3",
+        ]
+    )
+    assert exit_code == 0
+    assert output.exists()
+    written = pd.read_csv(output)
+    assert "idiosyncratic_spike" in set(written["kind"])
+
+
+def test_real_sample_lead_anomalies_are_flagged() -> None:
+    """真实全样本：复核 Lead 给的 2002/2004 具体异常日期必须被标记。"""
+    if not REAL_PROCESSED.exists():
+        pytest.skip("缺少 data/processed/curve_long.parquet（先运行 fetch_data --offline）")
+    frame = pd.read_parquet(REAL_PROCESSED)
+    suspects = detect_suspect_dates(frame)
+    assert not suspects.empty
+    suspects["date"] = pd.to_datetime(suspects["date"])
+
+    def flagged(day: str, tenor: float) -> pd.DataFrame:
+        hit = suspects[
+            (suspects["date"] == pd.Timestamp(day))
+            & ((suspects["tenor"].astype(float) - tenor).abs() < 1e-9)
+        ]
+        return hit
+
+    # 30Y：2002-04-26 10.5366% 尖峰（随后跳回）
+    hit_30y = flagged("2002-04-26", 30.0)
+    assert not hit_30y.empty
+    assert hit_30y.iloc[0]["severity"] == "high"
+    assert hit_30y.iloc[0]["roundtrip_bp"] > 1000.0
+
+    # 短端：2004-08-18 的 0.25Y / 1Y / 2Y 跳回
+    for tenor in (0.25, 1.0, 2.0):
+        hit = flagged("2004-08-18", tenor)
+        assert not hit.empty, f"2004-08-18 {tenor:g}Y 未被标记"
+        assert hit.iloc[0]["kind"] == "reversal"
+        assert hit.iloc[0]["delta_bp"] < -100.0
+
+    # 分布应高度集中在 2002–2005（官方早期文件问题）
+    early = suspects["date"].dt.year.isin([2002, 2003, 2004, 2005]).sum()
+    assert early / len(suspects) >= 0.9
+    summary = suspect_summary(suspects)
+    assert summary["n_total"] == len(suspects)
+    assert summary["by_year"].get("2002", 0) > 0
+    assert summary["n_high"] > 0

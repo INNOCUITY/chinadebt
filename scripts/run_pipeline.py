@@ -37,7 +37,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from ficc.config import Config, get_config  # noqa: E402
-from ficc.data.schema import CANONICAL_TENORS, TENOR_LABELS, validate_long_frame  # noqa: E402
+from ficc.data.schema import CANONICAL_TENORS, TENOR_LABELS, BondStatic, validate_long_frame  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 
 log = get_logger("pipeline")
@@ -123,7 +123,9 @@ def to_panel(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Stage: data
 # ---------------------------------------------------------------------------
-def stage_data(cfg: Config, *, start: date | None, end: date | None) -> dict[str, Path]:
+def stage_data(
+    cfg: Config, *, start: date | None = None, end: date | None = None, **_kw
+) -> dict[str, Path]:
     from ficc.report.figures import plot_curve_heatmap  # 延迟导入，避免无谓依赖
 
     df = load_long_frame(cfg, start=start, end=end)
@@ -161,7 +163,7 @@ def stage_data(cfg: Config, *, start: date | None, end: date | None) -> dict[str
 # Stage: curve
 # ---------------------------------------------------------------------------
 def stage_curve(
-    cfg: Config, *, start: date | None, end: date | None, method: str = "nss"
+    cfg: Config, *, start: date | None = None, end: date | None = None, method: str = "nss", **_kw
 ) -> dict[str, Path]:
     """逐日拟合曲线并做残差诊断。"""
     from ficc.curve.fitting import fit_panel  # 曲线层（由 curve-quant 实现）
@@ -255,12 +257,222 @@ def stage_curve(
 
 
 # ---------------------------------------------------------------------------
+# Stage: factors（即期曲线对比 + PCA + 因子交叉校验）
+# ---------------------------------------------------------------------------
+def stage_factors(cfg: Config, **_kw) -> dict[str, Path]:
+    """调用曲线层的报告模块：即期 vs 到期对比、PCA 载荷、因子交叉校验。"""
+    from ficc.curve import reporting
+
+    reporting.main()
+    reports = cfg.paths.abs("reports")
+    return {
+        "spot_compare": reports / "spot_curve_compare.csv",
+        "pca_loadings": reports / "pca_loadings.csv",
+        "pca_explained": reports / "pca_explained.csv",
+        "factor_crosscheck": reports / "factor_crosscheck.csv",
+        "factor_corr": reports / "factor_correlation.csv",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage: bias（各期限拟合残差的持续性 / 10Y 系统性偏差）
+# ---------------------------------------------------------------------------
+def stage_bias(cfg: Config, **_kw) -> dict[str, Path]:
+    """检查 NSS 残差是否存在跨期限的系统性偏差，以及它是否可持续。"""
+    from ficc.curve import bias
+
+    bias.main()
+    reports = cfg.paths.abs("reports")
+    return {
+        "bias_persistence": reports / "tenor_bias_persistence.csv",
+        "bias_segments": reports / "tenor_bias_segments.csv",
+        "bias_conclusion": reports / "tenor_bias_conclusion.md",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage: krd（即期曲线 KRD，含与 YTM DV01 的交叉校验）
+# ---------------------------------------------------------------------------
+def _par_bond(settlement: date, tenor: float, coupon_pct: float, freq: int) -> BondStatic:
+    """构造用于 KRD 的合成平价债（与 bootstrap 的平价假设一致：票面=该期限 YTM、价格 100）。"""
+    years = int(tenor)
+    maturity = date(settlement.year + years, settlement.month, settlement.day)
+    return BondStatic(
+        code=f"SYN-{tenor:g}Y-{settlement:%Y%m%d}",
+        issue_date=settlement,
+        maturity_date=maturity,
+        coupon_pct=coupon_pct,
+        freq=freq,
+    )
+
+
+def stage_krd(cfg: Config, **_kw) -> dict[str, Path]:
+    """在真实曲线上计算 KRD，并与 YTM 口径 DV01 交叉校验。
+
+    输出 `reports/krd_table.csv`：每行一个 (case, key_tenor) 的 KRD，
+    并附 sum(KRD)、DV01(YTM)、相对差，供风险模块直接引用。
+    """
+    from ficc.curve.bootstrap import bootstrap_spot
+    from ficc.curve.curve import Curve
+    from ficc.pricing.analytics import dv01, key_rate_durations
+
+    long = load_long_frame(cfg)
+    panel = to_panel(long)
+    as_of = panel.index.max()
+    key_tenors = [float(t) for t in cfg.risk.key_tenors_krd]
+    reports = cfg.paths.abs("reports")
+
+    rows: list[dict[str, object]] = []
+
+    def _curve_at(d) -> Curve:
+        y = panel.loc[d].reindex(CANONICAL_TENORS)
+        return Curve(
+            as_of=d.date(),
+            tenors=np.asarray(CANONICAL_TENORS),
+            rates=tuple(y.values),
+            method="hermite",
+        )
+
+    # case 1：最新曲线上的合成平价债（2/5/10/30Y）
+    curve = _curve_at(as_of)
+    spot = bootstrap_spot(curve)
+    for tenor in (2.0, 5.0, 10.0, 30.0):
+        freq = 2 if tenor >= 10 else 1
+        bond = _par_bond(as_of.date(), tenor, float(curve.rate(tenor)), freq)
+        krd = key_rate_durations(bond, as_of.date(), spot, key_tenors=key_tenors)
+        d01 = dv01(bond, as_of.date(), float(curve.rate(tenor)))
+        total = sum(krd.values())
+        for k, v in krd.items():
+            rows.append(
+                {
+                    "case": f"par{tenor:g}Y@{as_of.date()}",
+                    "tenor_y": k,
+                    "krd": v,
+                    "sum_krd": total,
+                    "dv01_ytm": -d01,
+                    "rel_diff_pct": abs(total + d01) / abs(d01) * 100 if d01 else float("nan"),
+                }
+            )
+
+    # case 2：真实个券 26 附息国债 10（10Y, 1.72%, 半年付）@ 2026-05-28
+    settle = date(2026, 5, 28)
+    if pd.Timestamp(settle) in panel.index:
+        c2 = _curve_at(pd.Timestamp(settle))
+        s2 = bootstrap_spot(c2)
+        bond = BondStatic(
+            code="260010.IB",
+            issue_date=date(2026, 5, 15),
+            maturity_date=date(2036, 5, 15),
+            coupon_pct=1.72,
+            freq=2,
+        )
+        krd = key_rate_durations(bond, settle, s2, key_tenors=key_tenors)
+        d01 = dv01(bond, settle, 1.72)
+        total = sum(krd.values())
+        for k, v in krd.items():
+            rows.append(
+                {
+                    "case": "260010.IB@2026-05-28",
+                    "tenor_y": k,
+                    "krd": v,
+                    "sum_krd": total,
+                    "dv01_ytm": -d01,
+                    "rel_diff_pct": abs(total + d01) / abs(d01) * 100,
+                }
+            )
+
+    out = pd.DataFrame(rows)
+    out_csv = reports / "krd_table.csv"
+    out.to_csv(out_csv, index=False, encoding="utf-8-sig")
+
+    summary = (
+        out.groupby("case")
+        .agg(
+            sum_krd=("sum_krd", "first"),
+            dv01_ytm=("dv01_ytm", "first"),
+            rel_diff_pct=("rel_diff_pct", "first"),
+            n_buckets=("krd", "size"),
+        )
+        .reset_index()
+    )
+    print("\nKRD 与 DV01 交叉校验:")
+    print(summary.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
+    log.info("KRD 明细: %s", out_csv)
+    return {"krd_table": out_csv}
+
+
+# ---------------------------------------------------------------------------
+# Stage: carry（真实曲线上的 carry / roll-down 横截面）
+# ---------------------------------------------------------------------------
+def stage_carry(cfg: Config, **_kw) -> dict[str, Path]:
+    """在真实历史曲线上计算 carry/roll 横截面（只做分解，不产生任何信号/仓位）。"""
+    from ficc.curve.curve import Curve
+    from ficc.data.loader import load_funding_series
+    from ficc.pricing.carry import carry_roll_down
+
+    long = load_long_frame(cfg)
+    panel = to_panel(long)
+    funding = load_funding_series(cfg=cfg).set_index("date")
+    reports = cfg.paths.abs("reports")
+
+    start = pd.Timestamp(cfg.backtest.start_date)
+    end = pd.Timestamp(cfg.backtest.end_date) if cfg.backtest.end_date else panel.index.max()
+    dates = panel.loc[start:end].index
+    # 每 20 个交易日采样一次，够看横截面与时间序列，又不会把 pipeline 拖慢
+    sample = dates[::20]
+
+    rows: list[dict[str, object]] = []
+    for d in sample:
+        y = panel.loc[d].reindex(CANONICAL_TENORS)
+        if y.isna().any():
+            continue
+        curve = Curve(
+            as_of=d.date(),
+            tenors=np.asarray(CANONICAL_TENORS),
+            rates=tuple(y.values),
+            method="hermite",
+        )
+        repo = funding["FDR007"].asof(d) if len(funding) else None
+        if repo is None or pd.isna(repo):
+            continue
+        for tenor in (2.0, 5.0, 10.0, 30.0):
+            try:
+                res = carry_roll_down(
+                    tenor, curve, horizon_days=1, funding_rate_pct=float(repo), cfg=cfg
+                )
+            except Exception as exc:
+                log.warning("carry 计算失败 %s %sY: %s", d.date(), tenor, exc)
+                continue
+            rows.append({"date": d, "tenor_y": tenor, "funding_pct": float(repo), **res})
+
+    out = pd.DataFrame(rows)
+    out_csv = reports / "carry_roll_table.csv"
+    out.to_csv(out_csv, index=False, encoding="utf-8-sig")
+    if not out.empty:
+        summary = (
+            out.groupby("tenor_y")[["carry_annual_pct", "roll_annual_pct", "total_annual_pct"]]
+            .mean()
+            .reset_index()
+        )
+        print("\ncarry / roll 年化均值（%，真实曲线 + FDR007 融资）:")
+        print(summary.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+    log.info("carry/roll 明细: %s", out_csv)
+    return {"carry_table": out_csv}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 STAGES = {
     "data": stage_data,
     "curve": stage_curve,
+    "factors": stage_factors,
+    "bias": stage_bias,
+    "krd": stage_krd,
+    "carry": stage_carry,
 }
+# --all 的执行顺序：数据 → 拟合 → 因子 → 偏差 → KRD → carry
+ALL_ORDER = ["data", "curve", "factors", "bias", "krd", "carry"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,18 +494,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.all and not args.stage:
         parser.error("请指定 --stage 或 --all")
 
-    stages = sorted(STAGES) if args.all else [args.stage]
+    stages = ALL_ORDER if args.all else [args.stage]
     results: dict[str, dict[str, Path]] = {}
     for name in stages:
         log.info("=" * 60)
         log.info("STAGE: %s", name)
         log.info("=" * 60)
         fn = STAGES[name]
-        results[name] = (
-            fn(cfg, start=args.start, end=args.end)
-            if name == "data"
-            else fn(cfg, start=args.start, end=args.end, method=method)
-        )
+        results[name] = fn(cfg, start=args.start, end=args.end, method=method)
 
     log.info("全部完成。产物目录: %s", cfg.paths.abs("reports"))
     return 0

@@ -3,7 +3,7 @@
 > 本文件是**项目唯一权威的代码变更记录**，也是 Code Review 的载体。
 > 维护人：Lead（每轮实现完成后追加）。评审意见请写在文末「Code Review 区」。
 >
-> 版本：v3 ｜ 创建：2026-11-06 ｜ 最近更新：2026-11-06（第二轮：评审 R01–R11 全部修复）
+> 版本：v4 ｜ 创建：2026-11-06 ｜ 最近更新：2026-11-06（第三轮：即期曲线/KRD/PCA/carry-roll，未出信号）
 
 ---
 
@@ -59,7 +59,14 @@
 | C-016 | 2026-11-06 | [fix] | 配置/编排 | 平坦化符号、主流程权重透传、权重模式落盘 |
 | C-017 | 2026-11-06 | [docs] | 文档 | 撤回过强断言、修正贴现应计公式、新增因子识别性/两套产品章节 |
 | C-018 | 2026-11-06 | [chore] | 环境 | 项目本地 `.venv` 隔离环境 + `make setup`/`make check` 可复现 |
-| C-019 | 2026-11-06 | [test] | 测试 | 测试基线升至 **254 项全绿**（评审反例全部固化为测试） |
+| C-019 | 2026-11-06 | [test] | 测试 | 测试基线升至 254 项全绿（评审反例全部固化为测试） |
+| C-020 | 2026-11-06 | [feat] | 曲线层 | 即期曲线 bootstrap（合成假设显式声明，往返误差 2.84e-14） |
+| C-021 | 2026-11-06 | [feat] | 定价层 | KRD 用即期曲线实装（sum(KRD) vs DV01 差 0.1–1.3%） |
+| C-022 | 2026-11-06 | [feat] | 定价层 | Carry/Roll-down 分解（T−1Y 目标、事后五项恒等式） |
+| C-023 | 2026-11-06 | [feat] | 曲线层 | PCA/因子正交性交叉校验 + 10Y 偏差持续性分析 |
+| C-024 | 2026-11-06 | [feat] | 数据层 | 可疑跳变点标记（289 条，只标记不剔除） |
+| C-025 | 2026-11-06 | [feat] | 编排 | run_pipeline 新增 factors/bias/krd/carry 四个 stage |
+| C-026 | 2026-11-06 | [test] | 测试 | 测试基线升至 **319 项全绿** |
 
 ---
 
@@ -69,14 +76,15 @@
 
 ```
 命令：PYTHONPATH=src python3 -m pytest tests/ -q
-基线：254 passed / 0 failed / 1 deselected（network）/ 约 51 秒（含 6204 天真实数据回归）
+基线：319 passed / 0 failed / 1 deselected（network）/ 约 55 秒（含 6204 天真实数据回归）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
 |------|--------|------|------|------|------|
 | 2026-11-06 初 | 0 | — | — | — | 骨架阶段 |
 | 2026-11-06 一轮后 | 202 | 202 | 0 | 1（network） | 数据/定价/曲线/编排/绘图全覆盖 |
-| 2026-11-06 评审修复后 | **254** | 254 | 0 | 1（network） | 新增 52 项：评审 R01–R11 反例 + 外部对账 E/F + 可观测因子 + 原子性/覆盖闸门 |
+| 2026-11-06 评审修复后 | 254 | 254 | 0 | 1（network） | 新增 52 项：评审 R01–R11 反例 + 外部对账 E/F + 可观测因子 + 原子性/覆盖闸门 |
+| 2026-11-06 第三轮（本轮） | **319** | 319 | 0 | 1（network） | 新增 65 项：bootstrap 19、PCA/因子 11、KRD 12、carry 16、可疑点 8（含真实数据回归） |
 
 **统一验证命令（评审时按需执行）**
 
@@ -405,14 +413,94 @@ make fit        # = run_pipeline.py --stage curve
 
 ---
 
+### C-020 [feat] 即期曲线 bootstrap（`src/ficc/curve/bootstrap.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：新增 `SpotCurve`（`times / zero_rates_pct / method / assumptions / source_curve_method`，方法 `discount / zero_rate / forward / to_frame`）与 `bootstrap_spot(curve, *, freq_rule=None)`。按平价债券假设顺序剥离：<1Y 零息单利 `df=1/(1+yt)`、1–7Y 年付、10Y+ 半年付、零息利率线性插值、T+1 结算。
+- **原因**：中债只公开到期（YTM）曲线，而 KRD、现金流贴现、远期利率都需要即期曲线。
+- **影响面**：新增曲线层入口；定价层 KRD 依赖其鸭子类型接口。
+- **验证方式**：
+  ```bash
+  .venv/bin/python -m pytest tests/test_bootstrap.py -q
+  .venv/bin/python -m pytest tests/ -q -k bootstrap
+  ```
+- **实测结果**：三个代表日（2024-06-28 / 2013-06-20 / 2026-11-05）合成平价债往返重估 **最大误差 2.84e-14**（要求 1e-8）；平坦曲线解析解精确复现（年付 `z=100ln(1+y/100)`、单利 `z=100ln(1+yt)/t`）。
+- **风险/遗留**：合成曲线非官方即期曲线；平价假设忽略真实样本券票面分布，短端与超长端误差更大（已写入 docstring 与 `docs/03` §2.4）。
+
+### C-021 [feat] KRD 用即期曲线实装（`src/ficc/pricing/analytics.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：`key_rate_durations(bond, settlement, spot, *, key_tenors, cfg)` 由 `NotImplementedError` 改为实装：即期曲线贴现 → 关键期限 +1bp（关键点间线性插值、两端平推）→ 重估现金流 → `KRD_k = PV_k − PV0`；新增 `spot_dv01` 供一致性校验。
+- **原因**：评审确认 KRD 必须基于即期曲线，不能用"总 DV01 × 期限占比"；这是风险层的必要前置。
+- **影响面**：风险层可直接引用 KRD 向量；接口为鸭子类型（`times / zero_rate / discount`），不 import 曲线层模块。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_analytics.py -q -k krd`
+- **实测结果**：260010.IB（10Y/1.72%/半年付）@2026-05-28：KRD@10Y = −0.085451、sum(KRD) = −0.091961 vs DV01(YTM) = −0.091217（**相对差 0.82%**）；合成 30Y 平价债相对差 0.12%；`sum(KRD)` vs `DV01_spot` 相对差 ~1e-5。
+- **风险/遗留**：与 YTM 口径 DV01 差 0.1–1.3% 属口径差异（复利/息票效应），已写入 docstring；时间口径 ACT/365，需与曲线定价日一致。
+
+### C-022 [feat] Carry / Roll-down 分解（`src/ficc/pricing/carry.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：`carry_roll_down`（事前）与 `decompose_realized`（事后五项分解）。滚动目标锁定 T−1Y；`D_mod` 由合成平价债全价中心差分解析算；融资利率缺失抛 `FundingRateUnavailableError`（**不默认 0**）。
+- **原因**：Carry/Roll-down 是曲线策略的收益主体，也是下一轮回测归因的基础；评审要求先把它做对（T−1Y 而非 7Y）。
+- **影响面**：为策略与归因层提供唯一口径；**本轮不产生任何信号/仓位**。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_carry.py -q`
+- **实测结果**：曲线 1.5%+5bp/年、融资 2%、1 年：9Y 目标 roll = **+0.4109%**（与独立手算 rel 1e-10），错用 7Y = +0.9764%（高估 0.5655pct）；平坦 3%/融资 2% → carry = 1.0000%；+25bp 冲击下 `carry 0 + roll 0.4109 + level −2.0582 + residual 0.0224 = total`（误差 0）；真实数据 5Y/10Y/30Y 年化 carry+roll = 0.778 / 0.719 / 1.314%。
+- **风险/遗留**：2Y 的 T−1Y 落到 1Y（利随本清/贴现），无法分解，横截面从 3Y 起算；`curve_level/shape` 为一阶因子近似，误差计入 residual。
+
+### C-023 [feat] PCA / 因子正交性 + 10Y 偏差持续性（`src/ficc/curve/factors.py`, `bias.py`, `reporting.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：`pca_factors`（全样本/250 日走前滚动/±10bp winsor 三口径）、`factor_crosscheck`、`orthogonalize`；新增 `bias.py`（滚动均值、ACF/AR(1)/半衰期、ADF/KPSS、分段、多期限对照、`bias_verdict`）与 `reporting.py`（即期对比、PCA 载荷、因子相关图）。
+- **原因**：评审要求用可观测因子与 PC1–3 交叉校验，并在"碰信号"之前查清 10Y 系统性偏差是否持续。
+- **影响面**：因子口径修正为 `level_all / level_long / slope / curvature`；PCA 降级为交叉校验工具。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_pca_factors.py -q`
+- **实测结果（关键，含未达标结论）**：
+  - level(长端均值)↔PC1 = **0.297**（未达 >0.95）；诊断性 `level_all`↔PC1 = **0.929** → 结论是**定义错位**（PC1 由短端资金面主导），未调整定义凑数；
+  - slope↔PC2 = 0.324/0.750/0.426、curvature↔PC3 = 0.022/0.320/0.227（三口径）；
+  - 正交化后三因子相关 < 1e-10；
+  - 10Y 残差均值 +4.63bp、88.9% 日为正、ADF p=0.0011、KPSS p=0.010、AR(1) φ=0.884（半衰期 5.63 日）、分段 +2.23/+3.34/+7.16/+5.66bp；
+  - **判定：持续性溢价，但不可直接作为独立错价信号**（无稳定锚、NSS 非无套利公允价、静态交易负 carry），只能作中性化调整项。
+- **风险/遗留**：PCA 载荷时变明显，不可当固定参数；结论依赖 NSS 自由拟合残差，bootstrap 即期曲线落地后可复核。
+
+### C-024 [feat] 数据质量：可疑跳变点标记（`src/ficc/data/quality.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：新增 `detect_suspect_dates`（横截面不一致三判据：`idiosyncratic_spike` / `reversal` / `level_outlier`）、`suspect_summary`、`write_suspect_report`；`fetch_data.py` 增加 `--suspect-report`；`make quality` 加入该步骤。
+- **原因**：本轮做 PCA 时发现 2002–2005 官方文件存在孤立跳变（30Y 2002-04-26 10.54%→次日 2.76%；2004-08-18 短端 9.37%→2.28%），会污染因子估计。
+- **影响面**：**只标记不剔除**，不修改原始数据与版本目录；下游可据清单按 date 排除或 winsor。
+- **验证方式**：`make quality`；`.venv/bin/python -m pytest tests/test_data_quality.py -q`
+- **实测结果**：检出 **289 条**（2002:86 / 2003:81 / 2004:112 / 2005:9 / 2013:1；类型 idio 147 / reversal 139 / level 3；high 82）；三个指定异常全部命中（2002-04-26 30Y Δ+737.4bp、roundtrip 1515.2bp；2004-08-18 的 3M/1Y/2Y Δ−709.9/−628.4/−525.4bp）。
+- **风险/遗留**：2013-06-27（钱荒真实行情）也被标记，需人工区分；阈值是经验值，已写入 docs/02 §6.1。
+
+### C-025 [feat] 编排：新增四个 stage（`scripts/run_pipeline.py`）
+
+- **日期**：2026-11-06
+- **变更内容**：`--stage data|curve|factors|bias|krd|carry`，`--all` 按 `data → curve → factors → bias → krd → carry` 顺序执行；各 stage 统一签名并复用库函数（不重复实现）；`krd` 输出 `reports/krd_table.csv`（含 sum(KRD) vs DV01 相对差），`carry` 输出 `reports/carry_roll_table.csv`（3Y 起，年化横截面）。
+- **原因**：让"即期曲线 → KRD → carry/roll"这条链一条命令可复现，且产物与报告一一对应。
+- **影响面**：`make pipeline` 现在跑完整链路（约 20 秒）。
+- **验证方式**：`PYTHONPATH=src .venv/bin/python scripts/run_pipeline.py --all`
+- **实测结果**：6 个 stage 全部通过；KRD 交叉校验表：260010 0.82%、par2Y 1.35%、par5Y 1.35%、par10Y 0.74%、par30Y 0.12%。
+- **风险/遗留**：`carry` stage 每 20 个交易日采样（非逐日），如需逐日请改 `sample = dates`。
+
+### C-026 [test] 测试基线 254 → 319
+
+- **日期**：2026-11-06
+- **变更内容**：新增 65 项：bootstrap 19、PCA/因子 11、KRD 12、carry 16、可疑点 8（含真实数据回归与干净面板零误报）。
+- **验证方式**：`make test` → `319 passed, 1 deselected`（约 55 秒）。
+- **风险/遗留**：真实网络测试仍默认跳过。
+
+---
+
 ## 六、待办与已知问题
 
 | # | 类型 | 描述 | 计划 / 责任 |
 |---|------|------|-------------|
 | 1 | 缺陷 | 节假日日历未实现（按工作日近似，质量报告会标出节假日为"疑似缺日"） | Phase 2 回测层引入 `CN_IB` 真实日历（`settlement_date` 已按工作日计数，接日历即可） |
 | 2 | 缺口 | 2Y 在 2016-01-04→2019-01-25 缺失 772 天 | `scripts/backfill_2y.py` 已验证 772/772；需要时启用 |
-| 3 | 缺口 | 即期曲线 bootstrap 未做 → KRD 未实现（`NotImplementedError`） | 下一轮（曲线层 + 定价层），解锁风险层 |
-| 4 | 弱识别 | NSS 的 `b1/b2/b3/τ` 仍弱识别，只能作诊断 | **已用可观测因子规避**；若要作因子须走因果方案（冻结 τ / Kalman） |
+| 3 | 缺口 | ~~即期曲线 bootstrap / KRD~~ → 已完成（C-020/C-021） | 风险层可直接用 KRD |
+| 4 | 弱识别 | NSS 的 `b1/b2/b3/τ` 仍弱识别，只能作诊断 | 已用可观测因子规避；已新增 `level_all` 以对齐 PC1（见 `docs/03` §4.7） |
+| 4b | 结论 | 10Y 存在 +4.63bp 持续性溢价，但**不可作独立错价信号** | 仅作中性化调整项；短期偏离需另做 z-score（未做） |
+| 4c | 数据 | 2002–2005 有 289 个可疑跳变点（官方文件问题） | 已标记不剔除；PCA 需 winsor 或按 date 排除 |
 | 5 | 待核实 | 交易手续费率、价差分位数等 8 项经验值 | 见 `docs/00_market_conventions.md` §9 |
 | 6 | 待核实 | 公告案例 F 的起息日 2026-03-25 为反推假设 | 查财政部原始公告核实 |
 | 7 | 设计 | `Config` 严格模式会拒绝新增 YAML 键 | 有意为之；加参数必须同步改模型并登记本文件 |

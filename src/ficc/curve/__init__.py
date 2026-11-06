@@ -18,8 +18,18 @@
 
 from __future__ import annotations
 
+from ficc.curve.bootstrap import SpotCurve, bootstrap_spot
 from ficc.curve.curve import Curve
-from ficc.curve.factors import factor_jump_sensitivity, observable_factors
+from ficc.curve.factors import (
+    PCAResult,
+    factor_correlation,
+    factor_crosscheck,
+    factor_jump_sensitivity,
+    loading_stability,
+    observable_factors,
+    orthogonalize,
+    pca_factors,
+)
 from ficc.curve.fitting import fit_curve, fit_panel, residual_summary
 from ficc.curve.ns import NSResult, fit_ns, ns_rate
 from ficc.curve.nss import NSSResult, fit_nss, nss_rate
@@ -28,13 +38,21 @@ __all__ = [
     "Curve",
     "NSResult",
     "NSSResult",
+    "PCAResult",
+    "SpotCurve",
+    "bootstrap_spot",
+    "factor_correlation",
+    "factor_crosscheck",
     "factor_jump_sensitivity",
     "fit_curve",
     "fit_ns",
     "fit_nss",
     "fit_panel",
+    "loading_stability",
     "ns_rate",
     "nss_rate",
     "observable_factors",
+    "orthogonalize",
+    "pca_factors",
     "residual_summary",
 ]

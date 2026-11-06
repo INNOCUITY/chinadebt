@@ -20,18 +20,25 @@ DV01 单位是「元/报价面值/bp」（默认元/百元面值），与中债�
 报价面值、计息基准从 ``config.pricing`` 读取；需要自定义配置时把 ``cfg``
 显式传给各函数（``cfg=None`` 时才读全局配置，不回落硬编码默认值）。
 
-KRD（关键期限久期）**未实现**：正确算法依赖即期曲线 bootstrap 与曲线插值，
-属于 ``ficc.curve`` 模块，见 :func:`key_rate_durations` 的说明。
+KRD（关键期限久期）用**即期（零息）曲线**实现：只依赖鸭子类型接口
+``spot.times`` / ``spot.zero_rate(t)`` / ``spot.discount(t)``（曲线层
+``ficc.curve.bootstrap`` 的产物；本模块不 import 它，避免循环依赖）。关键期限
+单点 +1bp、其余关键点不动、关键点之间零息利率线性插值、首尾平推；各 KRD 之和
+与平行 +1bp 的即期 DV01 按构造成立（浮点误差级）。**禁止**用
+「总 DV01 × 期限占比」这类近似。
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from typing import Any
 
-from ficc.config import Config
+import numpy as np
+
+from ficc.config import Config, get_config
 from ficc.data.schema import BondStatic
-from ficc.pricing.bond import dirty_price_from_ytm
+from ficc.pricing.bond import cashflows, dirty_price_from_ytm
 from ficc.pricing.conventions import (
     coupon_dates,
     coupon_period,
@@ -47,6 +54,7 @@ __all__ = [
     "key_rate_durations",
     "macaulay_duration",
     "mod_duration",
+    "spot_dv01",
 ]
 
 
@@ -186,38 +194,205 @@ def dv01_finite_diff(
 
 
 # ---------------------------------------------------------------------------
-# KRD（可选，未实现）
+# KRD：即期（零息）曲线关键期限久期
 # ---------------------------------------------------------------------------
+# 1bp 用小数表示（1bp = 0.0001 = 0.01 个百分点）；KRD 内部固定 1bp，不暴露步长参数。
+_BP_DECIMAL: float = 1e-4
+
+
+def _resolve_config(cfg: Config | None) -> Config:
+    """显式 cfg 优先；``None`` 时读全局配置（不回落硬编码默认值）。"""
+    return cfg if cfg is not None else get_config()
+
+
+def _resolve_key_tenors(key_tenors: Sequence[float] | None, cfg: Config | None) -> np.ndarray:
+    """关键期限网格：显式参数优先，否则读 ``cfg.risk.key_tenors_krd``。"""
+    raw = (
+        list(key_tenors)
+        if key_tenors is not None
+        else list(_resolve_config(cfg).risk.key_tenors_krd)
+    )
+    keys = np.asarray(raw, dtype=float)
+    if keys.ndim != 1 or keys.size < 2:
+        raise ValueError(f"key_tenors 至少需要 2 个期限点，实际 {raw!r}")
+    if not np.all(np.isfinite(keys)):
+        raise ValueError(f"key_tenors 含 NaN/inf: {raw!r}")
+    if np.any(keys <= 0):
+        raise ValueError(f"key_tenors 必须为正数（单位：年）: {raw!r}")
+    if np.any(np.diff(keys) <= 0):
+        raise ValueError(f"key_tenors 必须严格递增: {raw!r}")
+    return keys
+
+
+def _validate_spot(spot: Any) -> None:
+    """校验即期曲线鸭子类型接口存在且可用（不 import 曲线层实现）。"""
+    for attr in ("times", "zero_rate", "discount"):
+        if not hasattr(spot, attr):
+            raise TypeError(
+                f"spot 缺少必需成员 {attr!r}：需要鸭子类型接口 "
+                "times / zero_rate(t) / discount(t)（见 key_rate_durations docstring）"
+            )
+    times = np.asarray(spot.times, dtype=float).ravel()
+    if times.size < 2 or np.any(np.diff(times) <= 0):
+        raise ValueError("spot.times 必须是一维、严格递增、至少 2 个点的期限网格")
+
+
+def _spot_discount_vector(spot: Any, times: np.ndarray) -> np.ndarray:
+    """把 ``spot.discount`` 的返回值统一成与 ``times`` 同形的一维数组。
+
+    契约允许 ``discount`` 支持数组；若实现只接受标量（抛 ``TypeError``），
+    这里自动退化为逐点求值，保证鸭子类型接口的最小可用性。
+    """
+    try:
+        raw = spot.discount(times)
+    except TypeError:  # 只支持标量的实现
+        raw = np.asarray([spot.discount(float(t)) for t in times], dtype=float)
+    disc = np.asarray(raw, dtype=float)
+    if disc.ndim == 0:  # 允许只接受标量的实现
+        disc = np.full(times.shape, float(disc))
+    disc = disc.ravel()
+    if disc.size != times.size:
+        raise ValueError(f"spot.discount 返回长度 {disc.size} 与时间点数 {times.size} 不符")
+    if not np.all(np.isfinite(disc)) or np.any(disc <= 0):
+        raise ValueError("spot.discount 返回非有限值或非正折算因子")
+    return disc
+
+
+def _cashflow_times_and_amounts(
+    bond: BondStatic, settlement: date, *, cfg: Config | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """债券未来现金流的（年化时间, 金额）数组；时间口径 ACT/365。"""
+    frame = cashflows(bond, settlement, cfg=cfg)
+    times = np.asarray([day_count(settlement, d) / 365.0 for d in frame["date"]], dtype=float)
+    amounts = np.asarray(frame["amount"], dtype=float)
+    if times.size == 0:
+        raise ValueError(f"{bond.code}@{settlement}: 无未来现金流，无法计算 KRD")
+    return times, amounts
+
+
+def _key_rate_weights(key_tenors: np.ndarray, times: np.ndarray) -> np.ndarray:
+    """关键期限线性插值权重矩阵 ``(n_keys, n_times)``。
+
+    每个现金流时间 ``t`` 的零息利率写成关键点利率的线性组合
+    ``r(t) = Σ_k w_k(t) · r(τ_k)``：区间内按相邻关键点线性插值，首尾
+    **平推（flat，权重落在最近端点）**。所有权重每列之和恒为 1，因此
+    「所有关键点同时 +1bp」等价于曲线整体平行 +1bp（KRD 求和精确闭合）。
+    """
+    keys = np.asarray(key_tenors, dtype=float)
+    t = np.asarray(times, dtype=float)
+    n_keys = keys.size
+    weights = np.zeros((n_keys, t.size), dtype=float)
+
+    idx = np.searchsorted(keys, t, side="right") - 1
+    idx = np.clip(idx, 0, n_keys - 2)
+    left = keys[idx]
+    right = keys[idx + 1]
+    frac = (t - left) / (right - left)
+    frac = np.clip(frac, 0.0, 1.0)  # t 在首端点左侧/末端点右侧时 → 平推
+    cols = np.arange(t.size)
+    weights[idx, cols] = 1.0 - frac
+    weights[idx + 1, cols] = frac
+    return weights
+
+
+def _spot_cashflows(
+    bond: BondStatic, settlement: date, spot: Any, *, cfg: Config | None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """返回 ``(现金流时间, 现金流金额, 基准折算因子)``，只是 spot 求值一次。"""
+    times, amounts = _cashflow_times_and_amounts(bond, settlement, cfg=cfg)
+    disc0 = _spot_discount_vector(spot, times)
+    return times, amounts, disc0
+
+
+def spot_dv01(bond: BondStatic, settlement: date, spot: Any, *, cfg: Config | None = None) -> float:
+    """即期曲线平行 +1bp 的 DV01（**带符号**：多头为负值），元/报价面值/bp。
+
+    零息利率为连续复利（百分数），平行 +1bp 使 ``discount(t)`` 乘以
+    ``exp(-1e-4·t)``，故
+
+    ``DV01_spot = Σ_i A_i · D(t_i) · (exp(-1e-4·t_i) − 1)``
+
+    与 :func:`dv01` 的 YTM 口径不同：这里直接对**零息曲线**做平行移动，不做
+    「把曲线压成单一到期收益率」的假设。KRD 之和应与此值在浮点误差内相等。
+    """
+    validate_settlement(bond, settlement)
+    _validate_spot(spot)
+    times, amounts, disc0 = _spot_cashflows(bond, settlement, spot, cfg=cfg)
+    pv0 = float(np.dot(amounts, disc0))
+    pv_parallel = float(np.dot(amounts, disc0 * np.exp(-_BP_DECIMAL * times)))
+    return pv_parallel - pv0
+
+
 def key_rate_durations(
     bond: BondStatic,
     settlement: date,
-    curve_tenors: Sequence[float],
-    curve_ytm_pct: Sequence[float],
+    spot: Any,
     *,
     key_tenors: Sequence[float] | None = None,
     cfg: Config | None = None,
 ) -> dict[float, float]:
-    """关键期限久期（KRD）：单点 +1bp、其余点插值不变，重估债券的 DV01 向量。
+    """即期曲线口径的关键期限久期（KRD），单位 **元/报价面值/bp**。
 
-    返回 ``dict[tenor, dv01]``（元/报价面值/bp）；各 KRD 之和应 ≈ 总 DV01。
+    符号约定
+    --------
+    **多头、收益率上行 → KRD 为负值**（价格下跌）；``sum(KRD)`` 与
+    :func:`spot_dv01` 同号。若分析空头，请自行取负。
 
-    未实现（明确留白，不糊弄）
-    --------------------------
-    正确做法（memo §3.3 陷阱 3）需要跨模块协作：
+    算法（memo §3.3 陷阱 3 的正确做法，**不是**「总 DV01 × 期限占比」）
+    ------------------------------------------------------------------
+    1. 用 ``spot.discount(t)`` 贴现本券全部现金流得基准全价 ``PV0``（现券多头）；
+    2. 对第 k 个关键期限点把该点零息利率 **+1bp**，其余关键点不动；
+       关键点之间零息利率**线性插值**，首尾**平推（flat）**（区间外权重落在
+       最近端点）。等价于重估折算因子
+       ``D_k(t) = D(t)·exp(-1e-4·w_k(t)·t)``，其中 ``w_k(t)`` 是插值权重；
+    3. 用重估后的曲线重新贴现全部现金流，``KRD_k = PV_k − PV0``；
+    4. 遍历全部关键期限返回 ``dict[tenor, krd]``。
 
-    1. 用 ``ficc.curve`` 把 YTM 曲线 bootstrap 成**即期（零息）曲线**；
-    2. 对某个关键期限点 +1bp，其余关键点不动，按曲线插值规则重算即期曲线；
-    3. 用重估后的即期曲线贴现本券全部现金流，得到该点的 DV01 贡献；
-    4. 遍历全部关键期限，得到 KRD 向量。
+    KRD 内部**固定 1bp 步长**，没有 ``bp`` 参数（不做外部步长差分）。
 
-    ``ficc.pricing`` 层只有单券 YTM，没有曲线对象，无法在不引入虚假假设的前提下
-    计算 KRD。为拒绝「总 DV01 × 期限占比」这类糊弄式近似（memo 明确禁止），
-    这里显式抛 :class:`NotImplementedError`。
+    一致性
+    ------
+    - ``sum(KRD) ≈ spot_dv01``（所有关键点同时 +1bp = 曲线整体平行 +1bp，
+      因为线性插值/平推权重每列之和恒为 1）。注意 KRD 是逐点非线性重估、
+      DV01_spot 是平行重估，两者差一个 O(bump·t) 的二阶项（10Y 约 2e-5 相对，
+      30Y 仍 <1e-3），测试按相对误差 <1e-3 验收；
+    - ``sum(KRD)`` 与 YTM 口径 :func:`dv01` 同量级：对 10Y 国债相对差 < 2%。
+      差异来源：① YTM 口径把整条曲线压成单一到期收益率并假设它平行移动；
+      ② 债券年复利 ``(1+y/f)^-i`` vs 即期连续复利 ``exp(-z·t)``（二者是非线性
+      映射）；③ 曲线形状/息票效应（各期现金流对应不同零息利率、KRD 分布在
+      整条曲线上，而 YTM DV01 用单一修正久期概括）。
 
-    TODO: ``ficc.curve`` 提供 ``bootstrap_spot()`` + ``shift_key_tenor()`` 后，
-    在本函数中实现上述 1–4 步，并用「各 KRD 之和 ≈ 总 DV01」做回归测试。
+    Parameters
+    ----------
+    bond : BondStatic
+    settlement : date
+    spot : Any
+        鸭子类型即期曲线：``times``（严格递增，年）、``zero_rate(t)``（连续复利，
+        百分数）、``discount(t) = exp(-zero_rate(t)/100·t)``。
+    key_tenors : Sequence[float] | None
+        关键期限（年）；``None`` 时读 ``cfg.risk.key_tenors_krd``。
+    cfg : Config | None
+
+    Returns
+    -------
+    dict[float, float]
+        关键期限 → KRD（元/报价面值/bp，多头为负）。
+
+    Notes
+    -----
+    时间口径：现金流时间按 ``(现金流日 − 结算日).days / 365`` 映射到即期曲线
+    （ACT/365）。要求 ``settlement`` 与 ``spot`` 的定价日一致——``spot`` 应是
+    以结算日为起点的即期（零息）曲线；跨定价日使用会让时间轴错位。
     """
-    raise NotImplementedError(
-        "key_rate_durations 需要即期曲线 bootstrap（ficc.curve 模块），当前定价层不实现；"
-        "见本函数 docstring 的 TODO 与 docs/00_market_conventions.md §3.3"
-    )
+    validate_settlement(bond, settlement)
+    _validate_spot(spot)
+    keys = _resolve_key_tenors(key_tenors, cfg)
+    times, amounts, disc0 = _spot_cashflows(bond, settlement, spot, cfg=cfg)
+    pv0 = float(np.dot(amounts, disc0))
+    weights = _key_rate_weights(keys, times)
+
+    result: dict[float, float] = {}
+    for index, tenor in enumerate(keys):
+        bumped = disc0 * np.exp(-_BP_DECIMAL * weights[index] * times)
+        result[float(tenor)] = float(np.dot(amounts, bumped)) - pv0
+    return result
