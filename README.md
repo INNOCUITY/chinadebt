@@ -78,6 +78,17 @@ docs/code.md     代码变更日志 + Code Review
 - **必须归因**：收益拆到 `carry / roll-down / 平移 / 形态 / 残差`，拆不出来就不下结论。
 - **诚实**：结论允许是"没有稳健超额收益"。
 
+## 环境与复现
+
+```bash
+make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
+make check    # = ruff check + ruff format --check + pytest（254 项，全部离线）
+```
+
+- 所有命令优先使用 `.venv/bin/python`，不依赖 anaconda 或系统 Python。
+- Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
+- 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
+
 ## 开发规范
 
 - **每次代码变更都必须在 `docs/code.md` 追加一条记录**（编号、变更内容、原因、影响面、验证命令、风险遗留）。
