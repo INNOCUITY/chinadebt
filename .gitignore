@@ -1,0 +1,40 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.venv-*/
+venv/
+
+# ---------- 工具缓存 ----------
+.mplconfig/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---------- 数据（体积大 / 许可受限，一律不入库；只保留目录占位） ----------
+# 中债版权「未经允许 请勿转载」：原始 xlsx、parquet、manifest/指针 均不可再分发
+data/**
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/metadata/.gitkeep
+!data/raw_spike/.gitkeep
+
+# ---------- 回测/研究产物（可由 make data && make fit 重建） ----------
+artifacts/*
+!artifacts/.gitkeep
+reports/figures/*
+!reports/figures/.gitkeep
+# 大体积逐日明细（可重建），只保留汇总统计
+reports/curve_fit_fitted_*.csv
+reports/curve_fit_residuals_*.csv
+reports/curve_fit_params*.csv
+
+# ---------- 系统 ----------
+.DS_Store
+*.log

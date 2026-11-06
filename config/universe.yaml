@@ -1,0 +1,53 @@
+# 研究标的池定义
+# 第一版：只做国债收益率曲线本身 + 少量关键期限现券，保持口径干净。
+
+universe_version: "v0.1"
+
+# ---------- 期限池 ----------
+# 用于 NS/NSS 拟合与曲线交易的关键期限（单位：年）
+tenor_grid:
+  # 统一网格（实测可得，2019-01-28 起 17 个期限点齐全）
+  all: [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
+  fit: [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
+  pca: [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
+  krd: [2.0, 5.0, 10.0, 30.0]          # 关键期限久期分桶
+
+# 合成债券（无个券估值数据下的替代方案，见 project_plan 决策 1b）
+# 付息频率必须按期限条款设置：这是中债官方口径（memo 0-5 / 2.x）
+synthetic_bonds:
+  face_value: 100.0
+  coupon_rule: "par"          # 以当前曲线对应期限收益率设为票面 → 合成债初始接近平价
+  bonds:
+    - { maturity: 2.0,  freq: 1, accrual: "coupon",     note: "2Y 年付" }
+    - { maturity: 5.0,  freq: 1, accrual: "coupon",     note: "5Y 年付" }
+    - { maturity: 10.0, freq: 2, accrual: "coupon",     note: "10Y 半年付" }
+    - { maturity: 30.0, freq: 2, accrual: "coupon",     note: "30Y 半年付" }
+  # 1Y 国债为到期一次还本付息，走利随本清分支（Phase 2 若用到再加）
+  lump_sum_bonds:
+    - { maturity: 1.0, accrual: "lump_sum", note: "1Y 到期一次还本付息" }
+
+# ---------- 曲线交易对 ----------
+curve_spreads:
+  - { name: "2s10s", short: 2.0, long: 10.0, description: "最经典的陡平交易" }
+  - { name: "1s10s", short: 1.0, long: 10.0, description: "短端受资金面影响更大" }
+  - { name: "5s10s", short: 5.0, long: 10.0, description: "中场段相对价值" }
+  - { name: "10s30s", short: 10.0, long: 30.0, description: "超长端供给与配置盘定价" }
+
+# ---------- 蝶式 ----------
+butterflies:
+  - { name: "2-5-10", left: 2.0, belly: 5.0, right: 10.0 }
+
+# ---------- 现券池（Phase 2 起启用） ----------
+# 说明：优先使用"活跃券"以保证价格可信；具体券码待数据可得性确认后填入。
+# 银行间国债代码规则：yy + 期数 + .IB，例如 240011.IB
+bonds: []
+#  - code: "240011.IB"
+#    maturity: 2034-05-25
+#    coupon: 2.28
+#    freq: 1
+#    tag: "10Y_active"
+
+# ---------- 基准 ----------
+benchmarks:
+  - { name: "ladder_bh", type: "buy_and_hold_ladder" }
+  # - { name: "cgb_total_return", type: "index" }   # 需数据源支持

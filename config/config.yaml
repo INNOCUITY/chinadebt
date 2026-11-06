@@ -1,0 +1,245 @@
+# ============================================================
+# 全局配置：路径 / 数据 / 金融口径 / 成本 / 回测 / 风险 / 基准
+# 约定：所有"金融口径"参数集中在此，代码内不得硬编码。
+# 依据：docs/00_market_conventions.md（中债官方口径 + 交易实务）与
+#       docs/00_data_feasibility.md（数据实测）。
+# 标记 [待核实] 的为经验值，使用前需按 memo 第 9 节复核。
+# ============================================================
+
+project:
+  name: "中国国债收益率曲线量化交易与风险管理系统"
+  seed: 42
+  timezone: "Asia/Shanghai"
+
+paths:
+  raw: "data/raw"
+  interim: "data/interim"
+  processed: "data/processed"
+  metadata: "data/metadata"
+  artifacts: "artifacts"
+  reports: "reports"
+
+# ============================================================
+# 数据（全部实测确认，详见 docs/00_data_feasibility.md）
+# ============================================================
+data:
+  primary_source: "chinabond"          # 中债估值中心官网存档（主源）
+  fallback_sources: ["akshare", "eastmoney"]
+  curve_name: "中债国债收益率曲线(到期)"
+  # 【官方】中债公开发布到期/即期/远期的到期/远期的即期四类曲线，
+  # 但公开可批量下载的只有"到期(YTM)曲线" → 即期/远期须自行 bootstrap。
+  yc_def_id: "2c9081e50a2f9606010a3068cae70001"
+  start_date: "2002-01-04"             # 数据可获得起点
+  end_date: null                       # null = 最新（每工作日 17:30 左右发布）
+  # 统一期限网格：去掉 0d 与 40/50Y（40/50Y 2009 年才有，且与 30Y 高度相关）
+  tenors: [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
+  # 已知缺陷（建模必须处理）
+  known_gaps:
+    - { field: "2y", start: "2016-01-04", end: "2019-01-25", note: "772 个交易日缺失，需 downBzqxDetail 逐日回补" }
+    - { field: "4y/6y/8y/9y", start: "2016-01-04", end: "2099-12-31", note: "中债已停发，改用统一网格" }
+  trading_calendar: "CN_IB"            # 银行间日历，每年约 248–251 个交易日
+  refresh: "daily"
+  # 数据更新行为（R06）：当年文件强制刷新 + 最新数据落后告警
+  max_staleness_days: 5                # 最新数据落后今天超过 N 个自然日则告警
+  refresh_current_year: true           # 在线抓取强制刷新当年文件（历史完整年份复用快照）
+  # 抓取行为（生产化管道）
+  http:
+    timeout_s: 40
+    retries: 3
+    backoff_s: 1.5
+    throttle_s: 0.0
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+  save_raw_xlsx: true                  # 保留官方原始 xlsx（不可变快照）
+
+# ============================================================
+# 2Y 期限点回补（2016-01-04 → 2019-01-25 缺失 772 个交易日）
+# 默认关闭：回测起点已设 2019-01-28，回补仅在需要扩样本时启用
+# ============================================================
+backfill:
+  enabled: false
+  tenors: [2.0]
+  start: "2016-01-04"
+  end: "2019-01-25"
+  throttle_s: 0.3
+  validate_against: 10.0               # 回补日须校验 10Y 与年度文件一致（容差 1e-4）
+
+# ============================================================
+# 曲线（注意：中债曲线本身已是 Hermite 三次插值成品）
+# NS/NSS 的作用不是"插值"，而是：① 得到可解析求导的平滑曲线；
+# ② 提取 level/slope/curvature 因子；③ 做情景冲击。见 docs/03_methodology.md
+# ============================================================
+curve:
+  fit_method: "nss"            # linear | hermite | ns | nss
+  ns_tau0: 1.5
+  nss_tau1: 6.0
+  weights: "inverse_maturity_bucket"
+  smoothness_lambda: 0.0
+  anchor_short_end: true       # 短端（<=1Y）贴近市场
+  min_valid_tenors: 4
+  # 因子分解：对关键期限的收益率变化做 PCA
+  pca_tenors: [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
+  pca_window: 250              # 滚动窗口估计载荷
+
+# ============================================================
+# 定价与计息口径（【官方】中债估值公式）
+# ============================================================
+pricing:
+  day_count: "ACT/ACT"              # 银行间：实际/实际，算头不算尾，闰年 2/29 计息
+  day_count_exchange: "ACT/365"     # 交易所：实际/365，2/29 不计息
+  face_value: 100.0
+  settlement_lag_days: 1            # 银行间现券 T+1 结算（DVP）
+  price_convention: "clean_quote_full_pnl"   # 报价用净价，结算与 PnL 用全价
+  # 付息频率按券条款，不按期限硬编码
+  frequency: 2                      # 默认值；仅 10Y/30Y 为半年付
+  frequency_by_tenor:
+    "1Y": "lump_sum"                # 到期一次还本付息（利随本清）
+    "2Y-7Y": 1                      # 年付
+    "10Y-30Y": 2                    # 半年付
+  # 应计利息三分支公式（见 memo 2.2）
+  accrual_formula:
+    coupon: "C/f * t/TS"            # 规则附息
+    lump_sum: "K*C + C*t/TY"        # 利随本清
+    discount: "(100 - Pd) * t / T"  # 贴现/零息（原文 100-Pd/T*t 是缺括号的笔误）
+  # 校验基准：中债估值同时发布 全价/应计利息/净价/修正久期/凸性/基点价值，用于对账
+  reconciliation:
+    enabled: true
+    max_price_error_cny: 0.05
+
+# ============================================================
+# 交易成本（成本模型的核心输入，见 memo 第 4 节）
+# ============================================================
+costs:
+  fee_bp: 0.2                       # 交易手续费（单边，含交易中心）[待核实]
+  settlement_fee_cny_per_trade: 135.0  # 【官方】现券结算费 135 元/笔（2026-09-01 起）
+  # 买卖价差：单边成本 = 双边价差 / 2
+  spread_bp_active: 0.35            # 10Y 活跃券，双边 0.2–0.5bp [待核实]
+  spread_bp_illiquid: 1.5           # 非活跃老券，双边 1–3bp [待核实]
+  spread_bp_ultra_long: 3.0         # 30Y 超长券，双边 2–5bp [待核实]
+  # 融资成本：真 DR007 无免费源，用 FDR007（银银间回购定盘利率）代理
+  # 【官方】DR007 2026-11-05 = 1.3179%；FDR007 与 DR007 日均差 1–3bp [待核实]
+  repo_rate_source: "FDR007"        # FDR007 | FR007 | const
+  repo_rate_fallback_const: 0.01318 # 2026-11-05 DR007
+  repo_rate_sensitivity_bp: [0, 25, 50]
+  repo_haircut: 0.0
+  short_leg_cost_bp: 0.0
+  # 市场冲击（保守，第一版仅对超大单生效）
+  market_impact:
+    enabled: false
+    coef_bp_per_pct_adv: 0.0
+
+# ============================================================
+# 组合与账户约束（贴近银行自营真实约束）
+# ============================================================
+portfolio:
+  short_leg_mode: "over_under_weight"   # over_under_weight | futures | irs
+  allow_short_cash_bond: false          # 银行间现券不可裸卖空
+  max_single_bond_weight: 0.3
+  # 合成债券（无个券估值数据时的替代方案，见 plan 决策 1b）
+  synthetic:
+    face_value: 100.0
+    coupon_rule: "par"                  # 以当前曲线对应期限收益率设为票面 → 初始接近平价
+    maturities: [2.0, 5.0, 10.0, 30.0]
+
+# ============================================================
+# 国债期货（Phase 3 扩展，第一版不启用）
+# ============================================================
+futures:
+  enabled: false
+  # 【官方】交易所最低保证金比例
+  margin_ratio: { TS: 0.005, TF: 0.010, T: 0.020, TL: 0.035 }
+  broker_margin_addon: 0.025           # 期货公司加收 2–3pct [待核实]
+  multiplier_cny_per_point: 10000      # 100 万面值 / 100
+  fee_cny_per_lot: 3.0                 # [待核实]
+  ctd_switch_model: "simple"
+
+# ============================================================
+# 回测
+# ============================================================
+backtest:
+  # 起点 2019-01-28：17 个期限点齐全，避开 2Y 缺失区间（2s10s 需要 2Y）
+  start_date: "2019-01-28"
+  end_date: "2025-12-31"
+  execution: "next_close"              # next_close | next_open
+  signal_lag_days: 1                   # 硬约束：signal_date < trade_date
+  annual_days: 250                     # 【行业共识】策略收益/Sharpe 年化
+  accrual_days: 365                    # 应计/持有期收益用 365（实际/实际）
+  init_cash: 100_000_000.0
+  max_leverage: 2.0
+  rebalance: "daily"                   # daily | weekly
+  # 骑乘目标：10Y 持仓的 roll-down 目标是 9Y（不是 7Y！）
+  roll_down_step_years: 1.0
+
+# ============================================================
+# 策略参数
+# ============================================================
+strategy:
+  steepener:
+    short_tenor: 2.0
+    long_tenor: 10.0
+    zscore_window: 60
+    entry_z: 1.0
+    exit_z: 0.25
+    target_dv01: 100_000.0             # 元/bp
+    dv01_neutral: true                 # 必须 DV01 中性；名义本金中性残留 7 万元/bp
+  carry_rolldown:
+    holding_tenor_band: [3.0, 7.0]
+    horizon_days: 20
+    top_k: 2
+    roll_target: "tenor_minus_1y"      # 滚到 T-1Y 的插值点
+  relative_value:
+    zscore_window: 120
+    entry_z: 1.5
+    exit_z: 0.5
+    max_position_per_tenor: 0.4
+
+# ============================================================
+# 风险
+# ============================================================
+risk:
+  # DV01 = 全价 × 修正久期 × 1bp，单位 元/100 元面值/bp（中债"估价基点价值"同口径）
+  dv01_basis: "full_price_per_100_face"
+  dv01_unit: "CNY_per_bp_per_100_face"
+  krd_method: "bootstrap_spot_then_shift_each_key_tenor"
+  key_tenors_krd: [1, 2, 3, 5, 7, 10, 15, 20, 30]
+  convexity_basis: "full_price_per_100_face"
+  confidence: [0.95, 0.99]
+  var_method: "historical"             # historical | parametric
+  var_window: 250
+  var_backtest: "kupiec"
+  limits:
+    max_dv01: 500_000.0                # 元/bp
+    max_duration: 8.0
+    max_krd_share: 0.5                 # 单一关键期限 KRD 占比上限
+    max_single_bond_weight: 0.3
+    max_drawdown_stop: 0.05
+  stress_scenarios:
+    - { name: "平行上移100bp", type: "parallel", bp: 100 }
+    - { name: "平行下移100bp", type: "parallel", bp: -100 }
+    # 约定：type 表达方向，bp 表达"幅度"且必须 >= 0（Curve.shock 内部按 type 决定正负）
+    - { name: "陡峭化25bp", type: "steepen", bp: 25 }
+    - { name: "平坦化25bp", type: "flatten", bp: 25 }
+    - { name: "蝶式25bp", type: "butterfly", bp: 25 }
+    # 历史情景：用真实历史曲线变动重演
+    - { name: "2013钱荒", type: "historical", start: "2013-05-20", end: "2013-06-20", window: 20 }
+    - { name: "2020疫情", type: "historical", start: "2020-01-20", end: "2020-04-30", window: 20 }
+    - { name: "2022理财赎回潮", type: "historical", start: "2022-11-01", end: "2022-12-31", window: 20 }
+
+# ============================================================
+# 基准
+# ============================================================
+benchmark:
+  # 基准 A：与组合 DV01 相同的买入持有阶梯组合（回答"我是不是只是吃久期"）
+  ladder_weights: { 1.0: 0.2, 3.0: 0.2, 5.0: 0.2, 7.0: 0.2, 10.0: 0.2 }
+  # 基准 B：中债指数（财富口径，含票息再投资）
+  index_name: "中债-国债总财富(总值)指数"
+  index_code: "CBA00601"               # 财富；净价 CBA00602 / 全价 CBA00603
+  index_code_1_3y: "CBA35201"
+  index_code_7_10y: "CBA06501"
+  use_index_benchmark: true
+  risk_free: "DR007"                   # Sharpe 的无风险利率，当前 1.32%
+  risk_free_fallback_const: 0.01318
+
+report:
+  language: "zh"
+  figures_format: "png"
+  dpi: 150
