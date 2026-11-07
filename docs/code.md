@@ -81,7 +81,15 @@
 | C-038 | 2026-11-07 | [feat] | 对账 | 独立对账 `portfolio/reconcile.py`（六项检查 + 篡改检测） |
 | C-039 | 2026-11-07 | [fix] | 账本 | 融资事件日期契约（自然日计息、合并到 NAV 日） |
 | C-040 | 2026-11-07 | [feat] | 编排 | `scripts/run_ledger_recon.py` + `make recon` 端到端验证 |
-| C-041 | 2026-11-07 | [test] | 测试 | 测试基线升至 **406 项全绿** |
+| C-041 | 2026-11-07 | [test] | 测试 | 测试基线升至 406 项全绿 |
+| C-042 | 2026-11-07 | [fix] | 基准 | 基准 KRD 与总 DV01 同源（即期曲线），修复无法复现的 bug |
+| C-043 | 2026-11-07 | [feat] | 组合约束 | 9 项约束 + "相对基准 DV01 中性"正式定义 |
+| C-044 | 2026-11-07 | [feat] | 组合构建 | 目标 KRD → 面值/订单（有界 LS、禁裸空、lot 取整） |
+| C-045 | 2026-11-07 | [feat] | 策略 | 三个基线策略 + `relative_tilt` 风险预算 |
+| C-046 | 2026-11-07 | [feat] | 回测 | 日频引擎（T+1、约束投影、成本/换手/暴露记录） |
+| C-047 | 2026-11-07 | [fix] | 账本/对账 | `pending_cash`（trade-date 会计）修复 NAV 双计 |
+| C-048 | 2026-11-07 | [fix] | 约束/引擎 | 现金预算改 NAV 比例；成本日期过滤修复 |
+| C-049 | 2026-11-07 | [test] | 测试 | 测试基线升至 **475 项全绿** |
 | C-027 | 2026-11-07 | [docs] | 独立审查 | 复核 a–e，登记 R12–R21，修订结论与 Phase 2 验收条件 |
 
 ---
@@ -92,7 +100,7 @@
 
 ```
 命令：PYTHONPATH=src python3 -m pytest tests/ -q
-基线：406 passed / 0 failed / 1 deselected（network）/ 约 60 秒（含 6204 天真实数据回归）
+基线：475 passed / 0 failed / 1 deselected（network）/ 约 260 秒（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -102,7 +110,8 @@
 | 2026-11-06 评审修复后 | 254 | 254 | 0 | 1（network） | 新增 52 项：评审 R01–R11 反例 + 外部对账 E/F + 可观测因子 + 原子性/覆盖闸门 |
 | 2026-11-06 第三轮 | 319 | 319 | 0 | 1（network） | 新增 65 项：bootstrap 19、PCA/因子 11、KRD 12、carry 16、可疑点 8 |
 | 2026-11-07 第四轮（评审修复） | 366 | 366 | 0 | 1（network） | 新增 47 项：bootstrap 结算日、因子契约/同口径 PCA、KRD 契约、老化重估、known_at、pipeline 指纹守卫 |
-| 2026-11-07 第五轮（账本+对账） | **406** | 406 | 0 | 1（network） | 新增 40 项：账本 21（跨付息/闰年/国庆/换券/到期/融资）、对账 19（六项检查 + 六类篡改检测） |
+| 2026-11-07 第五轮（账本+对账） | 406 | 406 | 0 | 1（network） | 新增 40 项：账本 21（跨付息/闰年/国庆/换券/到期/融资）、对账 19（六项检查 + 六类篡改检测） |
+| 2026-11-07 第六轮（约束+策略） | **475** | 475 | 0 | 1（network） | 新增 69 项：基准 9、约束 15、构建 16、策略 18、账本/对账 pending_cash 8、引擎集成 3 |
 | 2026-11-07 独立复核 | **319** | 319 | 0 | 1（network） | 关闭 debugging/capture 后 exit 0；默认 make check 的 readline 环境故障未修复 |
 
 **统一验证命令（评审时按需执行）**
@@ -674,6 +683,82 @@ make fit        # = run_pipeline.py --stage curve
 - **变更内容**：新增 40 项：账本 21（无交易持有、跨付息、闰日、国庆、部分减仓、到期兑付、融资利率变动、零成本、三层日期报错、未结算不计现金、条款锁定老化、融资日期契约）+ 对账 19（六项检查 + 六类篡改 + 容差边界 + 外部现金流 + 独立性证据）。
 - **验证方式**：`make check`。
 - **风险/遗留**：真实网络测试仍默认跳过。
+
+---
+
+### C-042 [fix] 基准 KRD 与总 DV01 必须同源
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/portfolio/benchmark.py`、`tests/test_benchmark.py`
+- **变更内容**：基准每腿的 KRD/总 DV01 统一用**即期曲线 KRD**（`bootstrap_spot` + `key_rate_durations`）；删除"把即期 KRD 形状按 YTM DV01 总量重新缩放"的逻辑。
+- **原因**：集成时发现 4 腿基准**无法被组合构建精确复现**——构建矩阵用即期 KRD，基准却用 YTM 总量缩放，导致 `solve_faces` 残差 ~0.9%、面值系统性少一个 lot（25M→24M），进而久期/中性判断全部失真。
+- **验证方式**：新增回归 `test_benchmark_is_exactly_reproducible_by_construction`：`solve_faces(benchmark.krd)` 必须精确还原基准面值（残差 <1e-6，实测 1.9e-11）；`test_benchmark_manual_numbers_on_flat_curve` 改为即期口径。
+- **风险/遗留**：基准 `duration` 仍用 YTM 修正久期（汇总指标），已在 docstring 注明与 KRD 口径不同源但用途不同。
+
+### C-043 [feat] 组合约束：相对基准 DV01 中性（9 项）
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/portfolio/constraints.py`、`tests/test_constraints.py`
+- **变更内容**：`PortfolioRisk`（total_dv01/krd/duration/market_value/cash/nav/bond_weights）、`portfolio_risk(positions|snapshot, curve)`（KRD 经即期曲线单点冲击、市值加权久期）、`check_constraints(...)` 返回 9 项违规与全部实际指标。
+- **原因**：现券禁裸空 → 绝对 DV01=0 不可实现；必须把"中性"定义为相对基准的有界偏离，并同时受现金/杠杆/集中度/回撤约束。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_constraints.py -q`（15 项：9 项边界 + 空组合 + 组合=基准 0 违反）。
+- **实测结果**：组合=基准时 `relative_krd_max_dev=0`、`ratio=1.0`、`duration_dev=0`；空组合不崩溃。
+- **风险/遗留**：`krd_share` 与单券权重在面值取整后可能出现 0.300x 的临界越界，引擎用投影兜住。
+
+### C-044 [feat] 组合构建：目标 KRD → 面值/订单
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/portfolio/construction.py`、`tests/test_construction.py`
+- **变更内容**：`krd_matrix`（元/bp per 100 面值）、`solve_faces`（`lsq_linear(bvls)`、`face≥0`、可选上限、**四舍五入到 lot**）、`build_orders`（对比当前持仓生成订单、跳过碎单、卖出超持仓抛错）。
+- **原因**：策略只给目标 KRD，必须可靠地映射为可成交面值；禁裸空要求有界最小二乘。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_construction.py -q`（16 项）。
+- **实测结果**：4 券目标残差 1e-11（精确还原）；1 券目标精确；负目标不可达时残差披露且不静默。
+- **风险/遗留**：取整到 1e6 会带来最多 0.5 lot/券的跟踪误差；已有 `notes` 披露。
+
+### C-045 [feat] 三个基线策略 + `relative_tilt` 风险预算
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/strategy/{base,carry_rolldown,curve_steepener,relative_value}.py`、`tests/test_strategy.py`
+- **变更内容**：`Strategy` 协议 + `relative_tilt`（以基准 KRD 为起点、**单桶 tilt 上限 50%×桶值**、负桶截断不回填、总量守恒）；三个策略只用 `ctx.history`；RV 支持**预计算残差面板**（回测中每天现场拟合 window 天会慢 2–3 个数量级）。
+- **原因**：固定金额 tilt 在小桶（2Y 仅占 6%）上会超过桶本身，按"截掉回填"处理会把 tilt 堆到长端，实测久期从 8.2Y 漂到 10.9Y、约束全爆。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_strategy.py -q`（18 项，含无未来信息与可复现）。
+- **实测结果**：修正后 2s10s/carry/rv 的久期偏离分别 +1.5%/+9%/+9%，落在 ±20% 带内；投影触发次数显著下降。
+- **风险/遗留**：RV 若不传残差面板会退化为逐日拟合（慢），已在 docstring 与脚本注明。
+
+### C-046 [feat] 日频回测引擎
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/backtest/engine.py`、`scripts/run_strategies.py`、`Makefile`
+- **变更内容**：`run_backtest(strategy, panel, calendar, funding)`：t 收盘出信号 → t+1 成交（执行价 t+1 收盘）→ 结算 T+1 → 账本记账；目标在成交前做**约束投影**（解面值→用 `A@(face/100)` 与市值加权久期校验→不满足则 tilt 减半重试 6 次→仍不满足回基准）；记录 nav/exposure/trades/cashflows/costs/turnover/constraints/signals；`make strategies`。
+- **原因**：三个策略需要同一套成本/换手/暴露/约束记录，且必须可复现、无未来信息。
+- **验证方式**：`.venv/bin/python -m pytest tests/test_engine.py -q`（本轮新增集成测试）；`make strategies`。
+- **实测结果**：2 年窗口三策略均 **0 约束违规日**；成本 5.2–13.0 万元；换手 4.8–13.0×NAV；NV 最大单日跳变 <0.4%。
+- **风险/遗留**：策略层融资用配置常量代理；投资宇宙固定 4 只券、无新发/滚动；窗口限制 2 年。
+
+### C-047 [fix] 账本 `pending_cash`：未结算成交不再双计 NAV
+
+- **日期**：2026-11-07
+- **文件**：`src/ficc/portfolio/ledger.py`、`reconcile.py`、`tests/test_ledger.py`、`tests/test_reconcile.py`
+- **变更内容**：`LedgerSnapshot.pending_cash`（买入为负、卖出为正，按结算日全价×face/100）与 `nav = cash + ΣMV + pending_cash`；快照 frame 增列；对账 `nav_identity` / `pnl_identity` 路径 B 同步（`ΔMV + Δpending + 内部现金流`）。
+- **原因**：集成回测时发现成交日持仓已计、现金未划 → 第 2 个交易日 NAV 从 1 亿虚增到 **1.75 亿**，触发回撤熔断、约束全程误报。
+- **验证方式**：`tests/test_ledger.py`（新增 4 项：成交日 NAV 不虚增、结算日连续、卖出 pending 为正、T+2 多日挂账）；`tests/test_reconcile.py`（旧版输入无 pending 列时明确标注）。
+- **实测结果**：修复后最大单日 NAV 跳变 0.34%（价格波动量级）；`make recon` 六项仍全过。
+
+### C-048 [fix] 现金预算改 NAV 比例 + 成本日期过滤
+
+- **日期**：2026-11-07
+- **文件**：`config/config.yaml`、`src/ficc/config.py`、`src/ficc/portfolio/constraints.py`、`src/ficc/backtest/engine.py`、`tests/test_constraints.py`
+- **变更内容**：`constraints.min_cash` → **`min_cash_fraction: -0.20`**（现金下限 = −20%×NAV，即允许 20% 回购融资）；引擎成本统计先把现金流日期转成 `Timestamp` 再按日过滤。
+- **原因**：绝对值 −500 万在大 NAV 下过紧（回测 35 天越界）；成本统计因 `date` 是 `datetime.date` 与 `Timestamp` 比较失败而恒为 0（费用其实已入账）。
+- **验证方式**：`tests/test_constraints.py -k cash_floor`；`make strategies` 后 `total_cost` 非零（5.2–13.0 万元）。
+- **实测结果**：违规天数从 162/25 降到 **0/0**；成本从错误的 0 变为真实值。
+
+### C-049 [test] 测试基线 406 → 475
+
+- **日期**：2026-11-07
+- **变更内容**：新增 69 项：基准 9、约束 15、构建 16、策略 18、账本/对账 `pending_cash` 8、引擎集成 3（含"策略只能看到 as_of 之前历史"）。
+- **验证方式**：`make check`（475 passed）。
+- **风险/遗留**：测试总时长升到约 4 分钟（含真实数据与回测集成测试）。
 
 ---
 

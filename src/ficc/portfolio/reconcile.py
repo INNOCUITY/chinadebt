@@ -535,6 +535,29 @@ def _snapshot_groups(snapshots: pd.DataFrame) -> list[tuple[pd.Timestamp, pd.Dat
     return groups
 
 
+def _pending_cash_by_date(snapshots: pd.DataFrame) -> pd.Series | None:
+    """按快照日汇总 ``pending_cash``（trade-date 会计：买入为负、卖出为正）。
+
+    列不存在返回 ``None``（旧版输入）；存在时同一快照日必须唯一（portfolio 级
+    标量，长表行重复填充）。缺失值按 0 处理并在调用方 detail 中注明。
+    """
+    if "pending_cash" not in snapshots.columns:
+        return None
+    frame = snapshots.loc[:, ["as_of", "pending_cash"]].copy()
+    frame["as_of"] = _to_datetime_series(frame["as_of"], "snapshots.as_of")
+    frame["pending_cash"] = pd.to_numeric(frame["pending_cash"], errors="coerce")
+    values: dict[pd.Timestamp, float] = {}
+    for as_of, block in frame.groupby("as_of", sort=True):
+        finite = block["pending_cash"].dropna()
+        if finite.empty:
+            values[as_of] = 0.0
+        elif finite.nunique() > 1:
+            raise ValueError(f"{as_of.date()} 快照内 pending_cash 不唯一: {sorted(set(finite))}")
+        else:
+            values[as_of] = float(finite.iloc[0])
+    return pd.Series(values).sort_index()
+
+
 def check_nav_identity(
     snapshots: pd.DataFrame,
     *,
@@ -545,6 +568,12 @@ def check_nav_identity(
     groups = _snapshot_groups(snapshots)
     if not groups:
         raise ValueError("snapshots 为空")
+    pending_series = _pending_cash_by_date(snapshots)
+    pending_note = (
+        "旧版输入无 pending_cash，按 0 处理（未结算会计未覆盖）"
+        if pending_series is None
+        else "已按 trade-date 会计计入 pending_cash"
+    )
     nav_errors: list[tuple[pd.Timestamp, float, float, float]] = []
     mv_errors: list[tuple[pd.Timestamp, str, float, float, float]] = []
     for as_of, block in groups:
@@ -562,7 +591,8 @@ def check_nav_identity(
         if active.any() and market_value[active].isna().any():
             raise ValueError(f"{as_of.date()} 存在非占位行但 market_value 为 NaN")
         mv_sum = float(market_value.fillna(0.0).sum())
-        recalculated = float(cash_values[0]) + mv_sum
+        pending = float(pending_series.loc[as_of]) if pending_series is not None else 0.0
+        recalculated = float(cash_values[0]) + mv_sum + pending
         nav_errors.append(
             (as_of, abs(recalculated - float(nav_values[0])), recalculated, float(nav_values[0]))
         )
@@ -587,8 +617,10 @@ def check_nav_identity(
     worst_nav = max(nav_errors, key=lambda item: item[1]) if nav_errors else None
     worst_mv = max(mv_errors, key=lambda item: item[2]) if mv_errors else None
     lines = [
-        f"NAV 独立重算 {len(nav_errors)} 个快照日：最大误差={nav_error:.6f}；"
+        f"NAV 独立重算 {len(nav_errors)} 个快照日（cash + Σ市值 + pending_cash）："
+        f"最大误差={nav_error:.6f}；"
         f"市值公式 face/100×dirty 校验 {len(mv_errors)} 行：最大误差={mv_error:.6f}；容差={tol:g}",
+        pending_note,
     ]
     if worst_nav is not None and nav_error > 0:
         lines.append(
@@ -617,10 +649,14 @@ def mtm_daily_pnl(
     *,
     tolerance: float = DEFAULT_TOLERANCE,
 ) -> pd.Series:
-    """**MTM 路径**逐日 PnL：``ΔMV + 当日内部现金流``。
+    """**MTM 路径**逐日 PnL：``ΔMV + Δpending_cash + 当日内部现金流``。
 
-    关键：本函数**不接收也不读取 nav 序列**，用于证明 PnL 对账不是"用 NAV 自证"。
-    外部现金流（kind 属于 :data:`EXTERNAL_FLOW_KINDS`）不计入 PnL。
+    - ``pending_cash`` 是 trade-date 会计的未结算款（买入为负、卖出为正）：
+      成交日持仓已计入市值但现金未划转，故必须加 ``Δpending_cash`` 才能与
+      NAV 路径对上；
+    - 旧版快照无 ``pending_cash`` 列时按 0 处理（无未结算会计）；
+    - 关键：本函数**不接收也不读取 nav 序列**，用于证明 PnL 对账不是"用 NAV 自证"。
+    - 外部现金流（kind 属于 :data:`EXTERNAL_FLOW_KINDS`）不计入 PnL。
     """
     del tolerance  # 仅供调用方统一签名；本函数不做容差判定
     frame = _normalise_cashflows(cashflows)
@@ -630,7 +666,12 @@ def mtm_daily_pnl(
         raise ValueError("snapshots 为空")
     internal_daily, _ = _nav_and_internal_events(frame, dates)
     delta_mv = mv.diff().iloc[1:]
-    daily = delta_mv + internal_daily.iloc[1:]
+    pending = _pending_cash_by_date(snapshots)
+    if pending is None:
+        delta_pending = pd.Series(0.0, index=dates[1:])
+    else:
+        delta_pending = pending.reindex(dates).diff().iloc[1:]
+    daily = delta_mv + delta_pending + internal_daily.iloc[1:]
     daily.name = "mtm_daily_pnl"
     return daily
 
@@ -751,8 +792,12 @@ def check_pnl_identity(
     max_error = max(daily_error, total_error)
     passed = max_error <= tol
     worst_date = diff.abs().idxmax() if len(diff) else None
+    pending_used = _pending_cash_by_date(snapshots) is not None
     lines = [
         f"NAV 路径合计={total_nav:.6f}；MTM 路径合计={total_mtm:.6f}；合计差={total_error:.6g}",
+        "MTM 路径 = ΔMV + Δpending_cash + 内部现金流"
+        if pending_used
+        else "MTM 路径 = ΔMV + 内部现金流（旧版输入无 pending_cash）",
         f"逐日最大差={daily_error:.6g}"
         + (f"（{worst_date.date()}）" if worst_date is not None else ""),
         f"未解释项={max_error:.6g} {'<=' if passed else '>'} 容差 {tol:g}",

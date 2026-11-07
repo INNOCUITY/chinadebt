@@ -184,7 +184,39 @@ class PortfolioConfig(_Model):
     short_leg_mode: Literal["over_under_weight", "futures", "irs"] = "over_under_weight"
     allow_short_cash_bond: bool = False
     max_single_bond_weight: float = 0.3
+    # 可交易合成券期限（与 synthetic.maturities 对应；基准与策略共用同一宇宙）
+    universe: list[float] = Field(default_factory=lambda: [2.0, 5.0, 10.0, 30.0])
     synthetic: SyntheticConfig
+
+    @field_validator("universe")
+    @classmethod
+    def _check_universe(cls, v: list[float]) -> list[float]:
+        if len(v) < 2:
+            raise ValueError("universe 至少需要 2 个期限才能做曲线交易")
+        if any(t <= 0 for t in v):
+            raise ValueError("universe 期限必须为正数")
+        if sorted(v) != list(v):
+            raise ValueError("universe 必须严格递增")
+        return v
+
+
+class ConstraintsConfig(_Model):
+    """组合约束（Phase 2 第 3 步）。默认值即"相对基准 DV01 中性"的验收口径。"""
+
+    # 相对基准 DV01 中性：单桶 |KRD_p − KRD_b| ≤ relative_krd_tol × 基准总 DV01
+    relative_krd_tol: float = 0.30
+    # 总 DV01 相对基准的允许区间（倍数）
+    total_dv01_ratio_min: float = 0.70
+    total_dv01_ratio_max: float = 1.30
+    # 组合久期相对基准的允许偏离（相对值，0.20 = ±20%）
+    duration_tol: float = 0.20
+    # 现金预算（占 NAV 比例）：负值 = 允许的回购融资上限。
+    # 例：-0.20 表示现金不得低于 -20% × NAV（约 0.2 倍杠杆由回购支撑）。
+    min_cash_fraction: float = -0.20
+    # 最小成交面值（元）：低于该值不做调仓，避免碎单
+    min_trade_lot: float = 1_000_000.0
+    # 允许的日换手率上限（成交面值 / NAV），超过则报警
+    max_daily_turnover: float = 2.0
 
 
 class FuturesConfig(_Model):
@@ -270,7 +302,9 @@ class RiskConfig(_Model):
 
 
 class BenchmarkConfig(_Model):
+    # 基准阶梯：按**市值**等权配置到可交易宇宙的各期限
     ladder_weights: dict[float, float] = Field(default_factory=dict)
+    notional: float = 1e8
     index_name: str
     index_code: str
     index_code_1_3y: str | None = None
@@ -298,6 +332,7 @@ class Config(_Model):
     pricing: PricingConfig
     costs: CostsConfig
     portfolio: PortfolioConfig
+    constraints: ConstraintsConfig
     futures: FuturesConfig
     backtest: BacktestConfig
     strategy: StrategyConfig

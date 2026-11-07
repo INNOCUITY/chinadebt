@@ -83,7 +83,7 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（406 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（475 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
@@ -110,9 +110,9 @@ make check    # = ruff check + ruff format --check + pytest（406 项离线，ex
 - [x] Phase 1 Carry/Roll-down（弦长口径 R18 已修 + 原券老化重估；账本级独立 PnL 仍待接入）
 - [x] Phase 2 第 1 步 固定券账本（条款锁定/原券老化/三层日期/真实 CN_IB 日历）
 - [x] Phase 2 第 2 步 独立 PnL 对账（六项检查 + 篡改检测；`make recon` exit 0）
-- [ ] Phase 2 第 3 步 组合约束（相对基准 DV01 中性、现金预算、杠杆、单券权重、KRD 限额）
-- [ ] Phase 2 第 4 步 三个基线策略（陡平 / Carry-Roll / 相对价值）
-- [ ] Phase 2 第 5 步 归因接入账本持仓
+- [x] Phase 2 第 3 步 组合约束（相对基准 DV01 中性 + 9 项检查：现金预算/杠杆/单券权重/KRD 集中度/久期带/回撤熔断）
+- [x] Phase 2 第 4 步 三个基线策略（陡平 / Carry-Roll / 相对价值）+ 逐策略成本/换手/暴露/约束记录
+- [ ] Phase 2 第 5 步 归因接入账本持仓（当前对账已留闭合接口）
 - [ ] Phase 3 风险
 - [ ] Phase 4 机器学习（必做）
 - [ ] Phase 5 强化学习（必做）

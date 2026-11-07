@@ -15,16 +15,22 @@
    ``funding_rate_pct/365`` **逐自然日**计提（含周末/节假日），但融资成本在
    每次 :meth:`Ledger.process_day` 时**合并成一笔**、事件日期 = 该 ``as_of``
    （NAV 快照日），从而对账侧能把全部内部现金流映射到 NAV 日；支持零成本对照。
-4. **NAV 恒等式**：``nav == cash + Σ(face/100 × dirty)``；导出
-   :meth:`Ledger.snapshots_frame` 时按快照行**独立重算一次**并校验。
+4. **NAV 恒等式（trade-date 会计）**：
+   ``nav == cash + Σ(face/100 × dirty) + pending_cash``。成交在 ``trade_date``
+   生效（经济敞口进持仓），现金在 ``settlement_date`` 划转；未结算成交的应付/应收
+   以 ``pending_cash``（买入为负、卖出为正）计入 NAV，避免未结算期间把未付买入款
+   双计一次。导出 :meth:`Ledger.snapshots_frame` 时按快照行**独立重算一次**并校验。
 5. **可复现**：不依赖当前时间/随机数；同一组成交、曲线、参数逐位可复现。
 
 会计口径（必须明示）
 --------------------
-- ``cash`` 是**已结算现金**（不含未结算成交、不含应收票息/本金）；因此未结算
-  买入期间 ``nav = cash + ΣMV`` 会把待付交割款留在 NAV 外——此时
-  ``notes`` 会列出 ``pending_settlements``，对账方可按现金流事件另做应付/应收
-  调整。这是本任务明确要求的恒等式口径（C-009 契约）。
+- ``cash`` 是**已结算现金**（不含未结算成交、不含应收票息/本金）。
+- ``pending_cash`` 是**未结算成交在结算日将划转的带符号金额**：买入为负（未来
+  付现）、卖出为正（未来收现），按 ``clean_price + accrued_interest(bond,
+  settlement_date)`` 全价 × ``face/100`` 计算。
+- NAV（trade-date 会计）= ``cash + ΣMV + pending_cash``：成交日只反映价格变动，
+  结算日 ``cash`` 变动、``pending_cash`` 归零，NAV 连续。旧版
+  ``nav = cash + ΣMV`` 会在未结算期间把未付买入款双计，已由 C-013 修正。
 - 手续费：``fee_bp`` 按**净价成交金额**（``face/100 × clean_price``）计，
   结算费按笔 + ``TradeRecord.fee`` 叠加，写 ``fee`` 事件（结算日）。
 - 融资：每个**自然日**日终对负现金计提（``365`` 天基数，含周末/节假日）；
@@ -38,7 +44,7 @@
   signal_date, trade_date, settlement_date, fee, coupon_pct, freq, issue_date,
   maturity_date, accrual, market``
 - ``cashflows_frame``：``date, kind, amount, bond_code, trade_id, note``
-- ``snapshots_frame``：``as_of, cash, nav, bond_code, face_value,
+- ``snapshots_frame``：``as_of, cash, pending_cash, nav, bond_code, face_value,
   remaining_years, ytm_pct, clean_price, accrued_interest, dirty_price,
   market_value, mod_duration, dv01, n_positions, n_pending, notes``
   （持仓级长表；每个快照至少一行，无持仓时持仓列为 NaN）
@@ -108,6 +114,7 @@ CASHFLOWS_COLUMNS: tuple[str, ...] = (
 SNAPSHOTS_COLUMNS: tuple[str, ...] = (
     "as_of",
     "cash",
+    "pending_cash",
     "nav",
     "bond_code",
     "face_value",
@@ -191,10 +198,16 @@ class PositionView:
 
 @dataclass(frozen=True)
 class LedgerSnapshot:
-    """某一 ``as_of`` 的账本快照。"""
+    """某一 ``as_of`` 的账本快照（trade-date 会计）。
+
+    ``nav = cash + Σ market_value + pending_cash``：``cash`` 是已结算现金，
+    ``pending_cash`` 是未结算成交在结算日将划转的带符号金额（买入为负、卖出为正），
+    因此成交日经济敞口立即进入 NAV，而不会因现金未划转而虚增净值。
+    """
 
     as_of: date
     cash: float
+    pending_cash: float
     positions: tuple[PositionView, ...]
     nav: float
     pending_settlements: tuple[TradeRecord, ...]
@@ -603,9 +616,17 @@ class Ledger:
             for trade in self._trades
             if trade.trade_id in self._applied and trade.trade_id not in self._settled
         )
+        pending_cash = 0.0
+        for trade in pending:
+            ai = accrued_interest(trade.bond, trade.settlement_date, cfg=self._cfg)
+            gross = trade.face_value / 100.0 * (trade.clean_price + ai)
+            pending_cash += -gross if trade.side == "buy" else gross
         notes: list[str] = []
         if pending:
-            notes.append(f"存在 {len(pending)} 笔未结算成交（pending_settlements）")
+            notes.append(
+                f"存在 {len(pending)} 笔未结算成交（pending_settlements），"
+                f"pending_cash={pending_cash:.2f} 元"
+            )
         outstanding = sum(
             amount for items in self._receivables.values() for _kind, amount, _code, _note in items
         )
@@ -615,12 +636,15 @@ class Ledger:
         if queued:
             notes.append(f"另有 {len(queued)} 笔未来成交尚未生效")
         market_value = sum(position.market_value for position in positions)
-        nav = self._cash + market_value
-        if not math.isclose(nav, self._cash + market_value, rel_tol=0.0, abs_tol=1e-9):
+        nav = self._cash + market_value + pending_cash
+        if not math.isclose(
+            nav, self._cash + market_value + pending_cash, rel_tol=0.0, abs_tol=1e-9
+        ):
             raise RuntimeError("NAV 恒等式校验失败（内部实现错误）")
         return LedgerSnapshot(
             as_of=as_of,
             cash=self._cash,
+            pending_cash=pending_cash,
             positions=tuple(positions),
             nav=nav,
             pending_settlements=pending,
@@ -676,6 +700,7 @@ class Ledger:
             base: dict[str, Any] = {
                 "as_of": snapshot.as_of,
                 "cash": snapshot.cash,
+                "pending_cash": snapshot.pending_cash,
                 "nav": snapshot.nav,
                 "n_positions": len(snapshot.positions),
                 "n_pending": len(snapshot.pending_settlements),
@@ -719,12 +744,13 @@ class Ledger:
         return frame
 
     def _verify_nav_identity(self, frame: pd.DataFrame) -> None:
-        """独立重算 ``nav = cash + Σ market_value``，与快照存储值比对。"""
+        """独立重算 ``nav = cash + Σ market_value + pending_cash``，与快照存储值比对。"""
         for snapshot in self._snapshots:
             mask = frame["as_of"] == snapshot.as_of
             values = frame.loc[mask, "market_value"].fillna(0.0).to_numpy(dtype=float)
             cash = float(frame.loc[mask, "cash"].iloc[0])
-            recomputed = cash + float(values.sum())
+            pending_cash = float(frame.loc[mask, "pending_cash"].iloc[0])
+            recomputed = cash + float(values.sum()) + pending_cash
             if not math.isclose(recomputed, snapshot.nav, rel_tol=1e-10, abs_tol=1e-8):
                 raise RuntimeError(
                     f"NAV 恒等式失败 @ {snapshot.as_of}: 存储 {snapshot.nav} vs "

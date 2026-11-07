@@ -598,3 +598,170 @@ def test_attribution_long_table_and_series() -> None:
     assert check_attribution_closure(6_350.0, series).passed
     wide = pd.DataFrame({"carry": [15_000.0], "fees": [-150.0], "price": [-8_500.0]})
     assert check_attribution_closure(6_350.0, wide).passed
+
+
+# ===========================================================================
+# 未结算会计（trade-date）：pending_cash 支持
+# ===========================================================================
+PENDING_DATES = pd.to_datetime(["2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07"])
+
+
+def _pending_fixture() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series]:
+    """成交日未结算：day1 买入（持仓当天计入）、day2 才划款。
+
+    快照同时含 ``pending_cash``（买入 pending 为负），NAV 按
+    ``cash + ΣMV + pending_cash``；MTM 路径需加 ``Δpending_cash`` 才能对上。
+    """
+    cashflows = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-06-04", "2024-06-06", "2024-06-06", "2024-06-07"]),
+            "kind": ["initial", "trade_buy", "fee", "coupon"],
+            "amount": [1_000_000.0, -1_005_000.0, -100.0, 15_000.0],
+            "bond_code": [None, "BOND_A", "BOND_A", "BOND_A"],
+            "trade_id": [None, "T1", "T1", None],
+            "note": ["初始资金", "买入A结算", "手续费", "票息"],
+        }
+    )
+    trades = pd.DataFrame(
+        {
+            "trade_id": ["T1"],
+            "bond_code": ["BOND_A"],
+            "side": ["buy"],
+            "face_value": [1_000_000.0],
+            "clean_price": [100.0],
+            "signal_date": pd.to_datetime(["2024-06-05"]),
+            "trade_date": pd.to_datetime(["2024-06-05"]),
+            "settlement_date": pd.to_datetime(["2024-06-06"]),
+            "fee": [100.0],
+        }
+    )
+    snapshots = pd.DataFrame(
+        [
+            {
+                "as_of": PENDING_DATES[0],
+                "cash": 1_000_000.0,
+                "pending_cash": 0.0,
+                "nav": 1_000_000.0,
+                "bond_code": np.nan,
+                "face_value": np.nan,
+                "clean_price": np.nan,
+                "accrued_interest": np.nan,
+                "dirty_price": np.nan,
+                "market_value": 0.0,
+            },
+            {
+                "as_of": PENDING_DATES[1],
+                "cash": 1_000_000.0,
+                "pending_cash": -1_005_100.0,
+                "nav": 999_900.0,
+                "bond_code": "BOND_A",
+                "face_value": 1_000_000.0,
+                "clean_price": 100.0,
+                "accrued_interest": 0.5,
+                "dirty_price": 100.5,
+                "market_value": 1_005_000.0,
+            },
+            {
+                "as_of": PENDING_DATES[2],
+                "cash": -5_100.0,
+                "pending_cash": 0.0,
+                "nav": 1_002_900.0,
+                "bond_code": "BOND_A",
+                "face_value": 1_000_000.0,
+                "clean_price": 100.3,
+                "accrued_interest": 0.5,
+                "dirty_price": 100.8,
+                "market_value": 1_008_000.0,
+            },
+            {
+                "as_of": PENDING_DATES[3],
+                "cash": 9_900.0,
+                "pending_cash": 0.0,
+                "nav": 1_003_900.0,
+                "bond_code": "BOND_A",
+                "face_value": 1_000_000.0,
+                "clean_price": 98.9,
+                "accrued_interest": 0.5,
+                "dirty_price": 99.4,
+                "market_value": 994_000.0,
+            },
+        ]
+    )
+    nav = pd.Series(
+        [1_000_000.0, 999_900.0, 1_002_900.0, 1_003_900.0],
+        index=PENDING_DATES,
+        dtype=float,
+    )
+    return trades, cashflows, snapshots, nav
+
+
+def test_pending_cash_trade_date_accounting_reconciles() -> None:
+    trades, cashflows, snapshots, nav = _pending_fixture()
+    # NAV 重算公式：cash + ΣMV + pending_cash
+    nav_check = check_nav_identity(snapshots)
+    assert nav_check.passed, nav_check.detail
+    assert nav_check.max_abs_error == pytest.approx(0.0, abs=1e-12)
+    assert "pending_cash" in nav_check.detail
+    # 路径 A/B：ΔMV + Δpending + 内部现金流 与 ΔNAV 一致
+    pnl = check_pnl_identity(nav, cashflows, snapshots=snapshots)
+    assert pnl.passed, pnl.detail
+    assert pnl.max_abs_error is not None and pnl.max_abs_error <= 1e-6
+    assert "Δpending_cash" in pnl.detail
+    mtm = mtm_daily_pnl(snapshots, cashflows)
+    np.testing.assert_allclose(mtm.to_numpy(), np.array([-100.0, 3_000.0, 1_000.0]), atol=1e-9)
+    assert float(mtm.sum()) == pytest.approx(3_900.0)
+    # 去掉 pending_cash 列（旧版数据）后逐日 MTM 明显不同（证明确实用了 pending；
+    # 首末 pending 均为 0 时合计可能巧合相同，故比较逐日序列）
+    mtm_old = mtm_daily_pnl(snapshots.drop(columns=["pending_cash"]), cashflows)
+    assert not np.allclose(mtm_old.to_numpy(), mtm.to_numpy())
+    np.testing.assert_allclose(mtm_old.to_numpy(), np.array([1_005_000.0, -1_002_100.0, 1_000.0]))
+    # 六项全量对账（归因=carry 15,000 + fees −100 + price −11,000）
+    report = reconcile_all(
+        cashflows=cashflows,
+        trades=trades,
+        snapshots=snapshots,
+        nav=nav,
+        attribution={"coupon_carry": 15_000.0, "fees": -100.0, "price_move": -11_000.0},
+        calendar=TradingCalendar.from_dates(pd.bdate_range("2024-06-04", "2024-06-11")),
+    )
+    assert report.passed, report.to_frame().to_string()
+
+
+def test_old_snapshot_without_pending_cash_is_flagged_in_detail() -> None:
+    """旧版输入无 pending_cash：按 0 处理但 detail 必须明确标注，不能静默。"""
+    _, _, snapshots, _ = _clean_fixture()  # 旧版快照
+    assert "pending_cash" not in snapshots.columns
+    result = check_nav_identity(snapshots)
+    assert result.passed
+    assert "旧版输入无 pending_cash" in result.detail
+
+
+def test_tamper_pending_cash_fails_nav_identity() -> None:
+    _, _, snapshots, _ = _pending_fixture()
+    tampered = snapshots.copy()
+    day = tampered["as_of"] == PENDING_DATES[1]
+    tampered.loc[day, "pending_cash"] = tampered.loc[day, "pending_cash"] + 100.0
+    result = check_nav_identity(tampered)
+    assert not result.passed
+    assert result.max_abs_error == pytest.approx(100.0)
+    # 同一篡改也会让两条 PnL 路径失配（Δpending 被改动）
+    _, cashflows, _, nav = _pending_fixture()
+    assert not check_pnl_identity(nav, cashflows, snapshots=tampered).passed
+    trades, _, _, _ = _pending_fixture()
+    report = reconcile_all(cashflows=cashflows, trades=trades, snapshots=tampered, nav=nav)
+    assert not report.passed
+    assert not _find(report, "nav_identity").passed
+
+
+def test_nav_recalc_formula_includes_pending_cash() -> None:
+    """NAV 重算公式显式验证：cash + Σmarket_value + pending_cash == nav。"""
+    _, _, snapshots, _ = _pending_fixture()
+    for _as_of, block in snapshots.groupby("as_of"):
+        cash = float(block["cash"].iloc[0])
+        pending = float(block["pending_cash"].iloc[0])
+        mv = float(pd.to_numeric(block["market_value"], errors="coerce").fillna(0.0).sum())
+        nav = float(block["nav"].iloc[0])
+        assert cash + mv + pending == pytest.approx(nav, abs=1e-9)
+    result = check_nav_identity(snapshots)
+    assert result.passed
+    assert result.max_abs_error == pytest.approx(0.0, abs=1e-12)

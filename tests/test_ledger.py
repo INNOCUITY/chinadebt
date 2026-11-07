@@ -134,10 +134,13 @@ def test_hold_nav_change_equals_dirty_price_change(calendar: TradingCalendar) ->
     )
     assert snap20.cash == pytest.approx(snap18.cash, abs=1e-9)
     assert snap20.nav - snap18.nav == pytest.approx(expected, abs=1e-6)
-    # NAV 恒等式
+    # NAV 恒等式（trade-date 会计：含未结算应付/应收）
     for snap in (snap18, snap20):
         assert snap.nav == pytest.approx(
-            snap.cash + sum(position.market_value for position in snap.positions), abs=1e-9
+            snap.cash
+            + sum(position.market_value for position in snap.positions)
+            + snap.pending_cash,
+            abs=1e-9,
         )
     # 应计利息与定价层一致
     assert snap20.positions[0].accrued_interest == pytest.approx(
@@ -588,11 +591,14 @@ def test_unsettled_trade_not_in_cash(calendar: TradingCalendar) -> None:
     assert snap_trade_day.cash == pytest.approx(2_000_000.0)  # 现金未划转
     assert [t.trade_id for t in snap_trade_day.pending_settlements] == ["t2"]
     assert len(snap_trade_day.positions) == 1  # 经济敞口已在 trade_date 生效
+    gross_expected = 10_000.0 * (100.0 + accrued_interest(bond, date(2024, 7, 2)))
+    assert snap_trade_day.pending_cash == pytest.approx(-gross_expected, abs=1e-6)
     assert set(ledger.cashflows_frame()["kind"]) == {"initial"}
 
     snap_settled = ledger.process_day(date(2024, 7, 2), flat_curve(date(2024, 7, 2)))
     gross = 10_000.0 * (100.0 + accrued_interest(bond, date(2024, 7, 2)))
     assert snap_settled.cash == pytest.approx(2_000_000.0 - gross, abs=1e-6)
+    assert snap_settled.pending_cash == pytest.approx(0.0, abs=1e-9)
     assert snap_settled.pending_settlements == ()
     settled_events = ledger.cashflows_frame()
     assert settled_events[settled_events["kind"] == "trade_buy"]["date"].tolist() == [
@@ -710,6 +716,160 @@ def test_trade_record_fee_is_stacked(calendar: TradingCalendar) -> None:
 
 
 # ---------------------------------------------------------------------------
+# trade-date 会计：未结算应付/应收计入 NAV（C-013）
+# ---------------------------------------------------------------------------
+def quoted_clean_price(bond: BondStatic, curve: Curve, settle: date) -> float:
+    """按引擎口径报价：clean = dirty(settle, 曲线 YTM) − AI(settle)。"""
+    remaining = day_count(settle, bond.maturity_date) / 365.0
+    ytm = float(curve.rate(remaining))
+    return dirty_price_from_ytm(bond, settle, ytm) - accrued_interest(bond, settle)
+
+
+def test_trade_date_nav_reflects_price_only_not_buy_amount(
+    calendar: TradingCalendar,
+) -> None:
+    """成交日 NAV 只反映价格变动（价格不变 ≈0），绝不等于买入金额。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
+    trade_date = date(2024, 6, 17)
+    settle = calendar.settlement_date(trade_date, 1)
+    curve_trade = flat_curve(trade_date)
+    # 构造「成交日全价 = 结算日应付」的报价，隔离出价格不变情形（应计差为 0）
+    remaining = day_count(trade_date, bond.maturity_date) / 365.0
+    clean_zero = dirty_price_from_ytm(
+        bond, trade_date, float(curve_trade.rate(remaining))
+    ) - accrued_interest(bond, settle)
+    trade = make_trade(
+        calendar, cfg, trade_id="t1", bond=bond, trade_date=trade_date, clean_price=clean_zero
+    )
+    ledger = Ledger(calendar, initial_cash=100_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap_before = ledger.process_day(date(2024, 6, 14), flat_curve(date(2024, 6, 14)))
+    snap_trade = ledger.process_day(trade_date, curve_trade)
+
+    gross = 10_000.0 * (clean_zero + accrued_interest(bond, settle))
+    assert snap_trade.cash == pytest.approx(snap_before.cash, abs=1e-9)  # 现金未动
+    assert snap_trade.pending_cash == pytest.approx(-gross, abs=1e-6)  # 应付为负
+    # 价格不变 → NAV 不变（只可能有应计 carry 的当日口径差，此处构造为严格 0）
+    assert snap_trade.nav - snap_before.nav == pytest.approx(0.0, abs=1e-6)
+    # 绝不能把未付买入款再计一次：NAV 变化远不等于 -gross
+    assert snap_trade.nav - snap_before.nav != pytest.approx(-gross, abs=1.0)
+
+
+def test_trade_date_nav_double_count_regression(calendar: TradingCalendar) -> None:
+    """回归：平价券（clean=100）成交日 NAV 只差一日应计，不得虚增买入金额。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
+    trade_date = date(2024, 6, 17)
+    settle = calendar.settlement_date(trade_date, 1)
+    trade = make_trade(
+        calendar, cfg, trade_id="t1", bond=bond, trade_date=trade_date, clean_price=100.0
+    )
+    ledger = Ledger(calendar, initial_cash=100_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap_before = ledger.process_day(date(2024, 6, 14), flat_curve(date(2024, 6, 14)))
+    snap_trade = ledger.process_day(trade_date, flat_curve(trade_date))
+
+    gross = 10_000.0 * (100.0 + accrued_interest(bond, settle))
+    # trade-date 全价 − 结算应付 = 仅价格（含复利微差的一日 carry），不是买入金额
+    expected_carry = 10_000.0 * (
+        manual_dirty(bond, trade_date) - (100.0 + accrued_interest(bond, settle))
+    )
+    assert snap_trade.pending_cash == pytest.approx(-gross, abs=1e-6)
+    assert snap_trade.nav - snap_before.nav == pytest.approx(expected_carry, abs=1e-6)
+    assert abs(snap_trade.nav - snap_before.nav) < 1_000.0  # 约 1 日应计，远小于 100 万买入
+    assert snap_trade.nav - snap_before.nav != pytest.approx(-gross, abs=1.0)
+
+
+def test_settlement_day_pending_zero_and_nav_continuous(
+    calendar: TradingCalendar,
+) -> None:
+    """结算日：pending_cash 归零、现金划转、NAV 连续（日变化 <1bp）。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
+    trade = make_trade(
+        calendar, cfg, trade_id="t1", bond=bond, trade_date=date(2024, 6, 17), clean_price=100.0
+    )
+    settle = trade.settlement_date
+    ledger = Ledger(calendar, initial_cash=100_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap_trade = ledger.process_day(date(2024, 6, 17), flat_curve(date(2024, 6, 17)))
+    snap_settled = ledger.process_day(settle, flat_curve(settle))
+
+    gross = 10_000.0 * (100.0 + accrued_interest(bond, settle))
+    assert snap_settled.pending_cash == pytest.approx(0.0, abs=1e-9)
+    assert snap_settled.cash == pytest.approx(snap_trade.cash - gross, abs=1e-6)
+    change = snap_settled.nav - snap_trade.nav
+    assert abs(change) / snap_trade.nav < 1e-4  # < 1bp
+    assert snap_settled.nav == pytest.approx(
+        snap_settled.cash
+        + sum(p.market_value for p in snap_settled.positions)
+        + snap_settled.pending_cash,
+        abs=1e-9,
+    )
+
+
+def test_sell_pending_cash_is_positive(calendar: TradingCalendar) -> None:
+    """卖出未结算：pending_cash 为正（未来收现），结算日归零、现金增加。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
+    buy = make_trade(
+        calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17), clean_price=100.0
+    )
+    sell = make_trade(
+        calendar,
+        cfg,
+        trade_id="s1",
+        bond=bond,
+        side="sell",
+        face_value=400_000.0,
+        trade_date=date(2024, 6, 24),
+        clean_price=100.0,
+    )
+    ledger = Ledger(calendar, initial_cash=100_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(buy)
+    ledger.submit(sell)
+    process(ledger, [date(2024, 6, 17), date(2024, 6, 18)])
+    sell_settle = sell.settlement_date
+    snap_sell = ledger.process_day(date(2024, 6, 24), flat_curve(date(2024, 6, 24)))
+    cash_before = snap_sell.cash
+    gross = 4_000.0 * (100.0 + accrued_interest(bond, sell_settle))
+    assert snap_sell.pending_cash == pytest.approx(gross, abs=1e-6)  # 应收为正
+    assert snap_sell.cash == pytest.approx(cash_before, abs=1e-9)
+    assert snap_sell.positions[0].face_value == pytest.approx(600_000.0)
+
+    snap_settled = ledger.process_day(sell_settle, flat_curve(sell_settle))
+    assert snap_settled.pending_cash == pytest.approx(0.0, abs=1e-9)
+    assert snap_settled.cash == pytest.approx(cash_before + gross, abs=1e-6)
+    assert abs(snap_settled.nav - snap_sell.nav) / snap_sell.nav < 1e-4  # 连续
+
+
+def test_t2_pending_cash_persists_until_settlement(calendar: TradingCalendar) -> None:
+    """T+2 多日：pending_cash 在成交日与中间维持不变，结算日归零。"""
+    cfg = cfg_with_lag(2, zero_cost=True)
+    bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
+    trade = make_trade(
+        calendar, cfg, trade_id="t2", bond=bond, trade_date=date(2024, 6, 28), clean_price=100.0
+    )
+    assert trade.settlement_date == date(2024, 7, 2)
+    gross = 10_000.0 * (100.0 + accrued_interest(bond, date(2024, 7, 2)))
+    ledger = Ledger(calendar, initial_cash=100_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+
+    for day in (date(2024, 6, 28), date(2024, 7, 1)):
+        snapshot = ledger.process_day(day, flat_curve(day))
+        assert snapshot.pending_cash == pytest.approx(-gross, abs=1e-6)
+        assert snapshot.cash == pytest.approx(100_000_000.0, abs=1e-9)
+        assert snapshot.nav == pytest.approx(
+            snapshot.cash + sum(p.market_value for p in snapshot.positions) + snapshot.pending_cash,
+            abs=1e-9,
+        )
+    settled = ledger.process_day(date(2024, 7, 2), flat_curve(date(2024, 7, 2)))
+    assert settled.pending_cash == pytest.approx(0.0, abs=1e-9)
+    assert settled.cash == pytest.approx(100_000_000.0 - gross, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
 # 导出契约、NAV 独立重算、可复现
 # ---------------------------------------------------------------------------
 def test_export_contract_and_reproducibility(calendar: TradingCalendar) -> None:
@@ -741,10 +901,12 @@ def test_export_contract_and_reproducibility(calendar: TradingCalendar) -> None:
 
     # snapshots_frame 独立重算 NAV 恒等式
     frame = assets[2]
+    assert "pending_cash" in frame.columns
     for _as_of, group in frame.groupby("as_of", sort=True):
         cash = float(group["cash"].iloc[0])
         nav = float(group["nav"].iloc[0])
-        recomputed = cash + float(group["market_value"].fillna(0.0).sum())
+        pending_cash = float(group["pending_cash"].iloc[0])
+        recomputed = cash + float(group["market_value"].fillna(0.0).sum()) + pending_cash
         assert nav == pytest.approx(recomputed, abs=1e-8)
 
     # 可复现：同输入两次运行逐位相同
@@ -763,4 +925,5 @@ def test_snapshot_with_no_positions_exports_row(calendar: TradingCalendar) -> No
     assert int(frame["n_positions"].iloc[0]) == 0
     assert pd.isna(frame["bond_code"].iloc[0])
     assert float(frame["market_value"].iloc[0]) == 0.0
+    assert float(frame["pending_cash"].iloc[0]) == 0.0
     assert float(frame["nav"].iloc[0]) == pytest.approx(1_000_000.0)

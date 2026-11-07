@@ -41,6 +41,11 @@ reports/curve_factor_jump_sensitivity.csv
 reports/curve_reports_manifest.csv
 reports/*_meta.json
 
+# 策略回测的逐日大表（可由 `make strategies` 重新生成）；
+# 汇总、净值、成本、换手、成交记录仍入库作为证据。
+reports/strategy_*_exposure.csv
+reports/strategy_*_constraints.csv
+
 # ---------- 系统 ----------
 .DS_Store
 *.log
