@@ -7,7 +7,7 @@
 * **契约层负责把关**：:func:`ficc.data.schema.validate_long_frame` 会拒绝任何
   重复 ``(date, tenor)`` 与 NaN 收益率。两层分工不混。
 
-去重纪律（2026-11-06 Lead 实测发现的数据问题）
+去重纪律（2026-11-06 实测发现的数据问题）
 ----------------------------------------------
 1. 先做**数值一致性校验**：同一 ``(date, tenor)`` 出现不同 ``ytm_pct`` 说明是真正的
    数据冲突，必须抛 :class:`~ficc.data.schema.DataValidationError` 并列出明细。

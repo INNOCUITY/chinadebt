@@ -18,7 +18,7 @@
   * 期限点: 0d,1m,2m,3m,6m,9m,1y,2y,3y,5y,7y,10y,15y,20y,30y,40y,50y
 
 运行:
-    /Users/aq/quant/china_debt/.venv-spike/bin/python scripts/spike/fetch_chinabond_official.py
+    ~/quant/china_debt/.venv-spike/bin/python scripts/spike/fetch_chinabond_official.py
 
 产出:
     data/raw_spike/chinabond_gzqx/{year}.xlsx        原始官方文件（列名保持原样）

@@ -400,7 +400,7 @@ def test_suspect_quality_cli(tmp_path: Path, cfg) -> None:
 
 
 def test_real_sample_lead_anomalies_are_flagged() -> None:
-    """真实全样本：复核 Lead 给的 2002/2004 具体异常日期必须被标记。"""
+    """真实全样本：复核 2002/2004 具体异常日期必须被标记。"""
     if not REAL_PROCESSED.exists():
         pytest.skip("缺少 data/processed/curve_long.parquet（先运行 fetch_data --offline）")
     frame = pd.read_parquet(REAL_PROCESSED)

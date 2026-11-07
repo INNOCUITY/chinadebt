@@ -232,7 +232,7 @@ def test_missing_year_raises_and_keeps_old(tmp_path: Path, cfg) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 跨年度文件重叠（Lead 发现的数据问题）
+# 跨年度文件重叠（实测发现的数据问题）
 # ---------------------------------------------------------------------------
 def test_cross_year_overlap_is_deduped(tmp_path: Path, cfg) -> None:
     spike = make_spike_dir(tmp_path, overlap_days=3)
@@ -491,7 +491,7 @@ def test_backfill_2y_nothing_to_do(tmp_path: Path, cfg) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 真实数据回归（Lead 指定的锚点）
+# 真实数据回归（指定的锚点）
 # ---------------------------------------------------------------------------
 def test_real_dataset_regression_6204_days() -> None:
     if not REAL_PROCESSED.exists():

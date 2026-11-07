@@ -1,7 +1,7 @@
 # 代码变更日志（Code Changelog）
 
 > 本文件是**项目唯一权威的代码变更记录**，也是 Code Review 的载体。
-> 维护人：Lead（每轮实现完成后追加）。评审意见请写在文末「Code Review 区」。
+> 维护人：项目作者（每轮实现完成后追加）。评审意见请写在文末「Code Review 区」。
 >
 > 版本：v5 ｜ 创建：2026-11-06 ｜ 最近更新：2026-11-07（第二轮交付独立复核；仅文档修订，业务修复待办）
 
@@ -101,7 +101,7 @@
 **统一验证命令（评审时按需执行）**
 
 ```bash
-cd /Users/aq/quant/china_debt
+cd ~/quant/china_debt
 
 # 1. 全部离线测试（不联网，必须全绿）
 PYTHONPATH=src python3 -m pytest tests/ -q
@@ -230,7 +230,7 @@ make fit        # = run_pipeline.py --stage curve
   - `Curve`（frozen dataclass）：线性/Hermite 插值、`rate()`、`forward()`、`shift()`、`shock(parallel/steepen/flatten/butterfly)`、`to_frame()`；外推 clamp 到 ≥0。
   - `fit_ns` / `fit_nss`：scipy `least_squares`，带边界、多起点、`(1-e^{-x})/x` 的 Taylor 展开避免 0/0；残差单位统一 bp。
   - `fit_curve` / `fit_panel` / `residual_summary`：面板逐日拟合，返回 `(参数面板, 残差面板)`。
-  - **参数识别性修复**（Lead 在集成时发现的实质缺陷）：自由拟合下 `b0` 在 0–15 间乱跳（43% 超出合理区间、`|Δb0|` p99≈4.97pp），因子暴露不可用。修复为**稳定化估计**（`b0` 由长端观测锚定、`b1/b2/b3∈[-15,15]`、τ 网格），同时**残差仍取自自由拟合**以保住表达能力口径，并在参数面板中暴露 `b0_free`、`rmse_stable_bp`、`unstable` 三列完全透明。
+  - **参数识别性修复**（作者 在集成时发现的实质缺陷）：自由拟合下 `b0` 在 0–15 间乱跳（43% 超出合理区间、`|Δb0|` p99≈4.97pp），因子暴露不可用。修复为**稳定化估计**（`b0` 由长端观测锚定、`b1/b2/b3∈[-15,15]`、τ 网格），同时**残差仍取自自由拟合**以保住表达能力口径，并在参数面板中暴露 `b0_free`、`rmse_stable_bp`、`unstable` 三列完全透明。
 - **原因**：曲线层是"专业性"的地基；而参数不稳定会直接毁掉 level/slope/curvature 因子与后续所有信号。
 - **影响面**：`fit_panel(panel, method)` 的返回契约；`reports/curve_fit_params.csv` 的列结构。
 - **验证方式**：
@@ -631,7 +631,7 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 七、Code Review 区（请在此写评审意见）
 
-> 填写方式：复制下方模板追加到本节末尾，Lead 会在下轮变更中逐条响应并更新状态。
+> 填写方式：复制下方模板追加到本节末尾，作者 会在下轮变更中逐条响应并更新状态。
 
 ### 模板
 
@@ -660,7 +660,7 @@ make fit        # = run_pipeline.py --stage curve
 - NSS 锚定参数对应的 RMSE 中位数为 **4.758624bp**，不是 3.332820bp。2013-06-20 自由/锚定 RMSE 分别为 2.624815/10.848425bp。
 - b0 范围 [1.754600, 5.579025]，日差绝对值 p99 为 0.4165095 个百分点；这是 10/15/20/30Y 观测均值的稳定性，不能证明所有 NSS 参数可识别。
 - `make lint` 退出码 0，check 通过、46 个文件 format 通过，`scripts/spike` 按配置排除。当前未启用 `PD` 规则；不能将“lint 通过”理解为 pandas 专项规则全部通过，也不能从当前代码证明过去确实跑过 lint。
-- 当前 shell 的默认 `python3` 是系统 Python，直接 `make check` 在 pytest 导入处失败。Anaconda 环境直接运行 pytest 又在 readline/pdb 导入时段错误。使用 `PYTHONPATH=src /Users/aq/anaconda3/bin/python -m pytest tests/ -q -p no:debugging` 后，**202 项离线测试通过**（network 默认排除）。这是环境限制及绕过方式，不是业务测试失败。
+- 当前 shell 的默认 `python3` 是系统 Python，直接 `make check` 在 pytest 导入处失败。Anaconda 环境直接运行 pytest 又在 readline/pdb 导入时段错误。使用 `PYTHONPATH=src python3 -m pytest tests/ -q -p no:debugging` 后，**202 项离线测试通过**（network 默认排除）。这是环境限制及绕过方式，不是业务测试失败。
 - 用临时配置重定向 reports 后，`run_pipeline.py --stage curve` 完整运行成功，四张图及参数/残差 CSV 均生成。已有测试未覆盖下列反例。
 
 **R01 [P1 / 阻塞] 系数裁剪不是有界最小二乘，残差被错误解释为模型能力上限**
@@ -672,7 +672,7 @@ make fit        # = run_pipeline.py --stage curve
 - 期望：自由与锚定两条路径都实现真正的有界线性最小二乘；增加边界活跃的反例，与独立求解器交叉校验；重新生成诊断统计，撤回“当前最差日残差全是数学上无法表达”和“精修差异均 <0.05bp”的断言。剩余误差仍可能来自模型局限，不能反过来声称已全部解决。
 - 参考：[SciPy 有界线性最小二乘定义](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.lsq_linear.html)。
 - 状态：✅ **已解决**（C-013）
-- **Lead 响应**：`pinv+clip` 已替换为向量化精确有效集 **BVLS**（触界重解自由系数 + KKT 校验），自由/锚定两条路径均替换；与 `scipy.optimize.lsq_linear(method="bvls")` 在 120 组随机边界活跃问题上相对误差 ≤ 2.4e-16。复测：2002-04-26 **156.035456 → 94.018719bp**、2004-08-17 **76.651005 → 52.872232bp**（与你给出的 bvls 参考 93.827460 相差 0.19bp，来自 τ 网格与 tie-break，已在测试注明）。已撤回"最差日残差全是数学上无法表达"与"精修差异 <0.05bp"两处断言。回归测试：`test_bounded_lstsq_matches_lsq_linear`、`test_r01_*`。
+- **作者响应**：`pinv+clip` 已替换为向量化精确有效集 **BVLS**（触界重解自由系数 + KKT 校验），自由/锚定两条路径均替换；与 `scipy.optimize.lsq_linear(method="bvls")` 在 120 组随机边界活跃问题上相对误差 ≤ 2.4e-16。复测：2002-04-26 **156.035456 → 94.018719bp**、2004-08-17 **76.651005 → 52.872232bp**（与你给出的 bvls 参考 93.827460 相差 0.19bp，来自 τ 网格与 tie-break，已在测试注明）。已撤回"最差日残差全是数学上无法表达"与"精修差异 <0.05bp"两处断言。回归测试：`test_bounded_lstsq_matches_lsq_linear`、`test_r01_*`。
 
 **R02 [P1 / 阻塞] b1 仍有换解跳变，当前稳定性标记无法保护 slope 因子**
 
@@ -682,7 +682,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：2023-10-11 → 10-12，各节点收益率最大变动仅 0.04 个百分点（4bp），b0 由 2.843725 变为 2.839150；b1 却从 **-2.395903 变为 -0.922731**（跳 147.317170bp）。τ1 从 0.222332 变为 1.5，τ2 从 0.481116 变为 30；两天 `unstable=False`。全样本 NSS 的 |Δb1| p99 为 0.899533 个百分点。
 - 期望：撤回“slope 已可直接使用”；优先以可观测期限利差作 slope，或用训练窗口确定并冻结 τ、因果状态模型等方案；对所有实际使用的因子做跳变/扰动敏感性检验。未来平滑不得利用 t 之后观测。
 - 状态：✅ **已解决**（C-013）
-- **Lead 响应**：`unstable` 现覆盖 `b0/b1/b2/b3/tau1/tau2`（阈值 8×MAD），并新增 `unstable_reason`；2023-10-12 已标记 `unstable=True`（reason 含 b1，\|Δb1\|=1.4732pp，全样本 b1 触发 429 天）。已撤回"slope 可直接作因子"，新增 `src/ficc/curve/factors.py`：`observable_factors`（level/slope/curvature 由观测直接构造）+ `factor_jump_sensitivity`；同日可观测因子日变动 < 5bp。因果方案（冻结 τ / Kalman）写入 docstring，本轮不实现。测试：`test_b1_jump_detection`、`test_observable_factors`。
+- **作者响应**：`unstable` 现覆盖 `b0/b1/b2/b3/tau1/tau2`（阈值 8×MAD），并新增 `unstable_reason`；2023-10-12 已标记 `unstable=True`（reason 含 b1，\|Δb1\|=1.4732pp，全样本 b1 触发 429 天）。已撤回"slope 可直接作因子"，新增 `src/ficc/curve/factors.py`：`observable_factors`（level/slope/curvature 由观测直接构造）+ `factor_jump_sensitivity`；同日可观测因子日变动 < 5bp。因果方案（冻结 τ / Kalman）写入 docstring，本轮不实现。测试：`test_b1_jump_detection`、`test_observable_factors`。
 
 **R03 [P1 / 阻塞] 离线输入更新后，manifest 可能为新数据登记旧快照哈希**
 
@@ -692,7 +692,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：临时目录先建 2026 年基线，再把源 xlsx 收益率全部增加 0.1 个百分点，非 force 重建成功；processed 收益率随之增加 0.1，但 manifest 的 source hash 仍等于未更新的旧快照。
 - 期望：不可变模式应直接解析所登记的旧快照，或在源/快照不同时报错，或另存带内容哈希的新版本；必须保证参与计算的字节与 manifest 指向的字节一致。加入源文件变化后的重建测试。
 - 状态：✅ **已解决**（C-014）
-- **Lead 响应**：离线模式改为**只解析已登记的不可变快照**；源文件变化仅 WARNING 并提示 `--force`；`force` 才重新登记并归档旧快照。新增测试断言：源 xlsx 全 +0.1pp 后非 force 重建 → parquet sha 不变、manifest 各年 sha 不变、`version_id` 不变；force 后产物变化、manifest 指向新快照、旧快照进入 `archive/`。即"参与计算的字节 == manifest 指向的字节"。
+- **作者响应**：离线模式改为**只解析已登记的不可变快照**；源文件变化仅 WARNING 并提示 `--force`；`force` 才重新登记并归档旧快照。新增测试断言：源 xlsx 全 +0.1pp 后非 force 重建 → parquet sha 不变、manifest 各年 sha 不变、`version_id` 不变；force 后产物变化、manifest 指向新快照、旧快照进入 `archive/`。即"参与计算的字节 == manifest 指向的字节"。
 
 **R04 [P1 / 阻塞] 单文件原子写入不能保证整批产物失败回滚**
 
@@ -702,7 +702,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：临时目录改变输入后，将 `_write_json_atomic` 注入 `OSError`；函数失败，但 processed 哈希已变，manifest 字节仍是旧值。
 - 期望：整批输出先写入新的版本目录、完成校验与哈希后再原子切换版本指针；或者实现明确的事务回滚。对每个写入边界注入异常，验证读者只会看到完整旧版本或完整新版本。
 - 状态：✅ **已解决**（C-014）
-- **Lead 响应**：改为**版本目录 + 原子指针**：staging 写入并回读校验 → 提交快照 → 原子改名到 `data/versions/<version_id>/` → 写旧路径兼容副本 → **最后**原子替换 `data/metadata/current.json`（失败回滚副本）。对 5 个写入边界（staging_curve / staging_raw / staging_manifest / legacy_copy / pointer）注入 `OSError`：均抛错、指针不变、`load_curve_long()`/`load_funding_series()` 仍返回完整旧版本。指针缺失回退旧路径，版本文件哈希损坏抛 `DataValidationError`。
+- **作者响应**：改为**版本目录 + 原子指针**：staging 写入并回读校验 → 提交快照 → 原子改名到 `data/versions/<version_id>/` → 写旧路径兼容副本 → **最后**原子替换 `data/metadata/current.json`（失败回滚副本）。对 5 个写入边界（staging_curve / staging_raw / staging_manifest / legacy_copy / pointer）注入 `OSError`：均抛错、指针不变、`load_curve_long()`/`load_funding_series()` 仍返回完整旧版本。指针缺失回退旧路径，版本文件哈希损坏抛 `DataValidationError`。
 
 **R05 [P1 / 重要] 完整性闸门可接受几乎整年历史丢失**
 
@@ -712,7 +712,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：在内存中将 2020 年压缩到一个交易日（删除 2,728 行、248 个交易日），其他年份保留；`_validate_curve_dataset` 仍通过，输出为 64,744 行、5,956 天。
 - 期望：对历史年份/日期键集合与既有版本做覆盖退化检查；异常减少须明确批准或标注。补入逐年覆盖及缺口校验，不能只靠最终绘图时才发现。这里无需依赖完整节假日日历就能保护已存在历史。
 - 状态：✅ **已解决**（C-014）
-- **Lead 响应**：新增**逐年覆盖退化检查**：对照上一版本逐年交易日集合，历史交易日消失默认报错并列出"逐年 baseline→new + 缺失日期"，`--allow-coverage-drop` 显式放行；新增年份/新增交易日允许；2Y 已知缺口不误报。删 1 个历史交易日即被拦截（原反例删 248 天已能被识别）。
+- **作者响应**：新增**逐年覆盖退化检查**：对照上一版本逐年交易日集合，历史交易日消失默认报错并列出"逐年 baseline→new + 缺失日期"，`--allow-coverage-drop` 显式放行；新增年份/新增交易日允许；2Y 已知缺口不误报。删 1 个历史交易日即被拦截（原反例删 248 天已能被识别）。
 
 **R06 [P2 / 重要] 默认在线抓取不会刷新当年缓存，日更配置未兑现**
 
@@ -722,7 +722,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：临时缓存中已有 2026.xlsx，替换下载方法为调用即抛错，`fetch_year(2026)` 仍成功，下载调用次数为 0。
 - 期望：在线模式刷新当年文件并保留版本，历史完整年度继续复用；离线模式明确接受固定截止日。资金面也需要单独接通在线刷新：当前 `_build_funding` 只读 spike CSV，未调用已有 `fetch_repo_rates` 接口。
 - 状态：✅ **已解决**（C-014）
-- **Lead 响应**：在线抓取分年处理——**当年强制刷新**（staging→`archive/`→提交），历史完整年份复用快照（下载调用 0 次）；新增 `data.max_staleness_days=5`（落后告警）与 `data.refresh_current_year=true`（均可配）；资金面接入在线刷新（akshare 可选，缺失/失败降级 CSV 并 WARNING）。测试：`test_current_year_cache_is_refreshed_when_configured` 等 8 项。
+- **作者响应**：在线抓取分年处理——**当年强制刷新**（staging→`archive/`→提交），历史完整年份复用快照（下载调用 0 次）；新增 `data.max_staleness_days=5`（落后告警）与 `data.refresh_current_year=true`（均可配）；资金面接入在线刷新（akshare 可选，缺失/失败降级 CSV 并 WARNING）。测试：`test_current_year_cache_is_refreshed_when_configured` 等 8 项。
 
 **R07 [P2 / 重要] 主流程忽略配置的拟合权重**
 
@@ -732,7 +732,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：全样本 NSS 等权 RMSE 中位 3.332820bp / MAE 2.991775bp；显式传配置权重后为 **3.371859bp / 2.923847bp**。
 - 期望：主入口显式传 `cfg.curve.weights`，产物保存实际权重模式；补主流程配置透传测试。其他配置也应审计：自定义 cfg 没有传入底层 `get_config()` 调用，`data.tenors` 清洗仍使用默认常量。
 - 状态：✅ **已解决**（C-016 + C-013）
-- **Lead 响应**：`run_pipeline.py` 与 `fit_diagnostics.py` 均显式传 `cfg.curve.weights`，并把 `model`/`weights_mode` 写入参数面板。实测可复现你给出的两组数：等权 NSS RMSE 中位 **3.320854 / MAE 2.991775**；配置权重 **3.364281 / MAE 2.8337**。默认走配置。另审计并移除了定价层的 `FACE=100`、`settlement lag=1` 硬编码，改为 `cfg=` 透传。
+- **作者响应**：`run_pipeline.py` 与 `fit_diagnostics.py` 均显式传 `cfg.curve.weights`，并把 `model`/`weights_mode` 写入参数面板。实测可复现你给出的两组数：等权 NSS RMSE 中位 **3.320854 / MAE 2.991775**；配置权重 **3.364281 / MAE 2.8337**。默认走配置。另审计并移除了定价层的 `FACE=100`、`settlement lag=1` 硬编码，改为 `cfg=` 透传。
 
 **R08 [P2 / 重要] 非 1bp 差分步长下 DV01 单位错误**
 
@@ -742,7 +742,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：算例 A 解析 DV01=0.09121737484；bp=0.5 时返回 **0.04560868948**，bp=2 时返回 **0.18243488133**，分别少/多一倍。
 - 期望：分母改为 `2*bp`，增加 0.1/0.5/2bp 的单位不变性检验。解析 DV01 与默认 1bp 算例目前未发现此问题。
 - 状态：✅ **已解决**（C-015）
-- **Lead 响应**：分母改为 `2*bp`。实测（解析 DV01 = 0.09121737484）：bp=0.5 → **0.09121737895**（旧 0.04560868948）、bp=1 → 0.09121739130、bp=2 → **0.09121744067**（旧 0.18243488133）。新增 bp∈{0.1,0.25,0.5,1,2,5} 单位不变性 + `bp≤0` 抛错测试。关于 bp=5：绝对偏差 4.1e-7，相对 4.5e-6 是**中心差分 O(bp²) 截断**而非单位错误——保持"±bp 中心差分"定义、不引入 Richardson 外推，测试 docstring 已说明。
+- **作者响应**：分母改为 `2*bp`。实测（解析 DV01 = 0.09121737484）：bp=0.5 → **0.09121737895**（旧 0.04560868948）、bp=1 → 0.09121739130、bp=2 → **0.09121744067**（旧 0.18243488133）。新增 bp∈{0.1,0.25,0.5,1,2,5} 单位不变性 + `bp≤0` 抛错测试。关于 bp=5：绝对偏差 4.1e-7，相对 4.5e-6 是**中心差分 O(bp²) 截断**而非单位错误——保持"±bp 中心差分"定义、不引入 Richardson 外推，测试 docstring 已说明。
 
 **R09 [P2 / 重要] NS 面板不能按公开参数接口重建 Curve**
 
@@ -752,7 +752,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：传入 `b0=3,b1=-1,b2=2,tau1=1.5`，`Curve.from_params(..., method="ns")` 抛 `ns 曲线缺少参数 'tau'`。
 - 期望：统一 NS τ 键或在构造入口规范化别名；用真实面板行做 rate/shift/重建端到端测试，参数缺失不得静默换模型。
 - 状态：✅ **已解决**（C-013）
-- **Lead 响应**：NS 规范键为 `tau`，`from_params` 接受面板的 `tau1` 别名并规范化；端到端测试：真实面板一行 → `Curve.from_params` → `rate()` 与拟合值一致（<1e-10）；**缺参数抛 `ValueError`，禁止静默退化插值**。
+- **作者响应**：NS 规范键为 `tau`，`from_params` 接受面板的 `tau1` 别名并规范化；端到端测试：真实面板一行 → `Curve.from_params` → `rate()` 与拟合值一致（<1e-10）；**缺参数抛 `ValueError`，禁止静默退化插值**。
 
 **R10 [P2 / 重要] 平坦化情景的幅度符号与 API 双重反向**
 
@@ -762,7 +762,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：对同一 Curve，`shock("flatten", -25).rates` 与 `shock("steepen", 25).rates` 全部相同。
 - 期望：统一 kind 表示方向、bp 表示幅度的接口约定，按当前实现将平坦化配置设为 +25；增加从真实配置读取情景的方向测试。风险模块尚未实现，但当前配置与 Curve 组合已可复现此错误。
 - 状态：✅ **已解决**（C-016 + C-013）
-- **Lead 响应**：配置改为 `flatten: bp: 25`；`shock` 明确 **kind=方向、bp=幅度（必须 ≥0）**，负值抛 `ValueError`，带符号平移改用 `shift(bp)`；新增"从真实配置读取情景并断言方向"的测试。实测 `flatten(25) != steepen(25)`。
+- **作者响应**：配置改为 `flatten: bp: 25`；`shock` 明确 **kind=方向、bp=幅度（必须 ≥0）**，负值抛 `ValueError`，带符号平移改用 `shift(bp)`；新增"从真实配置读取情景并断言方向"的测试。实测 `flatten(25) != steepen(25)`。
 
 **R11 [P2 / 重要] T+2/T+3 结算按自然日推进后只修正终点**
 
@@ -772,7 +772,7 @@ make fit        # = run_pipeline.py --stage curve
 - 证据：`settlement_date(date(2026,11,6),2)`（周五 T+2）返回 11-09 周一，按当前周一至周五日历应为 11-10 周二。
 - 期望：逐个有效工作日计数，之后再接 CN_IB 真实日历；分别测试 T+0/1/2/3 和跨周末。默认 T+1 周末样例不能覆盖此错误。
 - 状态：✅ **已解决**（C-015）
-- **Lead 响应**：改为逐个有效工作日计数（周末成交先顺延到下一工作日再计数，docstring 写明）。实测周五 2026-11-06：T+1=**11-09**、T+2=**11-10**、T+3=**11-11**（旧实现 T+2/T+3 均为 11-09）。新增 T+0/1/2/3 × {周一/周三/周五/周六/周日} 20 组矩阵测试。
+- **作者响应**：改为逐个有效工作日计数（周末成交先顺延到下一工作日再计数，docstring 写明）。实测周五 2026-11-06：T+1=**11-09**、T+2=**11-10**、T+3=**11-11**（旧实现 T+2/T+3 均为 11-09）。新增 T+0/1/2/3 × {周一/周三/周五/周六/周日} 20 组矩阵测试。
 
 **三个指定问题的审查结论**：
 
@@ -790,7 +790,7 @@ make fit        # = run_pipeline.py --stage curve
 
 建议修复顺序：R01/R02（数值求解与因子口径）→ R03/R04/R05/R06（数据版本与更新）→ R07–R11（配置和接口）；完成独立反例回归后再进入 PCA、bootstrap 和策略回测。
 
-### Lead 响应汇总（2026-11-06）
+### 作者响应汇总（2026-11-06）
 
 **11 条问题全部关闭**，每条都有"修复前失败、修复后通过"的回归测试；测试基线 202 → **254 项全绿**，
 `make check` 在项目 `.venv` 下 exit 0。
@@ -832,7 +832,7 @@ make fit        # = run_pipeline.py --stage curve
 
 ---
 
-**本轮建议优先评审的三处**（Lead 自评，供参考）：
+**本轮建议优先评审的三处**（作者自评，供参考）：
 
 1. ~~参数稳定化方案~~ → **评审结论：不可混用**。已改为两个独立产品（`free` / `anchored`），
    各自保存参数、拟合值、残差、指标，各自验收；不再出现"参数来自 A、残差来自 B"的解释困难。
@@ -956,7 +956,7 @@ print(g.loc[g["tenor_y"] == 10, "krd"].sum() / g["krd"].sum())
 
 ## 八、附：变更记录的自检清单
 
-每次追加记录前，Lead 必须逐条确认：
+每次追加记录前，作者 必须逐条确认：
 
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解

@@ -2,7 +2,7 @@
 
 ## 口径
 
-- 残差文件：`/Users/aq/quant/china_debt/reports/curve_fit_residuals_nss_free.csv`（NSS 自由拟合，单位 bp）
+- 残差文件：`~/quant/china_debt/reports/curve_fit_residuals_nss_free.csv`（NSS 自由拟合，单位 bp）
 - config_hash：`510272fd5539a3ee`；weights：`inverse_maturity_bucket`；method：`nss`
 - 样本区间：2002-01-04 → 2026-11-05（n=6204）
 - 生成时间：2026-11-07T05:32:46.852446+00:00

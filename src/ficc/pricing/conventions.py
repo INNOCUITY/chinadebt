@@ -460,7 +460,7 @@ def accrued_interest(
     这是**缺括号的笔误**：按字面代入会在起息日得到 ``AI ≈ 100``，与「应计利息
     从 0 单调累积到发行折价」矛盾。正确形式为 ``(100 − Pd) × t / T``——
     起息日 AI = 0，到期日 AI = 总折价 ``100 − Pd``，方向已验证正确
-    （评审 C-007 / 证据边界条目）。文档由 Lead 统一修订，本函数实现不变。
+    （评审 C-007 / 证据边界条目）。文档统一修订，本函数实现不变。
     """
     validate_settlement(bond, settlement, allow_maturity=True)
     basis = accrual_basis(bond, cfg=cfg)

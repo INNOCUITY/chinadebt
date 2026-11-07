@@ -313,7 +313,7 @@ def test_fit_panel_returns_pair_and_alignment() -> None:
 
 
 def test_fit_panel_stable_params_are_anchored() -> None:
-    """稳定化参数的 b0 应等于长端（≥10Y）观测均值，且在 Lead 建议区间内。"""
+    """稳定化参数的 b0 应等于长端（≥10Y）观测均值，且在建议区间内。"""
     panel = _synthetic_panel()
     panel.loc[:, 10.0] = 2.6  # 固定长端，便于对照
     params = fit_panel(panel, method="nss", return_residuals=False)

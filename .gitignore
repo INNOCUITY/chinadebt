@@ -34,6 +34,12 @@ reports/figures/*
 reports/curve_fit_fitted_*.csv
 reports/curve_fit_residuals_*.csv
 reports/curve_fit_params*.csv
+reports/curve_fit_bad_dates.csv
+reports/curve_factors.csv
+reports/curve_factor_jump_sensitivity.csv
+# 运行指纹/清单（含本机路径，属运行产物）
+reports/curve_reports_manifest.csv
+reports/*_meta.json
 
 # ---------- 系统 ----------
 .DS_Store

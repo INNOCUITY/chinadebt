@@ -1,7 +1,7 @@
 # 00 数据可行性验证 memo（结论先行）
 
 > **验证时间**：2026-11-06 13:00–13:35（Asia/Shanghai）
-> **验证环境**：`/Users/aq/quant/china_debt/.venv-spike`，Python 3.13.5，akshare 1.20.35（pip 安装成功，exit 0），pandas 3.1.1 / numpy 2.5.4 / openpyxl 3.1.5
+> **验证环境**：`~/quant/china_debt/.venv-spike`，Python 3.13.5，akshare 1.20.35（pip 安装成功，exit 0），pandas 3.1.1 / numpy 2.5.4 / openpyxl 3.1.5
 > **验证原则**：全部结论均由本机真实运行得出，原始返回已落盘 `data/raw_spike/`，抓取脚本已落盘 `scripts/spike/`（可直接复跑）。
 > **一句话结论**：**数据拿得到、可复现、历史覆盖远超 2015 年——中债官方公开存档可直接下载「中债国债收益率曲线(到期)」2002-01-04 至今全部标准期限日频数据，无需登录、无验证码；真正的风险不是"拿不到"，而是"期限点结构在 2016 年发生断点 + 版权不允许再分发"。**
 
@@ -159,7 +159,7 @@ date,open,high,low,close,volume
 三个脚本已落盘并跑通，重跑即可全量复现：
 
 ```bash
-cd /Users/aq/quant/china_debt
+cd ~/quant/china_debt
 
 # 1) 主数据源：官方 2002–2026 全历史（25 个文件 + 合并 CSV）
 .venv-spike/bin/python scripts/spike/fetch_chinabond_official.py
