@@ -1,4 +1,4 @@
-.PHONY: help setup install recon strategies data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
+.PHONY: help setup install recon strategies cost-study attribution data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
 
 # 优先使用项目本地 .venv（含 pandas/scipy/pytest/ruff），保证在任何 shell 下 `make check` 都能复现；
 # 没有 .venv 时回退系统 python3（此时请先 `make setup`）。
@@ -35,8 +35,14 @@ backfill:  ## 回补 2Y 期限点（2016-01-04~2019-01-25，可选）
 recon:  ## 固定券账本 + 独立对账（真实曲线/融资/CN_IB 日历；失败 exit 1）
 	$(PY) scripts/run_ledger_recon.py
 
-strategies:  ## 三个基线策略回测（含成本/换手/暴露/约束记录）
+strategies:  ## 三个基线策略回测（含成本/换手/暴露/约束/逐券快照）
 	$(PY) scripts/run_strategies.py
+
+cost-study:  ## 成本对照实验（固定路径回放 + 决策敏感性 + 参数敏感性）
+	$(PY) scripts/run_cost_study.py --quick
+
+attribution:  ## 账本归因（固定持仓：桥接 + carry/roll + 因子拆分）
+	$(PY) scripts/run_attribution.py
 
 # ------------------------- 研究 -------------------------
 fit:  ## 曲线拟合 + 残差诊断（最小链路：热力图 + NSS 残差）

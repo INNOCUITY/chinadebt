@@ -122,8 +122,14 @@ def metrics(result: BacktestResult, cfg: Config) -> dict[str, float]:
 def _save(result: BacktestResult, out: Path) -> None:
     frames = {
         "nav": result.nav.rename("nav").to_frame(),
+        "benchmark_nav": result.benchmark_nav.rename("benchmark_nav").to_frame(),
         "exposure": result.exposure,
         "trades": result.trades,
+        "cashflows": result.cashflows,
+        "positions": result.positions,
+        "benchmark_positions": result.benchmark_positions,
+        "benchmark_trades": result.benchmark_trades,
+        "benchmark_cashflows": result.benchmark_cashflows,
         "costs": result.costs,
         "turnover": result.turnover.rename("turnover").to_frame(),
         "constraints": result.constraints,
@@ -133,7 +139,7 @@ def _save(result: BacktestResult, out: Path) -> None:
     for name, frame in frames.items():
         frame.to_csv(
             out / f"strategy_{result.strategy}_{name}.csv",
-            index=(name not in {"trades", "rejected"}),
+            index=(name not in {"trades", "rejected", "benchmark_trades"}),
             encoding="utf-8-sig",
         )
 

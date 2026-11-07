@@ -145,6 +145,16 @@ def test_strategy_sees_only_past_history(market) -> None:
     assert isinstance(panel.index, pd.DatetimeIndex)
 
 
+class _OverweightThenRisky:
+    """前段 1.1× 基准（可执行），后段 3× 基准（不可行）→ 验证熔断降风险。"""
+
+    name = "overweight_then_risky"
+
+    def target_krd(self, ctx: MarketContext) -> TargetKRD:
+        mult = 1.1 if ctx.as_of <= START else 3.0
+        return TargetKRD(as_of=ctx.as_of, krd={t: mult * v for t, v in ctx.benchmark.krd.items()})
+
+
 class _OverweightBenchmark:
     """目标 = 基准 KRD 的 1.2 倍（主动加久期），用于验证成交前约束闸门。"""
 
@@ -255,3 +265,61 @@ def _curve(panel, d):
         rates=tuple(row.values),
         method="hermite",
     )
+
+
+def test_r23_cash_budget_includes_pending_shipments(market) -> None:
+    """R23 补查：现金预算必须包含未结算付款/费用，不能等结算后才报违规。
+
+    审查反例：min_cash_fraction=0 时，零 tilt 在 2019-01-29 仍获准成交，次日现金
+    约 −29.58 万元。修复后应在成交前拒单（或缩到现金非负），且持仓日不得出现
+    cash_floor 违规。
+    """
+    cfg, panel, funding, calendar = market
+    tight = cfg.model_copy(
+        update={"constraints": cfg.constraints.model_copy(update={"min_cash_fraction": 0.0})}
+    )
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=tight,
+        start=START,
+        end=date(2019, 1, 31),
+    )
+    assert len(result.rejected) > 0
+    assert len(result.trades) == 0
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    assert "cash_floor" not in held["violation_codes"].str.cat(sep=";")
+    assert (result.exposure["cash"] >= -1e-6).all()
+
+
+def test_drawdown_trigger_allows_derisking_execution(market) -> None:
+    """回撤触发后，引擎必须能执行降低风险的订单（不能被同一回撤检查永久拒绝）。"""
+    cfg, panel, funding, calendar = market
+    tight = cfg.model_copy(
+        update={
+            "risk": cfg.risk.model_copy(
+                update={"limits": cfg.risk.limits.model_copy(update={"max_drawdown_stop": 2e-3})}
+            )
+        }
+    )
+    result = run_backtest(
+        _OverweightThenRisky(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=tight,
+        start=START,
+        end=date(2019, 3, 29),
+    )
+    assert int(result.signals["risk_off"].sum()) > 0
+    # 熔断后必须有卖出（降风险）成交
+    sells = result.trades[result.trades["side"] == "sell"]
+    assert len(sells) > 0
+    # 降风险后组合 DV01 应低于 1.1× 基准的最高暴露
+    dv01 = result.exposure["total_dv01"]
+    bench = result.exposure["bench_total_dv01"]
+    assert dv01.max() > 0
+    assert (dv01 / bench).max() < 1.15  # 1.1× 目标经整手取整后允许少量超调
+    assert len(result.rejected) > 0  # 3× 目标被拒

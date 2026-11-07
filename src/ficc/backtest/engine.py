@@ -69,6 +69,11 @@ class BacktestResult:
     constraints: pd.DataFrame
     signals: pd.DataFrame
     rejected: pd.DataFrame
+    # 归因/对照实验输入（逐券日快照与基准账本；R23 补查要求的持久化输入）
+    positions: pd.DataFrame
+    benchmark_positions: pd.DataFrame
+    benchmark_trades: pd.DataFrame
+    benchmark_cashflows: pd.DataFrame
 
     def to_frames(self) -> dict[str, pd.DataFrame | pd.Series]:
         return {
@@ -82,6 +87,10 @@ class BacktestResult:
             "constraints": self.constraints,
             "signals": self.signals,
             "rejected": self.rejected,
+            "positions": self.positions,
+            "benchmark_positions": self.benchmark_positions,
+            "benchmark_trades": self.benchmark_trades,
+            "benchmark_cashflows": self.benchmark_cashflows,
         }
 
 
@@ -168,6 +177,8 @@ def run_backtest(
     trade_spread_rows: list[dict[str, Any]] = []
 
     band_face = float(cfg.constraints.min_trade_lot) * float(cfg.constraints.rebalance_band_lots)
+    fee_pending_next = 0.0  # 上一交易日成交、今日结算将扣的费用
+    last_rebalance_week: tuple[int, int] | None = None
     nav_high = float(cfg.backtest.init_cash)
     risk_off = False
     pending: TargetKRD | None = None
@@ -177,6 +188,31 @@ def run_backtest(
     # ------------------------------------------------------------------
     # 成交前完整校验（R23）
     # ------------------------------------------------------------------
+    def _report_severity(report: Any) -> float:
+        """违规严重度（用于"降风险订单允许执行"的单调改进判定）。"""
+        worst = 0.0
+        for violation in report.violations:
+            limit = float(violation.limit)
+            denom = max(abs(limit), 1.0)
+            worst = max(worst, abs(float(violation.value) - limit) / denom)
+        return worst
+
+    def _coupon_in_window(d: date, settled_faces: dict[str, float]) -> float:
+        """投影窗口 (d, 下一交易日] 内应付票息（按**日初已结算面值**归属，R24）。"""
+        from ficc.pricing.conventions import coupon_dates
+
+        next_day = calendar.next_trading_day(d, 1)
+        total = 0.0
+        for bond in universe:
+            settled = float(settled_faces.get(bond.code, 0.0))
+            if settled <= 0.0:
+                continue
+            for coupon_day in coupon_dates(bond):
+                if d < coupon_day <= next_day:
+                    total += settled / 100.0 * float(bond.coupon_pct) / float(bond.freq)
+                    break
+        return total
+
     def project_and_validate(
         target: TargetKRD,
         *,
@@ -185,75 +221,128 @@ def run_backtest(
         snapshot: Any,
         benchmark_d: BenchmarkPortfolio,
         nav_high_water: float,
-    ) -> tuple[dict[str, float] | None, list[TargetKRD], str]:
-        """返回 (可执行面值, 尝试过的目标列表, 拒单原因)。``None`` 表示拒单。"""
+        risk_off: bool = False,
+    ) -> tuple[dict[str, float] | None, list[TargetKRD], str, bool]:
+        """成交前完整校验（R23 补查修复版）。
+
+        返回 ``(可执行面值, 尝试过的目标列表, 拒单/降险原因, 是否降险执行)``；
+        ``None`` 表示拒单。现金预算按**各结算时点**汇总：
+
+        - 今日结算：上一交易日 pending 全部到账，同时扣其费用；
+        - 今日新成交：T+1 结算，形成新的待结算付款/收款；
+        - 明日（下一交易日）：票息应收（按日初已结算面值）、新成交费用、未结算付款、
+          以及负现金的一天融资；
+        - 用**结算完成后的现金与 NAV** 做杠杆/单券权重/现金下限/NAV 分母的统一校验。
+        """
         positions_before = () if snapshot is None else snapshot.positions
         current_faces = {p.bond.code: float(p.face_value) for p in positions_before}
-        cash_prev = 0.0 if snapshot is None else float(snapshot.cash)
+        cash_prev = float(cfg.backtest.init_cash) if snapshot is None else float(snapshot.cash)
         pending_prev = 0.0 if snapshot is None else float(getattr(snapshot, "pending_cash", 0.0))
-        # 上一日未结算成交在今日结算：把它视作可用现金（费用也从这里扣，保守起见不重复扣）
-        cash_available = cash_prev + pending_prev
+        settled_faces = (
+            {}
+            if snapshot is None
+            else {
+                p.bond.code: float(getattr(p, "settled_face", p.face_value))
+                for p in positions_before
+            }
+        )
+        cash_today = cash_prev + pending_prev  # 今日结算完成后可用现金
+        coupon_next = _coupon_in_window(d, settled_faces)
+        rate_pct = float(funding_map.get(d, cfg.costs.repo_rate_fallback_const * 100.0))
+
+        # 当前组合的违规基线（被动超限时允许"只降不增"的降风险订单）
+        mv_current = _market_values(current_faces, universe, curve, d, cfg)
+        nav_current = cash_today - fee_pending_next + sum(mv_current.values())
+        current_risk = project_risk(
+            current_faces,
+            universe,
+            curve,
+            calendar=calendar,
+            cash=cash_today - fee_pending_next,
+            pending_cash=0.0,
+            nav=nav_current,
+            cfg=cfg,
+        )
+        current_report = check_constraints(
+            risk=current_risk, benchmark=benchmark_d, nav_high_water=nav_high_water, cfg=cfg
+        )
+        current_severity = _report_severity(current_report)
+        current_codes = {v.code for v in current_report.violations}
 
         bench_krd = {float(k): float(v) for k, v in benchmark_d.krd.items()}
         dev = {t: float(target.krd.get(t, bench_krd[t])) - bench_krd[t] for t in bench_krd}
         attempted: list[TargetKRD] = []
+        # 风控熔断时按风险规模阶梯降档：即使基准目标本身不可行，也要能执行降低风险的订单
+        level_factors = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0] if risk_off else [1.0]
 
-        for _iteration in range(6):
-            cand = {t: bench_krd[t] + dev[t] for t in bench_krd}
-            if min(cand.values()) < 0:
-                dev = {t: max(-bench_krd[t], dev[t]) for t in bench_krd}
-                cand = {t: bench_krd[t] + dev[t] for t in bench_krd}
-            cand_target = TargetKRD(as_of=target.as_of, krd=cand, notes=target.notes)
-            attempted.append(cand_target)
-            orders = build_orders(
-                cand_target,
-                positions_before,
-                universe,
-                curve,
-                min_trade_face=band_face,
-                calendar=calendar,
-                cfg=cfg,
-            )
-            # 交易后最终面值（含宇宙外清仓）
-            faces_after = dict(current_faces)
-            settlement_cash = 0.0
-            fee_total = 0.0
-            for order in orders:
-                signed = 1.0 if order.side == "buy" else -1.0
-                faces_after[order.bond.code] = (
-                    faces_after.get(order.bond.code, 0.0) + signed * order.face_value
+        for level in level_factors:
+            for _iteration in range(6):
+                cand = {t: level * bench_krd[t] + dev[t] for t in bench_krd}
+                if min(cand.values()) < 0:
+                    dev = {t: max(-level * bench_krd[t], dev[t]) for t in bench_krd}
+                    cand = {t: level * bench_krd[t] + dev[t] for t in bench_krd}
+                cand_target = TargetKRD(as_of=target.as_of, krd=cand, notes=target.notes)
+                attempted.append(cand_target)
+                orders = build_orders(
+                    cand_target,
+                    positions_before,
+                    universe,
+                    curve,
+                    min_trade_face=band_face,
+                    calendar=calendar,
+                    cfg=cfg,
                 )
-                settle = settlement_for(calendar, d, cfg=cfg)
-                ai = accrued_interest(order.bond, settle, cfg=cfg)
-                amount = (order.clean_price + ai) * order.face_value / 100.0
-                settlement_cash += -amount if order.side == "buy" else amount
-                fee_total += _fee_estimate(order.face_value, order.clean_price, cfg)
-            faces_after = {k: max(v, 0.0) for k, v in faces_after.items()}
-            pending_after = settlement_cash  # T+1 结算前全部为未结算付款
-            risk_proj = project_risk(
-                faces_after,
-                universe,
-                curve,
-                calendar=calendar,
-                cash=cash_available,
-                pending_cash=pending_after,
-                nav=cash_available
-                + sum(_mv for _mv in _market_values(faces_after, universe, curve, d, cfg).values())
-                + pending_after,
-                cfg=cfg,
-            )
-            report = check_constraints(
-                risk=risk_proj, benchmark=benchmark_d, nav_high_water=nav_high_water, cfg=cfg
-            )
-            cash_ok = (
-                risk_proj.cash - fee_total
-                >= float(cfg.constraints.min_cash_fraction) * risk_proj.nav
-            )
-            if report.ok and cash_ok:
-                return faces_after, attempted, ""
-            dev = {t: v * 0.5 for t, v in dev.items()}
+                faces_after = dict(current_faces)
+                settlement_cash = 0.0
+                fee_total = 0.0
+                for order in orders:
+                    signed = 1.0 if order.side == "buy" else -1.0
+                    faces_after[order.bond.code] = (
+                        faces_after.get(order.bond.code, 0.0) + signed * order.face_value
+                    )
+                    settle = settlement_for(calendar, d, cfg=cfg)
+                    ai = accrued_interest(order.bond, settle, cfg=cfg)
+                    amount = (order.clean_price + ai) * order.face_value / 100.0
+                    settlement_cash += -amount if order.side == "buy" else amount
+                    fee_total += _fee_estimate(order.face_value, order.clean_price, cfg)
+                faces_after = {k: max(v, 0.0) for k, v in faces_after.items()}
 
-        return None, attempted, f"6 次投影仍不可行（{len(attempted)} 次尝试）"
+                # 结算完成后（d+1）的现金：今日到账 pending − 今日费用 + 新成交待结算 + 票息 − 融资
+                cash_end = cash_today - fee_pending_next + settlement_cash - fee_total + coupon_next
+                if cash_end < 0.0:
+                    cash_end += cash_end * rate_pct / 100.0 / 365.0  # 一天融资（负值）
+                mv_after = _market_values(faces_after, universe, curve, d, cfg)
+                nav_after = cash_end + sum(mv_after.values())
+                risk_proj = project_risk(
+                    faces_after,
+                    universe,
+                    curve,
+                    calendar=calendar,
+                    cash=cash_end,
+                    pending_cash=0.0,
+                    nav=nav_after,
+                    cfg=cfg,
+                )
+                report = check_constraints(
+                    risk=risk_proj,
+                    benchmark=benchmark_d,
+                    nav_high_water=nav_high_water,
+                    cfg=cfg,
+                )
+                if report.ok:
+                    return faces_after, attempted, "", False
+                # 降风险订单：只允许"当前已违规 → 候选不引入新违规类型且严重度下降"，
+                # 避免把"从空仓建到超限组合"误判成降风险（R23 补查边界）。
+                cand_codes = {v.code for v in report.violations}
+                if (
+                    current_severity > 0.0
+                    and cand_codes <= current_codes
+                    and _report_severity(report) < current_severity * 0.999
+                ):
+                    return faces_after, attempted, "partial_de_risk", True
+                dev = {t: value * 0.5 for t, value in dev.items()}
+
+        return None, attempted, f"6 次投影仍不可行（{len(attempted)} 次尝试）", False
 
     def _market_values(
         faces: dict[str, float], bonds: tuple[Any, ...], curve: Curve, d: date, config: Config
@@ -306,10 +395,21 @@ def run_backtest(
                     {
                         "trade_id": f"bench-{bond.code}",
                         "bond_code": bond.code,
+                        "side": "buy",
                         "face_value": face,
                         "clean_price": clean_exec,
                         "mid_clean_price": _mid,
                         "spread_cost": per100 * face / 100.0,
+                        "signal_date": days[0],
+                        "trade_date": d,
+                        "settlement_date": settle,
+                        "fee": 0.0,
+                        "coupon_pct": float(bond.coupon_pct),
+                        "freq": int(bond.freq),
+                        "issue_date": bond.issue_date,
+                        "maturity_date": bond.maturity_date,
+                        "accrual": bond.accrual,
+                        "market": bond.market,
                     }
                 )
             bench_bought = True
@@ -318,9 +418,10 @@ def run_backtest(
         executed = 0
         executed_notional = 0.0
         rejected_reason = ""
+        partial_de_risk = False
         gate_target: TargetKRD | None = None
         if pending is not None:
-            faces_ok, attempted, reason = project_and_validate(
+            faces_ok, attempted, reason, partial_de_risk = project_and_validate(
                 pending,
                 curve=curve_d,
                 d=d,
@@ -340,6 +441,7 @@ def run_backtest(
                         "notes": pending.notes,
                     }
                 )
+                fee_pending_next = 0.0  # 拒单：没有新费用
             else:
                 gate_target = attempted[-1]
                 current_faces = (
@@ -372,12 +474,14 @@ def run_backtest(
                     )
                     executed += 1
                     executed_notional += abs(delta) * clean_exec / 100.0
+                    fee_pending_next += _fee_estimate(abs(delta), clean_exec, cfg)
                     _spread_cost = abs(delta) / 100.0 * per100
                     order_spread[bond.code] = order_spread.get(bond.code, 0.0) + _spread_cost
                     trade_spread_rows.append(
                         {
                             "trade_id": f"{strategy.name}-{d:%Y%m%d}-{bond.code}-{side}",
                             "spread_bp": _spread_bp,
+                            "mid_clean_price": _mid,
                             "spread_cost": _spread_cost,
                         }
                     )
@@ -454,12 +558,20 @@ def run_backtest(
                 "n_trades": executed,
                 "rejected": bool(rejected_reason),
                 "reject_reason": rejected_reason,
+                "gate_mode": "partial_de_risk" if partial_de_risk else "normal",
                 **{f"m_{k}": v for k, v in report.metrics.items()},
             }
         )
 
         # ---- 4) 下一日信号（只读 <= d 数据）----
         last_snapshot = snapshot
+        iso = d.isocalendar()
+        week_key = (int(iso[0]), int(iso[1]))
+        is_rebalance_day = cfg.backtest.rebalance == "daily" or week_key != last_rebalance_week
+        if not is_rebalance_day:
+            pending = None
+            continue
+        last_rebalance_week = week_key
         drawdown_breach = any(v.code == "drawdown_stop" for v in report.violations)
         if drawdown_breach:
             risk_off = True
@@ -491,6 +603,9 @@ def run_backtest(
             }
         )
 
+    positions_df = ledger.snapshots_frame()
+    bench_positions_df = bench_ledger.snapshots_frame()
+    bench_trade_df = pd.DataFrame(bench_trade_rows)
     trades_df = ledger.trades_frame()
     if trade_spread_rows:
         spread_frame = pd.DataFrame(trade_spread_rows)
@@ -510,4 +625,8 @@ def run_backtest(
         constraints=pd.DataFrame(constraint_rows),
         signals=pd.DataFrame(signal_rows),
         rejected=pd.DataFrame(rejected_rows),
+        positions=positions_df,
+        benchmark_positions=bench_positions_df,
+        benchmark_trades=bench_trade_df,
+        benchmark_cashflows=bench_ledger.cashflows_frame(),
     )

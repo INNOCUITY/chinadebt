@@ -45,6 +45,9 @@ reports/*_meta.json
 # 汇总、净值、成本、换手、成交记录仍入库作为证据。
 reports/strategy_*_exposure.csv
 reports/strategy_*_constraints.csv
+# 逐券日快照/逐券归因是中间大表（make strategies / make attribution 可重建）
+reports/strategy_*_positions.csv
+reports/attribution_*_bonds.csv
 
 # ---------- 系统 ----------
 .DS_Store
