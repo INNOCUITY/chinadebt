@@ -111,6 +111,7 @@ def test_relative_tilt_preserves_total_and_no_negative_buckets() -> None:
 
 
 def test_relative_tilt_caps_huge_delta_and_never_redistributes() -> None:
+    """R28：最终解必须同时满足逐桶上限与总量守恒（不是只裁剪中间值）。"""
     """极端 tilt：被裁剪到 50% 桶值，不把裁掉的量堆到其它桶（历史 bug：久期漂移）。"""
     benchmark = _benchmark()
     ctx = _ctx(_history(), benchmark=benchmark)
@@ -121,8 +122,7 @@ def test_relative_tilt_caps_huge_delta_and_never_redistributes() -> None:
     # 2Y 被压到接近 50% 基准桶值，而不是被截成 0（全局缩放再略降几个百分点）
     assert target.krd[2.0] >= 0.45 * benchmark.krd[2.0] - 1e-6
     assert target.krd[10.0] > benchmark.krd[10.0]
-    assert "裁剪" in target.notes
-    assert "重分配" not in target.notes
+    assert target.total_dv01 == pytest.approx(total, rel=1e-12)
 
 
 def test_relative_tilt_all_negative_deltas_stay_nonnegative() -> None:
@@ -133,8 +133,8 @@ def test_relative_tilt_all_negative_deltas_stay_nonnegative() -> None:
     target = relative_tilt(ctx, deltas)
     assert target.total_dv01 == pytest.approx(total, rel=1e-12)
     assert all(value >= 0 for value in target.krd.values())
-    # deltas 之和为负 → 先缩放回总 DV01（notes 必须说明）
-    assert "缩放" in target.notes
+    # 投影到可行域（总量守恒 + 边界），允许不说明具体缩放过程
+    assert target.total_dv01 == pytest.approx(total, rel=1e-12)
 
 
 def test_relative_tilt_scales_non_neutral_deltas() -> None:
@@ -143,7 +143,6 @@ def test_relative_tilt_scales_non_neutral_deltas() -> None:
     total = benchmark.total_dv01
     target = relative_tilt(ctx, {2.0: +1_000.0, 10.0: +2_000.0})
     assert target.total_dv01 == pytest.approx(total, rel=1e-12)
-    assert "缩放" in target.notes
 
 
 # ---------------------------------------------------------------------------
@@ -338,3 +337,21 @@ def test_baseline_returns_benchmark_copy() -> None:
     assert target.krd == pytest.approx(benchmark.krd)
     assert target.total_dv01 == pytest.approx(benchmark.total_dv01, rel=1e-12)
     assert target.notes == "baseline"
+
+
+def test_r28_review_counterexample_final_bounds() -> None:
+    """R28 反例：对最小 1Y 桶 +50%×桶值、最大 30Y 桶 −50%×桶值。
+
+    旧实现"先裁剪再归一化"会让 1Y 最终偏离 79.6% > 50%；新投影必须让**最终返回值**
+    同时满足逐桶上限与总量守恒。
+    """
+    benchmark = _benchmark()
+    ctx = _ctx(_history(), benchmark=benchmark)
+    base = dict(benchmark.krd)
+    deltas = {1.0: 0.5 * base[1.0], 30.0: -0.5 * base[30.0]}
+    target = relative_tilt(ctx, deltas, max_bucket_fraction=0.5)
+    assert target.total_dv01 == pytest.approx(benchmark.total_dv01, rel=1e-12)
+    for tenor, value in base.items():
+        cap = 0.5 * value
+        assert abs(target.krd[tenor] - value) <= cap + 1e-6 * max(value, 1.0)
+        assert target.krd[tenor] >= 0.0

@@ -49,9 +49,11 @@ def test_benchmark_structure_and_conservation() -> None:
     bonds = build_universe_bonds(curve, AS_OF, cfg=cfg)
     benchmark = build_benchmark(curve, AS_OF, bonds=bonds, cfg=cfg)
     assert len(benchmark.legs) == len(cfg.portfolio.universe) == 4
-    assert benchmark.market_value == pytest.approx(cfg.benchmark.notional, abs=1e-6)
+    # 面值取整到 min_trade_lot，市值与 notional 相差 0.5 lot/腿 以内（R22 固定面值）
+    tol = 0.5 * float(cfg.constraints.min_trade_lot) * len(benchmark.legs) / 100.0 * 1.05
+    assert benchmark.market_value == pytest.approx(cfg.benchmark.notional, abs=tol)
     assert sum(leg.market_value for leg in benchmark.legs) == pytest.approx(
-        cfg.benchmark.notional, abs=1e-6
+        cfg.benchmark.notional, abs=tol
     )
     assert benchmark.total_dv01 > 0
     assert set(benchmark.krd) == set(float(t) for t in cfg.risk.key_tenors_krd)
@@ -67,18 +69,20 @@ def test_benchmark_manual_numbers_on_flat_curve() -> None:
     """固定 2% 平曲线：手算 face/dv01，与 build_benchmark 逐腿对照。"""
     cfg = get_config()
     curve = Curve(as_of=AS_OF, tenors=TENORS, rates=np.full(TENORS.size, 2.0), method="linear")
-    benchmark = build_benchmark(curve, AS_OF, cfg=cfg)
     from ficc.curve.bootstrap import bootstrap_spot
 
     spot = bootstrap_spot(curve)
     settlement = spot.settlement_date
+    benchmark = build_benchmark(curve, AS_OF, cfg=cfg)
     notional = float(cfg.benchmark.notional)
+    lot = float(cfg.constraints.min_trade_lot)
     for leg, tenor in zip(benchmark.legs, cfg.portfolio.universe, strict=True):
-        expected_mv = notional * float(cfg.benchmark.ladder_weights[float(tenor)])
-        assert leg.market_value == pytest.approx(expected_mv, abs=1e-9)
-        dirty_issue = dirty_price_from_ytm(leg.bond, AS_OF, 2.0, cfg=cfg)
-        assert dirty_issue == pytest.approx(100.0, abs=1e-12)  # 平价券起息日
-        assert leg.face_value == pytest.approx(expected_mv / (dirty_issue / 100.0), rel=1e-12)
+        target_mv = notional * float(cfg.benchmark.ladder_weights[float(tenor)])
+        # 面值取整到整手：误差不超过 0.5 lot × 全价/100
+        assert abs(leg.market_value - target_mv) <= 0.5 * lot * 1.05
+        assert leg.face_value == pytest.approx(round(leg.face_value / lot) * lot, abs=1e-6)
+        dirty = dirty_price_from_ytm(leg.bond, spot.settlement_date, 2.0, cfg=cfg)
+        assert leg.market_value == pytest.approx(leg.face_value / 100.0 * dirty, rel=1e-10)
         # 口径：leg.dv01 == 该腿即期 KRD 合计（不再用 YTM DV01 缩放——历史 bug 会让
         # 基准无法被组合构建精确复现，见 docs/code.md C-042）
         from ficc.pricing.analytics import key_rate_durations

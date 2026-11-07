@@ -68,12 +68,32 @@ def test_engine_end_to_end(market) -> None:
     # 2) NAV 连续：不应因未结算成交而出现数量级跳变
     daily = result.nav.pct_change().abs().dropna()
     assert daily.max() < 0.02, f"单日 NAV 跳变 {daily.max():.4f} 过大（疑似未结算双计）"
+    # 基准 NAV 与策略同引擎、同成本口径（R22）
+    assert len(result.benchmark_nav) == len(result.nav)
+    assert result.benchmark_nav.index.equals(result.nav.index)
 
     # 3) 记录完整性
-    for column in ("date", "nav", "cash", "pending_cash", "total_dv01", "duration", "dv01_ratio"):
+    for column in (
+        "date",
+        "nav",
+        "cash",
+        "pending_cash",
+        "total_dv01",
+        "duration",
+        "dv01_ratio",
+        "bench_total_dv01",
+        "bench_duration",
+        "bench_nav",
+    ):
         assert column in result.exposure.columns
-    assert {"fee", "funding", "total"} <= set(result.costs.columns)
-    assert result.costs["total"].sum() > 0  # 费用与融资都应真实发生
+    assert {"fee", "funding", "spread", "total"} <= set(result.costs.columns)
+    assert result.costs["total"].sum() > 0  # 费用/融资/价差都应真实发生
+    # R26：价差进入执行价并单独记账；成交明细的价差合计 = 成本表价差合计
+    assert result.costs["spread"].sum() > 0
+    if "spread_cost" in result.trades.columns:
+        assert result.trades["spread_cost"].sum() == pytest.approx(
+            result.costs["spread"].sum(), rel=1e-9
+        )
     assert len(result.constraints) == len(days)
     assert len(result.turnover) == len(days)
 
@@ -123,3 +143,115 @@ def test_strategy_sees_only_past_history(market) -> None:
     for as_of, last in seen:
         assert last <= as_of
     assert isinstance(panel.index, pd.DatetimeIndex)
+
+
+class _OverweightBenchmark:
+    """目标 = 基准 KRD 的 1.2 倍（主动加久期），用于验证成交前约束闸门。"""
+
+    name = "overweight"
+
+    def target_krd(self, ctx: MarketContext) -> TargetKRD:
+        return TargetKRD(as_of=ctx.as_of, krd={t: 1.2 * v for t, v in ctx.benchmark.krd.items()})
+
+
+class _ZeroTilt:
+    name = "zero_tilt"
+
+    def target_krd(self, ctx: MarketContext) -> TargetKRD:
+        return TargetKRD(as_of=ctx.as_of, krd=dict(ctx.benchmark.krd))
+
+
+def test_r22_zero_tilt_control_excess_near_zero(market) -> None:
+    """R22：同引擎零 tilt 控制组，超额必须接近 0（±1bp），且成交仅来自整手/死区。"""
+    cfg, panel, funding, calendar = market
+    result = run_backtest(
+        _ZeroTilt(), panel=panel, calendar=calendar, funding=funding, cfg=cfg, start=START, end=END
+    )
+    bench_ret = result.benchmark_nav.iloc[-1] / result.benchmark_nav.iloc[0] - 1.0
+    ret = result.nav.iloc[-1] / result.nav.iloc[0] - 1.0
+    assert abs((ret - bench_ret) * 1e4) <= 1.0
+    assert len(result.trades) <= 12  # 4 笔建仓 + 少量整手/死区抖单
+    # 基准价差与策略价差同量级（策略只多出少量抖单成本）
+    assert result.costs["spread"].sum() == pytest.approx(
+        result.costs["bench_spread"].sum(), rel=0.2
+    )
+
+
+def test_r23_pretrade_gate_rejects_infeasible_target(market) -> None:
+    """R23：目标不可行时必须在成交前拒单，不能先成交再记录违规。"""
+    cfg, panel, funding, calendar = market
+    # 把绝对 DV01 上限压到基准的 90%：零 tilt（=基准）不可行
+    from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds
+
+    curve0 = _curve(panel, START)
+    bonds = build_universe_bonds(curve0, START, cfg=cfg)
+    bench0 = build_benchmark(curve0, START, bonds=bonds, calendar=calendar, cfg=cfg)
+    limit = 0.90 * bench0.total_dv01
+    risk = cfg.risk.model_copy(
+        update={"limits": cfg.risk.limits.model_copy(update={"max_dv01": limit})}
+    )
+    tight = cfg.model_copy(update={"risk": risk})
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=tight,
+        start=START,
+        end=END,
+    )
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    if len(held):
+        assert "absolute_dv01" not in held["violation_codes"].str.cat(sep=";")
+        assert (held["m_absolute_dv01"] <= limit + 1e-6).all()
+    # 要么拒单，要么缩到可行域；不允许"先成交再报违规"
+    assert len(result.rejected) > 0 or len(held) == 0
+
+
+def test_r23_pretrade_gate_scales_reducible_target(market) -> None:
+    """R23：可缩减的过度风险目标，引擎应缩到约束内成交（而非成交后违规）。"""
+    cfg, panel, funding, calendar = market
+    result = run_backtest(
+        _OverweightBenchmark(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=START,
+        end=END,
+    )
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    assert len(held) > 0
+    assert held["ok"].all(), held.loc[~held["ok"], "violation_codes"].value_counts().to_dict()
+    # 超额加久期的目标被投影回 1.3 倍 DV01 带内
+    assert (
+        result.exposure.loc[result.exposure["total_dv01"] > 0, "dv01_ratio"] <= 1.30 + 1e-6
+    ).all()
+
+
+def test_r26_zero_spread_control(market) -> None:
+    """R26 控制：把价差全部置零后，策略成本里的 spread 必须为 0。"""
+    cfg, panel, funding, calendar = market
+    costs = cfg.costs.model_copy(
+        update={"spread_bp_active": 0.0, "spread_bp_illiquid": 0.0, "spread_bp_ultra_long": 0.0}
+    )
+    zero = cfg.model_copy(update={"costs": costs})
+    result = run_backtest(
+        _ZeroTilt(), panel=panel, calendar=calendar, funding=funding, cfg=zero, start=START, end=END
+    )
+    assert result.costs["spread"].sum() == pytest.approx(0.0, abs=1e-9)
+    assert result.costs["bench_spread"].sum() == pytest.approx(0.0, abs=1e-9)
+
+
+def _curve(panel, d):
+    import numpy as np
+
+    from ficc.curve.curve import Curve
+
+    row = panel.loc[pd.Timestamp(d)].reindex(list(CANONICAL_TENORS))
+    return Curve(
+        as_of=d,
+        tenors=np.asarray(list(CANONICAL_TENORS)),
+        rates=tuple(row.values),
+        method="hermite",
+    )

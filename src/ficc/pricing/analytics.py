@@ -287,7 +287,14 @@ def _validate_krd_date_contract(
 
     说明：定价层不隐式假设 ``curve.as_of == 结算日``——这是 R17 的核心错位。
     """
-    if not is_business_day(settlement):
+    calendar = getattr(spot, "calendar", None)
+    if calendar is not None and hasattr(calendar, "is_trading_day"):
+        if not calendar.is_trading_day(settlement):
+            raise ValueError(
+                f"KRD 结算日 {settlement}({settlement:%a}) 不是 CN_IB 交易日；"
+                "请传入经 TradingCalendar 推算的结算日"
+            )
+    elif not is_business_day(settlement):
         raise ValueError(
             f"KRD 结算日 {settlement}({settlement:%a}) 不是工作日：结算不应发生在周末；"
             "请传入经 ficc.utils.calendar 推算的结算日"

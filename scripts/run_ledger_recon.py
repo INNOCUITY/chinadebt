@@ -9,7 +9,7 @@
 
 验证内容：
 1. 账本逐日跑通：三层日期、条款锁定、跨付息、部分减仓、新券换入、融资计提；
-2. **独立对账**：现金 / 持仓 / NAV / PnL 双路径 / 全价 / （可选）归因闭合；
+2. **独立对账**：现金 / 持仓 / NAV / PnL 双路径 / 全价 / 票息权益（7 项；归因闭合接口未接入时会显式标 not run）；
 3. **零成本对照**：把所有费用与融资设为 0 再跑一遍，两账净值差应恰等于成本合计。
 
 用法::
@@ -215,7 +215,8 @@ def main() -> int:
     cost_ok = abs(nav_gap + total_cost) < 1.0
     has_funding = len(costs[costs["kind"] == "funding"]) > 0
 
-    print("\n=== 独立对账报告 ===")
+    not_run = [c for c in report.checks if not c.executed]
+    print(f"\n=== 独立对账报告（已执行 {report.executed_count} 项 + 未执行 {len(not_run)} 项）===")
     frame = report.to_frame()
     with pd.option_context("display.width", 200):
         print(frame.to_string(index=False))
@@ -234,6 +235,8 @@ def main() -> int:
     base["trades"].to_csv(out_dir / "ledger_trades.csv", index=False, encoding="utf-8-sig")
     log.info("产物: %s", out_dir / "reconciliation_report.csv")
 
+    for check in not_run:
+        log.warning("未执行：%s（%s）", check.name, check.detail)
     if not report.passed:
         log.error("对账未通过，详见上表")
         return 1
@@ -243,7 +246,10 @@ def main() -> int:
     if not has_funding:
         log.error("融资路径未被触发：请调低初始现金，确保现金为负以检验融资成本")
         return 1
-    log.info("对账全部通过（含零成本对照与融资路径覆盖）")
+    log.info(
+        "对账全部通过：%d 项已执行（含现金/持仓/NAV/PnL/全价/票息权益/归因未接入）+ 零成本对照 + 融资路径覆盖",
+        report.executed_count,
+    )
     return 0
 
 

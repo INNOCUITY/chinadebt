@@ -26,6 +26,7 @@ from ficc.portfolio import (
     Ledger,
     TradeRecord,
 )
+from ficc.portfolio.reconcile import reconcile_all
 from ficc.pricing.bond import dirty_price_from_ytm
 from ficc.pricing.conventions import accrued_interest, day_count
 from ficc.utils.calendar import TradingCalendar
@@ -316,13 +317,13 @@ def test_funding_aggregated_per_processing_day(calendar: TradingCalendar) -> Non
 
     gross_buy = 10_000.0 * (100.0 + accrued_interest(bond, date(2024, 6, 18)))
     rate_by_day = {
-        date(2024, 6, 18): 1.0,
+        date(2024, 6, 18): 1.0,  # 早于所有已知日 → 基础利率
         date(2024, 6, 19): 2.0,
         date(2024, 6, 20): 4.0,
         date(2024, 6, 21): 3.0,  # set_funding_rate 覆盖
-        date(2024, 6, 22): 1.0,  # 周六：回落基础利率
-        date(2024, 6, 23): 1.0,  # 周日
-        date(2024, 6, 24): 1.0,
+        date(2024, 6, 22): 3.0,  # 周六：沿用最近已知值（06-21 = 3.0），不回期初
+        date(2024, 6, 23): 3.0,  # 周日
+        date(2024, 6, 24): 3.0,  # 周一：最近已知值仍是 06-21
     }
     cash = 100_000.0
     expected: dict[date, float] = {}
@@ -658,19 +659,35 @@ def test_bond_switch_is_explicit_two_trades(calendar: TradingCalendar) -> None:
 
 
 def test_coupon_belongs_to_holder_on_coupon_date(calendar: TradingCalendar) -> None:
-    """票息只付给付息日持有者：付息日前买入的账本收到票息，付息日后买入的没有。"""
+    """票息只付给付息日**日初已结算**的持有者（R24 登记权益口径）。
+
+    付息日前一交易日买入、付息日当天才结算 → 不享本期票息；付息日前结算完成
+    的持仓才享息。
+    """
     cfg = zero_cost_cfg()
     bond = make_bond("T26", date(2024, 6, 15), date(2026, 6, 15))
     coupon_day = date(2025, 12, 15)  # 周一，交易日
 
-    before = make_trade(calendar, cfg, trade_id="before", bond=bond, trade_date=date(2025, 12, 12))
+    before = make_trade(calendar, cfg, trade_id="before", bond=bond, trade_date=date(2025, 12, 11))
+    assert before.settlement_date == date(2025, 12, 12)  # 付息日前结算
     ledger_before = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
     ledger_before.submit(before)
-    process(ledger_before, [date(2025, 12, 12), coupon_day])
+    process(ledger_before, [date(2025, 12, 11), date(2025, 12, 12), coupon_day])
     coupons_before = ledger_before.cashflows_frame()
     coupons_before = coupons_before[coupons_before["kind"] == "coupon"]
     assert coupons_before["date"].tolist() == [coupon_day]
     assert float(coupons_before["amount"].iloc[0]) == pytest.approx(10_000.0)
+
+    # 付息日前一交易日买入、付息日当天结算 → 登记权益尚未转移，不享本期票息
+    on_coupon = make_trade(
+        calendar, cfg, trade_id="on_coupon", bond=bond, trade_date=coupon_day - timedelta(days=3)
+    )
+    assert calendar.settlement_date(on_coupon.trade_date, 1) == coupon_day
+    ledger_on_coupon = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger_on_coupon.submit(on_coupon)
+    process(ledger_on_coupon, [on_coupon.trade_date, coupon_day])
+    events_on_coupon = ledger_on_coupon.cashflows_frame()
+    assert events_on_coupon[events_on_coupon["kind"] == "coupon"].empty
 
     after = make_trade(calendar, cfg, trade_id="after", bond=bond, trade_date=date(2025, 12, 16))
     ledger_after = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
@@ -927,3 +944,342 @@ def test_snapshot_with_no_positions_exports_row(calendar: TradingCalendar) -> No
     assert float(frame["market_value"].iloc[0]) == 0.0
     assert float(frame["pending_cash"].iloc[0]) == 0.0
     assert float(frame["nav"].iloc[0]) == pytest.approx(1_000_000.0)
+
+
+# ===========================================================================
+# R24：合成券登记权益（付息日/到期日日初已结算面值）
+# ===========================================================================
+def test_coupon_date_buyer_settling_next_day_gets_no_coupon(
+    calendar: TradingCalendar,
+) -> None:
+    """审查反例：付息日买入、次日结算 → 买方现金不得增加 15,000 元票息。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-BUY", date(2018, 1, 28), date(2022, 1, 28), coupon_pct=3.0, freq=2)
+    coupon_day = date(2019, 1, 28)
+    assert calendar.is_trading_day(coupon_day)
+    trade = make_trade(calendar, cfg, trade_id="buyer", bond=bond, trade_date=coupon_day)
+    assert trade.settlement_date == date(2019, 1, 29)  # 付息日成交、次日结算
+
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap_coupon = process(ledger, [date(2019, 1, 25), coupon_day, date(2019, 1, 29)])[1]
+
+    events = ledger.cashflows_frame()
+    assert events[events["kind"] == "coupon"].empty, "付息日买入的买方不应收本期票息"
+    assert "coupon" not in set(events["kind"])
+    gross = 10_000.0 * (100.0 + accrued_interest(bond, date(2019, 1, 29)))
+    assert snap_coupon.cash == pytest.approx(2_000_000.0)  # 01-28 尚未划款、也未收息
+    assert snap_coupon.pending_cash == pytest.approx(-gross, abs=1e-6)
+    # 登记权益与金额：结算日前 settled_face=0（未享息），结算后=面值
+    assert snap_coupon.positions[0].face_value == pytest.approx(1_000_000.0)
+    assert snap_coupon.positions[0].settled_face == pytest.approx(0.0)
+    snap_settled = ledger.snapshots_frame()
+    settled_row = snap_settled[
+        (snap_settled["as_of"] == date(2019, 1, 29)) & (snap_settled["bond_code"] == "R24-BUY")
+    ]
+    assert float(settled_row["settled_face"].iloc[0]) == pytest.approx(1_000_000.0)
+
+
+def test_coupon_date_seller_still_entitled_coupon(calendar: TradingCalendar) -> None:
+    """付息日当天卖出的卖方仍享本期票息（买方通过全价应计补偿）。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-SELL", date(2018, 1, 28), date(2022, 1, 28), coupon_pct=3.0, freq=2)
+    buy = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2019, 1, 15))
+    sell = make_trade(
+        calendar,
+        cfg,
+        trade_id="s1",
+        bond=bond,
+        side="sell",
+        trade_date=date(2019, 1, 28),  # 付息日卖出
+    )
+    assert sell.settlement_date == date(2019, 1, 29)
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(buy)
+    ledger.submit(sell)
+    snap_coupon, snap_settled = process(
+        ledger, [date(2019, 1, 15), date(2019, 1, 16), date(2019, 1, 28), date(2019, 1, 29)]
+    )[-2:]
+
+    events = ledger.cashflows_frame()
+    coupons = events[events["kind"] == "coupon"]
+    assert coupons["date"].tolist() == [date(2019, 1, 28)]
+    assert float(coupons["amount"].iloc[0]) == pytest.approx(15_000.0)
+    gross_buy = 10_000.0 * (100.0 + accrued_interest(bond, date(2019, 1, 16)))
+    assert snap_coupon.cash == pytest.approx(2_000_000.0 - gross_buy + 15_000.0, abs=1e-6)
+    # 卖出成交日经济持仓归零，但登记面值仍在（次日结算才减少）→ notes 明确提示
+    assert snap_coupon.positions == ()
+    assert any("登记面值" in note for note in snap_coupon.notes)
+    # 结算后登记面值清零、持仓为空
+    assert snap_settled.positions == ()
+    assert snap_settled.pending_cash == pytest.approx(0.0, abs=1e-9)
+
+
+def test_coupon_entitled_when_settlement_is_day_before_coupon(
+    calendar: TradingCalendar,
+) -> None:
+    """结算日 = 付息日前一自然日 → 享息（日初已结算面值口径）。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-EVE", date(2018, 1, 25), date(2022, 1, 25), coupon_pct=3.0, freq=2)
+    coupon_day = date(2019, 7, 25)
+    assert calendar.is_trading_day(coupon_day)
+    trade = make_trade(calendar, cfg, trade_id="t1", bond=bond, trade_date=date(2019, 7, 23))
+    assert trade.settlement_date == date(2019, 7, 24) == coupon_day - timedelta(days=1)
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap = process(ledger, [date(2019, 7, 23), date(2019, 7, 24), coupon_day])[-1]
+
+    coupons = ledger.cashflows_frame()
+    coupons = coupons[coupons["kind"] == "coupon"]
+    assert coupons["date"].tolist() == [coupon_day]
+    assert float(coupons["amount"].iloc[0]) == pytest.approx(15_000.0)
+    assert snap.positions[0].settled_face == pytest.approx(1_000_000.0)
+
+
+def test_coupon_holiday_deferral_entitlement_uses_coupon_date(
+    calendar: TradingCalendar,
+) -> None:
+    """付息日为非交易日：归属仍按付息日日初，支付顺延到下一交易日。
+
+    同时验证：国庆前最后一个交易日成交、节后结算的买方**不**享 10-01 票息。
+    """
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-HOL", date(2019, 4, 1), date(2029, 4, 1), coupon_pct=3.0, freq=2)
+    coupon_day = date(2019, 10, 1)
+    assert not calendar.is_trading_day(coupon_day)
+    pay_day = calendar.next_trading_day(coupon_day, 1)
+    assert pay_day == date(2019, 10, 8)
+
+    # (a) 付息日前已结算的持仓：10-01 归属、10-08 到账
+    holder = make_trade(calendar, cfg, trade_id="hold", bond=bond, trade_date=date(2019, 9, 27))
+    assert holder.settlement_date == date(2019, 9, 29)
+    ledger_hold = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger_hold.submit(holder)
+    process(ledger_hold, [date(2019, 9, 27), date(2019, 9, 30), pay_day])
+    coupons = ledger_hold.cashflows_frame()
+    coupons = coupons[coupons["kind"] == "coupon"]
+    assert coupons["date"].tolist() == [pay_day]
+    assert float(coupons["amount"].iloc[0]) == pytest.approx(15_000.0)
+    assert "顺延" in str(coupons["note"].iloc[0])
+    assert not (ledger_hold.cashflows_frame()["date"] == coupon_day).any()
+
+    # (b) 节前最后交易日成交、节后（付息日之后）结算的买方不享息
+    late = make_trade(calendar, cfg, trade_id="late", bond=bond, trade_date=date(2019, 9, 30))
+    assert late.settlement_date == date(2019, 10, 8)
+    ledger_late = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger_late.submit(late)
+    process(ledger_late, [date(2019, 9, 30), pay_day])
+    events_late = ledger_late.cashflows_frame()
+    assert events_late[events_late["kind"] == "coupon"].empty
+
+
+def test_maturity_principal_entitlement_by_day_start_settled_face(
+    calendar: TradingCalendar,
+) -> None:
+    """到期本金同理：按到期日日初已结算面值兑付；到期日交割的买方被契约阻断。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-MAT", date(2024, 6, 17), date(2025, 6, 16), coupon_pct=3.0, freq=2)
+    maturity = bond.maturity_date
+    assert calendar.is_trading_day(maturity)
+    trade = make_trade(calendar, cfg, trade_id="t1", bond=bond, trade_date=date(2024, 6, 18))
+    assert trade.settlement_date == date(2024, 6, 19)
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    snap = process(
+        ledger,
+        [date(2024, 6, 18), date(2024, 6, 19), date(2024, 12, 16), date(2024, 12, 17), maturity],
+    )[-1]
+    assert snap.positions == () and snap.nav == pytest.approx(snap.cash, abs=1e-9)
+    events = ledger.cashflows_frame()
+    coupons = events[events["kind"] == "coupon"]
+    assert coupons["date"].tolist() == [date(2024, 12, 17), maturity]
+    principals = events[events["kind"] == "principal"]
+    assert principals["date"].tolist() == [maturity]
+    assert float(principals["amount"].iloc[0]) == pytest.approx(1_000_000.0)
+    assert float(coupons["amount"].iloc[-1]) == pytest.approx(15_000.0)
+
+    # 「到期日当天买入/交割」在契约层就被拒：结算日不得 ≥ 到期日
+    late = make_trade(calendar, cfg, trade_id="late", bond=bond, trade_date=date(2025, 6, 13))
+    assert late.settlement_date == maturity
+    with pytest.raises(ValueError, match="不早于到期日"):
+        ledger.submit(late)
+
+
+def test_snapshots_export_settled_face_column(calendar: TradingCalendar) -> None:
+    """快照导出新增 settled_face 列；PositionView 默认 0、结算后等于面值。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-COL", date(2024, 6, 15), date(2026, 6, 15))
+    trade = make_trade(calendar, cfg, trade_id="t1", bond=bond, trade_date=date(2024, 6, 17))
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    process(ledger, [date(2024, 6, 17), date(2024, 6, 18)])
+    assert "settled_face" in SNAPSHOTS_COLUMNS
+    frame = ledger.snapshots_frame()
+    assert "settled_face" in frame.columns
+    before = frame[frame["as_of"] == date(2024, 6, 17)]
+    after = frame[frame["as_of"] == date(2024, 6, 18)]
+    assert float(before["settled_face"].iloc[0]) == pytest.approx(0.0)
+    assert float(after["settled_face"].iloc[0]) == pytest.approx(1_000_000.0)
+    assert float(after["face_value"].iloc[0]) == pytest.approx(1_000_000.0)
+
+
+def test_coupon_entitlement_reconciles_cash_identity_and_nav_continuity(
+    calendar: TradingCalendar,
+) -> None:
+    """跨结算日/付息日的对账：现金恒等式成立、NAV 连续、第 7 项独立票息校验执行。"""
+    cfg = zero_cost_cfg()
+    bond = make_bond("R24-REC", date(2018, 1, 28), date(2022, 1, 28), coupon_pct=3.0, freq=2)
+    trade_date = date(2019, 1, 15)
+    settle = calendar.settlement_date(trade_date, 1)
+    clean = quoted_clean_price(bond, flat_curve(trade_date), settle)
+    trade = make_trade(
+        calendar, cfg, trade_id="t1", bond=bond, trade_date=trade_date, clean_price=clean
+    )
+    ledger = Ledger(calendar, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    days = list(calendar.trading_days_between(date(2019, 1, 14), date(2019, 2, 1)))
+    for day in days:
+        ledger.process_day(day, flat_curve(day))
+
+    report = reconcile_all(
+        cashflows=ledger.cashflows_frame(),
+        trades=ledger.trades_frame(),
+        snapshots=ledger.snapshots_frame(),
+        nav=ledger.nav_series(),
+        calendar=calendar,
+    )
+    assert report.passed, report.to_frame().to_string(index=False)
+    by_name = {check.name: check for check in report.checks}
+    for name in ("cash_identity", "nav_identity", "pnl_identity", "coupon_entitlement"):
+        assert by_name[name].executed and by_name[name].passed, by_name[name].detail
+    # NAV 连续：付息日 +15,000 现金被应计归零抵消，单日变化远小于一个票息额
+    nav = ledger.nav_series()
+    assert float(nav.diff().abs().max()) < 1_000.0
+    # 票息按付息日日初已结算面值计入
+    coupons = ledger.cashflows_frame()
+    coupons = coupons[coupons["kind"] == "coupon"]
+    assert coupons["date"].tolist() == [date(2019, 1, 28)]
+    assert float(coupons["amount"].iloc[0]) == pytest.approx(15_000.0)
+
+
+# ===========================================================================
+# R25：融资利率缺日按「最近已知值」前向填充（不回到期初、不取未来值）
+# ===========================================================================
+def test_funding_weekend_uses_most_recent_known_rate(calendar: TradingCalendar) -> None:
+    """审查反例：01-03 为 1%，01-04/01-07 为 10%，跨周末自然日沿用最近已知值。
+
+    处理 2019-01-03（周四）→ 01-07（周一），覆盖 01-03..01-07 共 5 个自然日：
+    01-03 用 1%，01-04 = 10%，01-05/06（周末）与 01-07 沿用 10%（前向填充），
+    现金 = −1,000,000×(1+1%/365)×(1+10%/365)^4 = −1,001,123.7682（审查值，
+    允许 1e-3 的 4 位小数舍入差）；旧版缺日回退期初 1% 会得到 −1,000,630.2593。
+    """
+    cfg = zero_cost_cfg()
+    ledger = Ledger(
+        calendar,
+        initial_cash=-1_000_000.0,
+        funding_rate_pct=1.0,
+        funding_rate_by_date={
+            date(2019, 1, 3): 1.0,
+            date(2019, 1, 4): 10.0,
+            date(2019, 1, 7): 10.0,
+        },
+        cfg=cfg,
+    )
+    days = [date(2019, 1, 3), date(2019, 1, 4), date(2019, 1, 7)]
+    assert all(calendar.is_trading_day(day) for day in days)
+    process(ledger, days)
+
+    exact = -1_000_000.0 * (1.0 + 0.01 / 365.0) * (1.0 + 0.10 / 365.0) ** 4
+    assert ledger.cash == pytest.approx(exact, abs=1e-6)
+    assert ledger.cash == pytest.approx(-1_001_123.7682, abs=1e-3)
+    # 旧口径（缺日回退期初 1%）为 -1,000,630.2593，差异近 500 元，必须被区分
+    assert abs(ledger.cash - (-1_000_630.2593)) > 400.0
+    funding = ledger.cashflows_frame()
+    funding = funding[funding["kind"] == "funding"].sort_values("date")
+    assert funding["date"].tolist() == days
+    monday = funding[funding["date"] == date(2019, 1, 7)]
+    assert len(monday) == 1  # 周末三天合并成一笔、日期=NAV 日
+    assert "3 个自然日" in str(monday["note"].iloc[0])
+
+
+def test_funding_single_known_rate_forwards_to_all_later_days(
+    calendar: TradingCalendar,
+) -> None:
+    """只给 01-03 一天利率，之后全部缺失 → 后续自然日全部沿用 1%（不回退基础 5%）。"""
+    cfg = zero_cost_cfg()
+    ledger = Ledger(
+        calendar,
+        initial_cash=-1_000_000.0,
+        funding_rate_pct=5.0,  # 基础利率故意不同，证明缺日不用它
+        funding_rate_by_date={date(2019, 1, 3): 1.0},
+        cfg=cfg,
+    )
+    process(ledger, [date(2019, 1, 3), date(2019, 1, 4), date(2019, 1, 7)])
+    exact = -1_000_000.0 * (1.0 + 0.01 / 365.0) ** 5
+    assert ledger.cash == pytest.approx(exact, abs=1e-6)
+
+
+def test_funding_does_not_use_future_rates(calendar: TradingCalendar) -> None:
+    """不取未来值：01-07 的 10% 不得影响 01-03..01-06（这些天回退基础 1%）。"""
+    cfg = zero_cost_cfg()
+    ledger = Ledger(
+        calendar,
+        initial_cash=-1_000_000.0,
+        funding_rate_pct=1.0,
+        funding_rate_by_date={date(2019, 1, 7): 10.0},
+        cfg=cfg,
+    )
+    process(ledger, [date(2019, 1, 3), date(2019, 1, 4), date(2019, 1, 7)])
+    exact = -1_000_000.0 * (1.0 + 0.01 / 365.0) ** 4 * (1.0 + 0.10 / 365.0)
+    assert ledger.cash == pytest.approx(exact, abs=1e-6)
+    all_ten_pct = -1_000_000.0 * (1.0 + 0.10 / 365.0) ** 5
+    assert abs(ledger.cash - all_ten_pct) > 500.0  # 若取未来值会明显不同
+
+
+def test_real_fdr007_funding_events_stay_on_nav_days(calendar: TradingCalendar) -> None:
+    """真实 FDR007：融资事件仍全部落在 NAV 日，长假区间合并成一笔。"""
+    path = Path(__file__).resolve().parents[1] / "data" / "processed" / "repo_rates.parquet"
+    if not path.exists():
+        pytest.skip(f"缺少资金面数据 {path}")
+    frame = pd.read_parquet(path)
+    funding = frame.set_index(pd.to_datetime(frame["date"]))["FDR007"].sort_index()
+    days = list(calendar.trading_days_between(date(2019, 1, 28), date(2019, 2, 15)))
+    assert date(2019, 2, 11) in days  # 春节后首个 NAV 日
+    fallback = 0.0
+    rate_map: dict[date, float] = {}
+    for day in days:
+        prior = funding.loc[:day]
+        rate_map[day] = float(prior.iloc[-1]) if len(prior) else fallback
+
+    cfg = zero_cost_cfg()
+    ledger = Ledger(
+        calendar,
+        initial_cash=-1_000_000.0,
+        funding_rate_pct=rate_map[days[0]],
+        funding_rate_by_date=rate_map,
+        cfg=cfg,
+    )
+    for day in days:
+        ledger.process_day(day, flat_curve(day))
+
+    events = ledger.cashflows_frame()
+    funding_events = events[events["kind"] == "funding"].sort_values("date")
+    assert set(funding_events["date"]) <= set(days)  # 事件日期全部是 NAV 日
+    assert funding_events["date"].tolist() == days  # 每个 NAV 日一笔、周末/holiday 合并
+    after_holiday = funding_events[funding_events["date"] == date(2019, 2, 11)]
+    assert len(after_holiday) == 1
+    # CN_IB 2019-02-02/03 为调休交易日，春节休市为 02-04..02-10（7 天）
+    assert "8 个自然日" in str(after_holiday["note"].iloc[0])
+
+    # 独立路径：自然日逐日按「≤ day 的最近已知（交易日）利率」复利
+    cash = -1_000_000.0
+    known: list[date] = []
+    day = days[0]
+    end = days[-1]
+    while day <= end:
+        if day in rate_map:
+            known.append(day)
+        rate = rate_map[known[-1]]
+        cash += cash * rate / 100.0 / 365.0
+        day += timedelta(days=1)
+    assert ledger.cash == pytest.approx(cash, abs=1e-6)

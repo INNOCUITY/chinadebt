@@ -56,8 +56,10 @@ from typing import Any
 from ficc.config import Config, get_config
 from ficc.curve.bootstrap import bootstrap_spot
 from ficc.data.schema import BondStatic
+from ficc.portfolio.dates import remaining_years, settlement_for
 from ficc.portfolio.types import BenchmarkPortfolio
 from ficc.pricing.analytics import key_rate_durations, mod_duration
+from ficc.pricing.bond import dirty_price_from_ytm
 
 __all__ = [
     "ConstraintReport",
@@ -88,11 +90,12 @@ def _resolve_key_tenors(key_tenors: Sequence[float] | None, cfg: Config) -> tupl
     return tenors
 
 
-def _spot_curve(curve: Any, cfg: Config) -> Any:
-    """bootstrap 即期曲线（KRD 的唯一曲线来源；不在本模块读任何面板）。"""
+def _spot_curve(curve: Any, cfg: Config, calendar: object | None) -> tuple[Any, date]:
+    """bootstrap 即期曲线（KRD 的唯一曲线来源；R27：显式走 CN_IB 结算日）。"""
     if not hasattr(curve, "as_of"):
         raise TypeError("curve 缺少必需成员 as_of：需要 ficc.curve.Curve")
-    return bootstrap_spot(curve)
+    settlement = settlement_for(calendar, curve.as_of, cfg=cfg)
+    return bootstrap_spot(curve, settlement=settlement, calendar=calendar), settlement
 
 
 def _bond_krd_positive(
@@ -160,6 +163,7 @@ def portfolio_risk(
     curve: Any,
     *,
     key_tenors: Sequence[float] | None = None,
+    calendar: object | None = None,
     cfg: Config | None = None,
 ) -> PortfolioRisk:
     """由持仓 + 决策日曲线计算组合风险（KRD/DV01/久期/市值/现金/NAV）。
@@ -198,10 +202,7 @@ def portfolio_risk(
         cash = 0.0
         nav = 0.0
 
-    spot = _spot_curve(curve, config)
-    settlement = getattr(spot, "settlement_date", None) or getattr(spot, "as_of", None)
-    if settlement is None:
-        raise ValueError("即期曲线缺少 settlement_date/as_of，无法确定 KRD 起点")
+    spot, settlement = _spot_curve(curve, config, calendar)
 
     krd_accum: dict[float, float] = {tenor: 0.0 for tenor in tenors}
     market_value = 0.0
@@ -215,7 +216,7 @@ def portfolio_risk(
             raise ValueError(f"{bond.code}: 持仓面值不能为负，实际 {face}")
         mv = float(position.market_value)
         market_value += mv
-        remaining = float(position.remaining_years)
+        remaining = remaining_years(bond, settlement)
         if remaining <= 0.0:
             raise ValueError(f"{bond.code}: 剩余期限非正（{remaining}），持仓应已到期")
         per_100 = _bond_krd_positive(bond, spot, settlement, tenors, cfg=config)
@@ -224,7 +225,7 @@ def portfolio_risk(
 
         duration = position.mod_duration
         if duration is None:
-            duration = mod_duration(bond, curve.as_of, float(curve.rate(remaining)), cfg=config)
+            duration = mod_duration(bond, settlement, float(curve.rate(remaining)), cfg=config)
         weighted_duration += mv * float(duration)
         if nav > _EPS:
             weights[bond.code] = weights.get(bond.code, 0.0) + mv / nav
@@ -240,6 +241,70 @@ def portfolio_risk(
         market_value=float(market_value),
         cash=float(cash),
         nav=float(nav),
+        bond_weights=weights,
+    )
+
+
+def project_risk(
+    faces: Mapping[str, float],
+    bonds: Sequence[BondStatic],
+    curve: Any,
+    *,
+    calendar: object | None = None,
+    cash: float = 0.0,
+    pending_cash: float = 0.0,
+    nav: float | None = None,
+    key_tenors: Sequence[float] | None = None,
+    cfg: Config | None = None,
+) -> PortfolioRisk:
+    """**交易前**按最终面值计算组合风险（R23：成交前统一校验用）。
+
+    ``nav`` 为 ``None`` 时按 trade-date 会计计算：
+    ``nav = cash + Σ(face/100 × dirty) + pending_cash``。现金与 pending 由调用方
+    传入"交易后"口径（买入则现金不变、pending 变负，或调用方已合并）。
+    """
+    config = _resolve_config(cfg)
+    tenors = _resolve_key_tenors(key_tenors, config)
+    spot, settlement = _spot_curve(curve, config, calendar)
+    bond_by_code = {bond.code: bond for bond in bonds}
+
+    krd_accum: dict[float, float] = {tenor: 0.0 for tenor in tenors}
+    market_value = 0.0
+    weighted_duration = 0.0
+    mv_by_code: dict[str, float] = {}
+    for code, face in faces.items():
+        if face < 0:
+            raise ValueError(f"{code}: 面值不能为负，实际 {face}")
+        if face == 0:
+            continue
+        bond = bond_by_code.get(code)
+        if bond is None:
+            raise ValueError(f"faces 中的 {code} 不在 bonds 里")
+        remaining = remaining_years(bond, settlement)
+        if remaining <= 0:
+            raise ValueError(f"{code}: 剩余期限非正（{remaining}）")
+        ytm = float(curve.rate(remaining))
+        dirty = float(dirty_price_from_ytm(bond, settlement, ytm, cfg=config))
+        mv = float(face) / 100.0 * dirty
+        per_100 = _bond_krd_positive(bond, spot, settlement, tenors, cfg=config)
+        for tenor in tenors:
+            krd_accum[tenor] += per_100[tenor] * float(face) / 100.0
+        duration = float(mod_duration(bond, settlement, ytm, cfg=config))
+        market_value += mv
+        weighted_duration += mv * duration
+        mv_by_code[code] = mv
+
+    total_dv01 = float(sum(krd_accum.values()))
+    duration_value = weighted_duration / market_value if market_value > _EPS else 0.0
+    nav_value = float(nav) if nav is not None else float(cash) + market_value + float(pending_cash)
+    weights = {code: mv / nav_value for code, mv in mv_by_code.items()} if nav_value > _EPS else {}
+    return PortfolioRisk(
+        total_dv01=total_dv01,
+        krd={tenor: float(value) for tenor, value in krd_accum.items()},
+        duration=float(duration_value),
+        market_value=float(market_value),
+        cash=float(cash),
+        nav=nav_value,
         bond_weights=weights,
     )
 

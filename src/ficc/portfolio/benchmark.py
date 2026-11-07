@@ -1,27 +1,19 @@
-"""基准组合：合成平价券宇宙 + 阶梯市值权重基准（Phase 2 第 3 步）。
+"""基准组合（R22 修复版）：**买入持有、固定面值**的阶梯基准 + 每日 mark-to-market。
 
-设计口径
---------
-- **一次生成、全回测复用**：:func:`build_universe_bonds` 只在回测起点按
-  曲线 YTM 生成一批合成平价券（票面=该期限 YTM、起息=as_of、到期=as_of+tenor 年），
-  之后引擎持有同一批 :class:`BondStatic` 按原券老化，不按新曲线重建（避免
-  "每天换一张新券"的隐性交易/重定价）。
-- **市值权重**：:func:`build_benchmark` 按 ``cfg.benchmark.ladder_weights`` 把
-  ``notional`` 分配到各腿，``face = market_value / (dirty / 100)``。
-- **DV01 / KRD 单位**：``元/bp``（全价口径，**多头为正**）。定价层
-  :func:`ficc.pricing.analytics.key_rate_durations` 的符号约定是多头为负，
-  本模块统一取负；每腿的总 DV01 用 YTM 解析口径 :func:`ficc.pricing.dv01`，
-  其在关键期限上的**分布形状**用 bootstrap 即期曲线的 KRD 份额确定，并缩放到
-  该腿 DV01 总量，因此 ``Σ krd == total_dv01``（便于 :func:`relative_tilt`
-  做严格的相对基准 DV01 中性）。
-- ``krd`` 的桶固定为 ``cfg.risk.key_tenors_krd``，未覆盖的桶补 0。
+设计口径（R22）
+---------------
+审查指出"风险基准每天重配、绩效基准固定面值"是两套口径：引擎每日按固定 1 亿
+市值重建面值，而绩效比较用起点固定面值买入持有；且估值用原始期限标签取收益率，
+没有按老化后的剩余期限。本模块统一为：
 
-已知近似
---------
-- 合成券的 ``times`` 走 bootstrap 的 ACT/365 名义年限近似，不是中债官方
-  "即期对账"口径；
-- 基准 KRD 是**即期曲线**口径，与 YTM DV01 存在 <2% 的口径差；本模块用总量
-  对齐、形状沿用即期 KRD 的方式消除该差，报告需注明。
+1. :func:`build_universe_bonds`：起点按曲线 YTM 生成一批合成平价券，**全回测复用**；
+2. :func:`build_benchmark`：**只在起点**按市值权重折算一次固定面值（并取整到
+   ``min_trade_lot``），返回带 ``faces`` 的基准；
+3. :func:`mark_benchmark` / :func:`mark_faces`：每日仅对**同一批固定面值**按
+   **老化后剩余期限**估值，得到当日 KRD / 总 DV01 / 久期 / 市值。风险基准与绩效
+   基准因此是同一个组合。
+
+单位约定：金额元、面值元、价格元/百元面值、收益率百分数、KRD 元/bp（多头为正）。
 """
 
 from __future__ import annotations
@@ -36,11 +28,17 @@ from ficc.curve.bootstrap import bootstrap_spot
 from ficc.curve.curve import Curve
 from ficc.data.schema import BondStatic
 from ficc.logging import get_logger
+from ficc.portfolio.dates import remaining_years, settlement_for
 from ficc.portfolio.types import BenchmarkLeg, BenchmarkPortfolio
-from ficc.pricing.analytics import dv01, key_rate_durations, mod_duration
+from ficc.pricing.analytics import key_rate_durations, mod_duration
 from ficc.pricing.bond import dirty_price_from_ytm
 
-__all__ = ["build_benchmark", "build_universe_bonds"]
+__all__ = [
+    "build_benchmark",
+    "build_universe_bonds",
+    "mark_benchmark",
+    "mark_faces",
+]
 
 log = get_logger("portfolio_benchmark")
 
@@ -84,24 +82,8 @@ def build_universe_bonds(
 ) -> tuple[BondStatic, ...]:
     """按 ``cfg.portfolio.universe`` 生成一批合成平价券（全回测复用）。
 
-    Parameters
-    ----------
-    curve : Curve
-        回测起点（或该券起息日）的 YTM 曲线；票面 = ``curve.rate(tenor)``。
-    as_of : date
-        券的起息日，同时进入 code（``SYN-{tenor:g}Y-{as_of:%Y%m%d}``）。
-    cfg : Config | None
-        显式配置；``None`` 时才读全局配置。
-
-    Returns
-    -------
-    tuple[BondStatic, ...]
-        按 ``universe`` 顺序排列；同一 tenor 去重。
-
-    Raises
-    ------
-    ValueError
-        ``universe`` 为空/非正期限/重复，或曲线在该期限无有效收益率。
+    票面 = 起点曲线对应期限 YTM；起息 = ``as_of``；到期 = ``as_of + tenor`` 年；
+    期限 ≥10Y 半年付息、其余年付。code 形如 ``SYN-10Y-20190128``。
     """
     resolved = _resolve_cfg(cfg)
     start = _normalise_date(as_of)
@@ -118,12 +100,11 @@ def build_universe_bonds(
         ytm = float(curve.rate(tenor))
         if not np.isfinite(ytm):
             raise ValueError(f"曲线在 {tenor}Y 无有效收益率（NaN/inf）")
-        coupon_pct = max(ytm, 0.0)
         bond = BondStatic(
             code=f"SYN-{tenor:g}Y-{start:%Y%m%d}",
             issue_date=start,
             maturity_date=_add_years(start, tenor),
-            coupon_pct=float(coupon_pct),
+            coupon_pct=float(max(ytm, 0.0)),
             freq=_coupon_frequency(tenor),  # type: ignore[arg-type]
             face_value=float(resolved.portfolio.synthetic.face_value),
             accrual="coupon",
@@ -163,37 +144,34 @@ def _validate_weights(weights: dict[float, float], universe: list[float]) -> dic
     return {float(tenor): float(weight) for tenor, weight in weights.items()}
 
 
+def _bond_map(bonds: tuple[BondStatic, ...]) -> dict[float, BondStatic]:
+    if not bonds:
+        raise ValueError("bonds 为空")
+    out: dict[float, BondStatic] = {}
+    for bond in bonds:
+        tenor = round(_bond_tenor(bond), 10)
+        if tenor in out:
+            raise ValueError(f"bonds 中期限 {tenor}Y 重复")
+        out[tenor] = bond
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 基准构造（固定面值）
+# ---------------------------------------------------------------------------
 def build_benchmark(
     curve: Curve,
     as_of: date,
     *,
     bonds: tuple[BondStatic, ...] | None = None,
+    calendar: object | None = None,
     cfg: Config | None = None,
 ) -> BenchmarkPortfolio:
-    """构造阶梯市值权重基准（``notional`` 按 ``ladder_weights`` 分配）。
+    """在起点构造**买入持有、固定面值**的阶梯基准。
 
-    Parameters
-    ----------
-    curve : Curve
-        ``as_of`` 当天的 YTM 曲线。
-    as_of : date
-        基准日（= 券起息日）。
-    bonds : tuple[BondStatic, ...] | None
-        复用一批已生成的合成券（推荐：引擎全回测传同一批，按原券老化）；
-        ``None`` 时按当前曲线新生成。
-    cfg : Config | None
-        显式配置；``None`` 时才读全局配置。
-
-    Returns
-    -------
-    BenchmarkPortfolio
-        ``legs`` 每腿含 face/market_value/dv01/krd；``krd`` 桶 =
-        ``cfg.risk.key_tenors_krd``（未覆盖补 0）；``total_dv01 = Σ leg.dv01``。
-
-    Raises
-    ------
-    ValueError
-        权重和≠1、腿期限不在 universe、总 DV01≤0、缺券等。
+    ``face_i = notional × w_i / (dirty_i / 100)``，其中 ``dirty`` 用**结算日**
+    （观察日 T+N，CN_IB 日历）与老化前剩余期限计算；面值取整到
+    ``constraints.min_trade_lot`` 的整数倍，使引擎/基准买入可精确复现。
     """
     resolved = _resolve_cfg(cfg)
     start = _normalise_date(as_of)
@@ -201,17 +179,8 @@ def build_benchmark(
         {float(k): float(v) for k, v in resolved.benchmark.ladder_weights.items()},
         [float(t) for t in resolved.portfolio.universe],
     )
-    universe_bonds = (
-        build_universe_bonds(curve, start, cfg=resolved) if bonds is None else tuple(bonds)
-    )
-    if not universe_bonds:
-        raise ValueError("bonds 为空")
-    bond_by_tenor: dict[float, BondStatic] = {}
-    for bond in universe_bonds:
-        tenor = round(_bond_tenor(bond), 10)
-        if tenor in bond_by_tenor:
-            raise ValueError(f"bonds 中期限 {tenor}Y 重复")
-        bond_by_tenor[tenor] = bond
+    universe = build_universe_bonds(curve, start, cfg=resolved) if bonds is None else tuple(bonds)
+    bond_by_tenor = _bond_map(universe)
     missing = sorted(set(weights) - set(bond_by_tenor))
     if missing:
         raise ValueError(f"bonds 缺少 ladder_weights 对应的期限 {missing}Y")
@@ -219,85 +188,134 @@ def build_benchmark(
     notional = float(resolved.benchmark.notional)
     if not np.isfinite(notional) or notional <= 0:
         raise ValueError(f"benchmark.notional 必须为正数，实际 {notional!r}")
+    settlement = settlement_for(calendar, start, cfg=resolved)
+    lot = float(resolved.constraints.min_trade_lot)
+
+    faces: dict[str, float] = {}
+    for tenor in sorted(weights):
+        bond = bond_by_tenor[tenor]
+        market_value = notional * weights[tenor]
+        ytm = float(curve.rate(remaining_years(bond, settlement)))
+        dirty = float(dirty_price_from_ytm(bond, settlement, ytm, cfg=resolved))
+        if not np.isfinite(dirty) or dirty <= 0:
+            raise ValueError(f"{tenor}Y 合成券起息日全价非正: {dirty!r}")
+        raw_face = market_value / (dirty / 100.0)
+        face = round(raw_face / lot) * lot
+        if face <= 0:
+            raise ValueError(f"{tenor}Y 腿面值取整后非正: raw={raw_face!r}, lot={lot!r}")
+        faces[bond.code] = float(face)
+
+    log.info(
+        "基准构造（固定面值）: %d 腿, notional %.2f, 面值(万) %s",
+        len(faces),
+        notional,
+        {code: round(face / 1e4, 2) for code, face in faces.items()},
+    )
+    return mark_faces(
+        faces,
+        bonds=universe,
+        curve=curve,
+        as_of=start,
+        calendar=calendar,
+        cfg=resolved,
+        weights=weights,
+        notional=notional,
+    )
+
+
+def mark_faces(
+    faces: dict[str, float],
+    *,
+    bonds: tuple[BondStatic, ...],
+    curve: Curve,
+    as_of: date,
+    calendar: object | None = None,
+    cfg: Config | None = None,
+    weights: dict[float, float] | None = None,
+    notional: float | None = None,
+) -> BenchmarkPortfolio:
+    """对固定面值做每日 mark-to-market（老化后剩余期限；真实 CN_IB 结算日）。"""
+    resolved = _resolve_cfg(cfg)
+    start = _normalise_date(as_of)
+    settlement = settlement_for(calendar, start, cfg=resolved)
     key_tenors = [float(t) for t in resolved.risk.key_tenors_krd]
     if not key_tenors:
         raise ValueError("cfg.risk.key_tenors_krd 为空")
+    spot = bootstrap_spot(curve, settlement=settlement, calendar=calendar)
+    bond_by_code = {bond.code: bond for bond in bonds}
 
-    spot = bootstrap_spot(curve)
-    settlement = spot.settlement_date
-    if settlement is None:  # pragma: no cover - SpotCurve 必填
-        raise ValueError("bootstrap_spot 未返回 settlement_date，无法计算 KRD")
     legs: list[BenchmarkLeg] = []
-    krd: dict[float, float] = {tenor: 0.0 for tenor in key_tenors}
+    krd: dict[float, float] = {t: 0.0 for t in key_tenors}
     total_dv01 = 0.0
+    total_mv = 0.0
     weighted_duration = 0.0
-    for tenor in sorted(weights):
-        weight = weights[tenor]
-        bond = bond_by_tenor[tenor]
-        market_value = notional * weight
-        ytm = float(curve.rate(tenor))
-        # 面值按**起息日（as_of）**全价折算：合成平价券 coupon=YTM 且 AI=0 → dirty=100
-        dirty_issue = float(dirty_price_from_ytm(bond, start, ytm, cfg=resolved))
-        if not np.isfinite(dirty_issue) or dirty_issue <= 0:
-            raise ValueError(f"{tenor}Y 合成券起息日全价非正: {dirty_issue!r}")
-        face = market_value / (dirty_issue / 100.0)
-        # YTM DV01 仅用于交叉校验与 duration 汇总；KRD/总 DV01 以即期口径为准
-        leg_dv01_ytm = float(dv01(bond, settlement, ytm, cfg=resolved)) * face / 100.0
-        if not np.isfinite(leg_dv01_ytm) or leg_dv01_ytm <= 0:
-            raise ValueError(f"{tenor}Y 腿 YTM DV01 非正: {leg_dv01_ytm!r}")
-        leg_dv01 = leg_dv01_ytm  # 占位，稍后用即期 KRD 合计覆盖
+    for code, face in faces.items():
+        bond = bond_by_code.get(code)
+        if bond is None:
+            raise ValueError(f"faces 中的 {code} 不在 bonds 里")
+        remaining = remaining_years(bond, settlement)
+        if remaining <= 0:
+            raise ValueError(f"{code} 在 {settlement} 已到期，无法估值")
+        ytm = float(curve.rate(remaining))
+        dirty = float(dirty_price_from_ytm(bond, settlement, ytm, cfg=resolved))
+        market_value = float(face) / 100.0 * dirty
         spot_krd = key_rate_durations(bond, settlement, spot, key_tenors=key_tenors, cfg=resolved)
-        # 定价层 KRD 符号：多头为负；转成"多头为正"的元/bp。
-        # 注意：**不做"按 YTM DV01 重新缩放"**——KRD 与总 DV01 必须同源于即期曲线，
-        # 否则基准的 KRD 无法被组合构建（同样用即期 KRD）精确复现（历史 bug：
-        # 缩放后 4 腿基准无法用 4 只券还原，残差 ~0.9%，并导致面值取整偏差）。
-        positive_krd = {
-            float(bucket): -float(value) * face / 100.0 for bucket, value in spot_krd.items()
-        }
-        spot_total = float(sum(positive_krd.values()))
-        if spot_total > 0:
-            leg_krd = {float(bucket): positive_krd.get(float(bucket), 0.0) for bucket in key_tenors}
-        else:  # pragma: no cover - 防御式
-            leg_krd = {float(bucket): 0.0 for bucket in key_tenors}
-            leg_krd[key_tenors[0]] = leg_dv01
-        leg_dv01 = spot_total  # 即期 KRD 合计（与 krd 同源）
-        for bucket, value in leg_krd.items():
-            krd[bucket] = krd.get(bucket, 0.0) + value
+        positive = {float(k): -float(v) * float(face) / 100.0 for k, v in spot_krd.items()}
+        leg_krd = {float(t): positive.get(float(t), 0.0) for t in key_tenors}
+        leg_dv01 = float(sum(leg_krd.values()))
+        duration = float(mod_duration(bond, settlement, ytm, cfg=resolved))
+        for tenor, value in leg_krd.items():
+            krd[tenor] = krd.get(tenor, 0.0) + value
         total_dv01 += leg_dv01
-        weighted_duration += market_value * float(mod_duration(bond, settlement, ytm, cfg=resolved))
+        total_mv += market_value
+        weighted_duration += market_value * duration
         legs.append(
             BenchmarkLeg(
                 bond=bond,
                 face_value=float(face),
-                market_value=float(market_value),
+                market_value=market_value,
                 dv01=leg_dv01,
                 krd=leg_krd,
             )
         )
-
-    krd = {float(tenor): float(krd.get(float(tenor), 0.0)) for tenor in key_tenors}
-    total_dv01 = float(total_dv01)
-    if not np.isfinite(total_dv01) or total_dv01 <= 0:
-        raise ValueError(f"基准 total_dv01 必须为正数，实际 {total_dv01!r}")
-    krd_total = float(sum(krd.values()))
-    if abs(krd_total - total_dv01) > 1e-6 * max(total_dv01, 1.0):  # pragma: no cover
-        raise RuntimeError(f"KRD 合计 {krd_total} 与 total_dv01 {total_dv01} 不一致")
-    duration = weighted_duration / notional if notional else float("nan")
-    benchmark = BenchmarkPortfolio(
+    if total_mv <= 0 or total_dv01 <= 0:
+        raise ValueError(f"基准 mark 非正: mv={total_mv!r}, dv01={total_dv01!r}")
+    return BenchmarkPortfolio(
         as_of=start,
         legs=tuple(legs),
-        market_value=float(sum(leg.market_value for leg in legs)),
-        total_dv01=total_dv01,
-        duration=float(duration),
-        krd=krd,
-        weights={float(tenor): float(weight) for tenor, weight in weights.items()},
+        market_value=float(total_mv),
+        total_dv01=float(total_dv01),
+        duration=float(weighted_duration / total_mv),
+        krd={float(t): float(krd[t]) for t in key_tenors},
+        weights=(
+            {float(k): float(v) for k, v in weights.items()}
+            if weights is not None
+            else {round(_bond_tenor(leg.bond), 10): leg.market_value / total_mv for leg in legs}
+        ),
+        faces={code: float(face) for code, face in faces.items()},
+        notional=float(notional if notional is not None else total_mv),
     )
-    log.info(
-        "基准组合: %d 腿, 市值 %.2f, 总DV01 %.2f 元/bp, KRD桶 %s, duration %.3fY",
-        len(benchmark.legs),
-        benchmark.market_value,
-        benchmark.total_dv01,
-        sorted(benchmark.krd),
-        benchmark.duration,
+
+
+def mark_benchmark(
+    benchmark: BenchmarkPortfolio,
+    *,
+    bonds: tuple[BondStatic, ...],
+    curve: Curve,
+    as_of: date,
+    calendar: object | None = None,
+    cfg: Config | None = None,
+) -> BenchmarkPortfolio:
+    """对已有基准的**固定面值**做当日 mark（风险基准与绩效基准同一组合）。"""
+    if not benchmark.faces:
+        raise ValueError("benchmark.faces 为空：请用 build_benchmark 构造（含固定面值）")
+    return mark_faces(
+        dict(benchmark.faces),
+        bonds=bonds,
+        curve=curve,
+        as_of=as_of,
+        calendar=calendar,
+        cfg=cfg,
+        weights=dict(benchmark.weights),
+        notional=float(benchmark.notional or benchmark.market_value),
     )
-    return benchmark

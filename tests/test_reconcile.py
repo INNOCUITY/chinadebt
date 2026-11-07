@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import FrozenInstanceError
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,7 @@ from ficc.portfolio.reconcile import (
     ReconciliationReport,
     check_attribution_closure,
     check_cash_identity,
+    check_coupon_entitlement,
     check_full_price_identity,
     check_nav_identity,
     check_pnl_identity,
@@ -160,9 +162,9 @@ def _find(report: ReconciliationReport, name: str) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
-# 干净数据：六项全过（汇总 + 逐项直调）
+# 干净数据：已执行检查全过（汇总 + 逐项直调）
 # ---------------------------------------------------------------------------
-def test_clean_fixture_all_six_checks_pass() -> None:
+def test_clean_fixture_executed_checks_pass_and_not_run_is_visible() -> None:
     trades, cashflows, snapshots, nav = _clean_fixture()
     report = reconcile_all(
         cashflows=cashflows,
@@ -180,14 +182,29 @@ def test_clean_fixture_all_six_checks_pass() -> None:
         "pnl_identity",
         "full_price_identity",
         "attribution_closure",
+        "coupon_entitlement",
     ]
     frame = report.to_frame()
-    assert set(frame.columns) == {"name", "passed", "max_abs_error", "tolerance", "detail"}
-    assert frame["passed"].all()
-    # 每个检查的 max_abs_error 都要落盘且 <= tolerance
+    assert set(frame.columns) == {
+        "name",
+        "executed",
+        "passed",
+        "max_abs_error",
+        "tolerance",
+        "detail",
+    }
+    assert frame.loc[frame["executed"], "passed"].all()
+    # 每个已执行检查的 max_abs_error 都要落盘且 <= tolerance
     for check in report.checks:
+        if not check.executed:
+            continue
         assert check.tolerance == pytest.approx(1e-6)
         assert check.max_abs_error is not None and check.max_abs_error <= check.tolerance
+    # 合成夹具的 trades 没有债券条款列 → 第 7 项显式标记未执行，不静默通过
+    coupon = _find(report, "coupon_entitlement")
+    assert not coupon.executed and not coupon.passed
+    assert "未执行" in coupon.detail
+    assert report.executed_count == 6
 
 
 def test_clean_fixture_each_check_directly_passes() -> None:
@@ -557,6 +574,7 @@ def test_report_api_and_raise_if_failed() -> None:
     result = CheckResult(name="x", passed=True, detail="ok", max_abs_error=0.0, tolerance=1e-6)
     report = ReconciliationReport(checks=(result,))
     assert report.passed
+    assert report.executed_count == 1
     assert report.to_frame().iloc[0]["name"] == "x"
     report.raise_if_failed()
     bad = CheckResult(name="y", passed=False, detail="boom", max_abs_error=1.0, tolerance=1e-6)
@@ -564,14 +582,33 @@ def test_report_api_and_raise_if_failed() -> None:
         ReconciliationReport(checks=(result, bad)).raise_if_failed()
     with pytest.raises(FrozenInstanceError):
         result.passed = False  # type: ignore[misc]
+    # executed=False 的失败项不计入 passed、不触发 raise_if_failed
+    not_run = CheckResult(name="z", passed=False, executed=False, detail="not run", tolerance=1e-6)
+    mixed = ReconciliationReport(checks=(result, not_run))
+    assert mixed.passed
+    assert mixed.executed_count == 1
+    mixed.raise_if_failed()
+    assert not mixed.to_frame().loc[1, "executed"]
 
 
-def test_attribution_without_attribution_gives_five_checks() -> None:
+def test_attribution_without_input_is_reported_as_not_run() -> None:
+    """R30：attribution=None 时第六项不能静默少一行，必须 executed=False 落盘。"""
     trades, cashflows, snapshots, nav = _clean_fixture()
     report = reconcile_all(cashflows=cashflows, trades=trades, snapshots=snapshots, nav=nav)
     assert report.passed
-    assert len(report.checks) == 5
-    assert "attribution_closure" not in {check.name for check in report.checks}
+    names = [check.name for check in report.checks]
+    assert len(report.checks) == 7
+    assert "attribution_closure" in names
+    attribution = _find(report, "attribution_closure")
+    assert attribution.executed is False
+    assert attribution.passed is False
+    assert "未执行" in attribution.detail
+    # 未执行不参与 passed，也不让 raise_if_failed 抛错
+    assert report.executed_count == 5
+    report.raise_if_failed()
+    frame = report.to_frame()
+    row = frame[frame["name"] == "attribution_closure"].iloc[0]
+    assert bool(row["executed"]) is False
 
 
 def test_cashflows_unknown_kind_raises() -> None:
@@ -765,3 +802,189 @@ def test_nav_recalc_formula_includes_pending_cash() -> None:
     result = check_nav_identity(snapshots)
     assert result.passed
     assert result.max_abs_error == pytest.approx(0.0, abs=1e-12)
+
+
+# ===========================================================================
+# R30：第 7 项——独立票息权益校验（check_coupon_entitlement）
+# ===========================================================================
+COUPON_CALENDAR = TradingCalendar.from_dates(pd.bdate_range("2024-01-01", "2026-12-31"))
+
+
+def _coupon_trade_row(
+    *,
+    trade_id: str = "T1",
+    bond_code: str = "BOND_C",
+    trade_date: str = "2024-06-20",
+    settlement_date: str = "2024-06-21",
+    face_value: float = FACE_A,
+    issue_date: str = "2024-01-15",
+    maturity_date: str = "2026-01-15",
+    coupon_pct: float = 3.0,
+    freq: int = 2,
+) -> dict[str, object]:
+    return {
+        "trade_id": trade_id,
+        "bond_code": bond_code,
+        "side": "buy",
+        "face_value": face_value,
+        "clean_price": 100.0,
+        "signal_date": pd.Timestamp(trade_date) - pd.Timedelta(3, "D"),
+        "trade_date": pd.Timestamp(trade_date),
+        "settlement_date": pd.Timestamp(settlement_date),
+        "fee": 0.0,
+        "coupon_pct": coupon_pct,
+        "freq": freq,
+        "issue_date": pd.Timestamp(issue_date),
+        "maturity_date": pd.Timestamp(maturity_date),
+        "accrual": "coupon",
+    }
+
+
+def _coupon_cashflows(
+    *, coupon_date: str = "2024-07-15", coupon_amount: float = 15_000.0
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-06-20", "2024-06-21", coupon_date]),
+            "kind": ["initial", "trade_buy", "coupon"],
+            "amount": [2_000_000.0, -1_000_000.0, coupon_amount],
+            "bond_code": [None, "BOND_C", "BOND_C"],
+            "trade_id": [None, "T1", None],
+            "note": ["初始资金", "买入结算", "票息"],
+        }
+    )
+
+
+def test_coupon_entitlement_correct_scenario_passes() -> None:
+    trades = pd.DataFrame([_coupon_trade_row()])
+    result = check_coupon_entitlement(trades, _coupon_cashflows(), COUPON_CALENDAR)
+    assert result.name == "coupon_entitlement"
+    assert result.passed, result.detail
+    assert result.executed
+    assert result.max_abs_error == pytest.approx(0.0, abs=1e-12)
+    assert "独立重建票息权益" in result.detail
+    assert "付息日日初已结算面值" in result.detail
+
+
+def test_coupon_entitlement_amount_tamper_fails() -> None:
+    trades = pd.DataFrame([_coupon_trade_row()])
+    tampered = _coupon_cashflows(coupon_amount=15_001.0)
+    result = check_coupon_entitlement(trades, tampered, COUPON_CALENDAR)
+    assert not result.passed
+    assert result.max_abs_error == pytest.approx(1.0, abs=1e-9)
+    assert "期望" in result.detail and "实际" in result.detail
+    assert "BOND_C" in result.detail and "2024-07-15" in result.detail
+
+
+def test_coupon_entitlement_settlement_on_coupon_date_fails() -> None:
+    """把结算日整体后移到付息日 → 登记权益未取得，实际却收到 coupon → 失败。"""
+    shifted = pd.DataFrame(
+        [_coupon_trade_row(trade_date="2024-07-12", settlement_date="2024-07-15")]
+    )
+    result = check_coupon_entitlement(shifted, _coupon_cashflows(), COUPON_CALENDAR)
+    assert not result.passed
+    # 期望 0（付息日日初尚未结算）、实际 15,000 → 多出事件
+    assert result.max_abs_error == pytest.approx(15_000.0, abs=1e-6)
+    assert "多出 coupon 事件" in result.detail
+
+
+def test_coupon_entitlement_holiday_deferral_passes() -> None:
+    """付息日 2024-07-13 为周六 → 应付日顺延 2024-07-15，权益仍按 07-13 日初。"""
+    trades = pd.DataFrame([_coupon_trade_row(issue_date="2024-01-13", maturity_date="2026-01-13")])
+    cashflows = _coupon_cashflows(coupon_date="2024-07-15")
+    assert not COUPON_CALENDAR.is_trading_day(date(2024, 7, 13))
+    result = check_coupon_entitlement(trades, cashflows, COUPON_CALENDAR)
+    assert result.passed, result.detail
+
+    # 若 coupon 事件记在非交易日的付息日（未顺延）→ 日期不符，失败
+    wrong_date = _coupon_cashflows(coupon_date="2024-07-13")
+    failed = check_coupon_entitlement(trades, wrong_date, COUPON_CALENDAR)
+    assert not failed.passed
+    assert failed.max_abs_error == pytest.approx(15_000.0, abs=1e-6)
+
+
+def test_coupon_entitlement_without_trades_passes_with_note() -> None:
+    empty = pd.DataFrame(columns=list(_coupon_trade_row().keys()))
+    result = check_coupon_entitlement(empty, _coupon_cashflows(), COUPON_CALENDAR)
+    assert result.passed and result.executed
+    assert "无票息事件" in result.detail
+
+
+def test_coupon_entitlement_without_terms_or_calendar_is_not_run() -> None:
+    no_terms = pd.DataFrame([_coupon_trade_row()]).drop(
+        columns=["coupon_pct", "freq", "issue_date", "maturity_date"]
+    )
+    missing_terms = check_coupon_entitlement(no_terms, _coupon_cashflows(), COUPON_CALENDAR)
+    assert missing_terms.executed is False and missing_terms.passed is False
+    assert "未执行" in missing_terms.detail
+    no_calendar = check_coupon_entitlement(
+        pd.DataFrame([_coupon_trade_row()]), _coupon_cashflows(), None
+    )
+    assert no_calendar.executed is False
+    assert "未提供交易日历" in no_calendar.detail
+
+
+def test_reconcile_all_runs_coupon_check_end_to_end() -> None:
+    """用账本真实产物做对账：第 7 项执行并通过；篡改 coupon 金额后被捕获。"""
+    from ficc.config import get_config
+    from ficc.curve.curve import Curve
+    from ficc.data.schema import BondStatic
+    from ficc.portfolio.ledger import Ledger, TradeRecord
+
+    cfg = get_config()
+    costs = cfg.costs.model_copy(update={"fee_bp": 0.0, "settlement_fee_cny_per_trade": 0.0})
+    cfg = cfg.model_copy(update={"costs": costs})
+    bond = BondStatic(
+        code="BOND_C",
+        issue_date=date(2024, 1, 15),
+        maturity_date=date(2026, 1, 15),
+        coupon_pct=3.0,
+        freq=2,
+    )
+    tenors = np.array([0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0])
+
+    def _curve(as_of: date) -> Curve:
+        return Curve(as_of=as_of, tenors=tenors, rates=np.full_like(tenors, 2.0), method="linear")
+
+    trade_date = date(2024, 6, 20)
+    settle = COUPON_CALENDAR.settlement_date(trade_date, 1)
+    trade = TradeRecord(
+        trade_id="T1",
+        bond=bond,
+        side="buy",
+        face_value=FACE_A,
+        clean_price=100.0,
+        signal_date=trade_date - timedelta(days=3),
+        trade_date=trade_date,
+        settlement_date=settle,
+    )
+    ledger = Ledger(COUPON_CALENDAR, initial_cash=2_000_000.0, funding_rate_pct=0.0, cfg=cfg)
+    ledger.submit(trade)
+    for day in COUPON_CALENDAR.trading_days_between(date(2024, 6, 19), date(2024, 7, 16)):
+        ledger.process_day(day, _curve(day))
+
+    report = reconcile_all(
+        cashflows=ledger.cashflows_frame(),
+        trades=ledger.trades_frame(),
+        snapshots=ledger.snapshots_frame(),
+        nav=ledger.nav_series(),
+        calendar=COUPON_CALENDAR,
+    )
+    assert report.passed, report.to_frame().to_string(index=False)
+    coupon = _find(report, "coupon_entitlement")
+    assert coupon.executed and coupon.passed, coupon.detail
+
+    cashflows = ledger.cashflows_frame()
+    idx = cashflows.index[cashflows["kind"] == "coupon"][0]
+    tampered = cashflows.copy()
+    tampered.loc[idx, "amount"] = float(tampered.loc[idx, "amount"]) + 1.0
+    bad_report = reconcile_all(
+        cashflows=tampered,
+        trades=ledger.trades_frame(),
+        snapshots=ledger.snapshots_frame(),
+        nav=ledger.nav_series(),
+        calendar=COUPON_CALENDAR,
+    )
+    assert not bad_report.passed
+    assert not _find(bad_report, "coupon_entitlement").passed
+    assert _find(bad_report, "coupon_entitlement").max_abs_error == pytest.approx(1.0, abs=1e-9)

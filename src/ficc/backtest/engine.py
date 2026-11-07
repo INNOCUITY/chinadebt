@@ -1,16 +1,17 @@
-"""日频回测引擎：策略 → 目标 KRD → 组合构建 → T+1 成交 → 账本 → 记录。
+"""日频回测引擎（R22/R23/R26/R27 修复版）。
 
-时序纪律（与 `docs/03_methodology.md` §11.1 一致）
---------------------------------------------------
-- t 日收盘后生成信号（策略只能看到 `history <= t`）；
-- **t+1 日成交**（执行价 = t+1 收盘曲线），结算日 = 日历 T+1；
-- 每日账本 `process_day` 负责票息/本金/融资/结算与估值。
+时序纪律
+--------
+- t 日收盘后生成信号（策略只能看到 ``history <= t``）；
+- **t+1 日成交**（执行价 = t+1 收盘曲线、结算日 = 日历 T+1、含半价差）；
+- 成交前用**最终取整面值 + 成交日价格 + 未结算现金/费用**做完整 9 项约束校验，
+  不可行则缩减 tilt 重试，仍不可行就**拒单**（不静默回基准）。
 
-这一层只做编排，不实现任何金融口径：
-- 基准组合：`portfolio/benchmark.py`
-- 目标 KRD → 面值/订单：`portfolio/construction.py`
-- 组合风险与约束：`portfolio/constraints.py`
-- 记账与现金流：`portfolio/ledger.py`
+基准口径（R22）
+--------------
+风险基准与绩效基准是**同一个买入持有组合**：起点构造固定面值，之后每日只做
+mark-to-market（老化后剩余期限、CN_IB 结算日），并跑一个同成本口径的基准账本
+得到 ``benchmark_nav``。
 """
 
 from __future__ import annotations
@@ -25,15 +26,29 @@ import pandas as pd
 from ficc.config import Config, get_config
 from ficc.curve.curve import Curve
 from ficc.logging import get_logger
+from ficc.portfolio.dates import settlement_for
 from ficc.portfolio.ledger import Ledger, TradeRecord
 from ficc.portfolio.types import BenchmarkPortfolio, MarketContext, TargetKRD
 
 log = get_logger("backtest.engine")
 
+KEY_COLUMNS = [
+    "date",
+    "nav",
+    "cash",
+    "pending_cash",
+    "market_value",
+    "total_dv01",
+    "duration",
+    "leverage",
+    "dv01_ratio",
+    "bench_total_dv01",
+    "bench_duration",
+    "bench_nav",
+]
+
 
 class StrategyLike(Protocol):
-    """策略只需实现这一个方法（与 `ficc.strategy.base.Strategy` 兼容）。"""
-
     name: str
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD: ...
@@ -41,12 +56,11 @@ class StrategyLike(Protocol):
 
 @dataclass
 class BacktestResult:
-    """一次回测的全部记录（每项都是可直接落盘的 DataFrame/Series）。"""
-
     strategy: str
     start: date
     end: date
     nav: pd.Series
+    benchmark_nav: pd.Series
     exposure: pd.DataFrame
     trades: pd.DataFrame
     cashflows: pd.DataFrame
@@ -54,10 +68,12 @@ class BacktestResult:
     turnover: pd.Series
     constraints: pd.DataFrame
     signals: pd.DataFrame
+    rejected: pd.DataFrame
 
     def to_frames(self) -> dict[str, pd.DataFrame | pd.Series]:
         return {
             "nav": self.nav,
+            "benchmark_nav": self.benchmark_nav,
             "exposure": self.exposure,
             "trades": self.trades,
             "cashflows": self.cashflows,
@@ -65,6 +81,7 @@ class BacktestResult:
             "turnover": self.turnover,
             "constraints": self.constraints,
             "signals": self.signals,
+            "rejected": self.rejected,
         }
 
 
@@ -76,7 +93,6 @@ def _curve_at(panel: pd.DataFrame, tenors: list[float], d: date) -> Curve:
 
 
 def _funding_map(funding: pd.Series | None, days: list[date], cfg: Config) -> dict[date, float]:
-    """把 FDR007（%）映射到交易日；缺失时用前值，最后回退配置常量。"""
     fallback = cfg.costs.repo_rate_fallback_const * 100.0
     out: dict[date, float] = {}
     for d in days:
@@ -86,6 +102,12 @@ def _funding_map(funding: pd.Series | None, days: list[date], cfg: Config) -> di
         else:
             out[d] = fallback
     return out
+
+
+def _fee_estimate(face: float, clean_price: float, cfg: Config) -> float:
+    """与账本 ``_trade_fee`` 同式的手续费/结算费估算（成交前现金预算用）。"""
+    notional = face / 100.0 * clean_price
+    return float(cfg.costs.fee_bp) / 1e4 * notional + float(cfg.costs.settlement_fee_cny_per_trade)
 
 
 def run_backtest(
@@ -98,24 +120,10 @@ def run_backtest(
     start: date | None = None,
     end: date | None = None,
 ) -> BacktestResult:
-    """跑一个策略的日频回测。
-
-    Parameters
-    ----------
-    strategy : StrategyLike
-        实现 ``target_krd(ctx) -> TargetKRD`` 的对象；只允许读 ``ctx.history``（已截断）。
-    panel : DataFrame
-        index=日期、columns=期限（年）、values=收益率(%)，**全样本**；引擎负责按日截断。
-    calendar : TradingCalendar
-        实测 CN_IB 日历（决定交易日与结算日）。
-    funding : Series | None
-        index=日期 的融资利率（%）；None 时用 ``cfg.costs.repo_rate_fallback_const``。
-    """
-    from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds
-    from ficc.portfolio.constraints import check_constraints, portfolio_risk
-    from ficc.portfolio.construction import build_orders, krd_matrix, solve_faces
-    from ficc.pricing.analytics import mod_duration
-    from ficc.pricing.bond import dirty_price_from_ytm
+    from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds, mark_benchmark
+    from ficc.portfolio.constraints import check_constraints, portfolio_risk, project_risk
+    from ficc.portfolio.construction import build_orders, execution_price
+    from ficc.pricing.conventions import accrued_interest
 
     cfg = cfg or get_config()
     start = start or cfg.backtest.start_date
@@ -124,140 +132,267 @@ def run_backtest(
     if len(days) < 2:
         raise ValueError(f"回测区间 {start}~{end} 内交易日不足 2 天")
 
-    # 曲线用**全期限**（bootstrap 需要短端锚点）；投资宇宙只用 portfolio.universe
     from ficc.data.schema import CANONICAL_TENORS
 
     curve_tenors = list(CANONICAL_TENORS)
     curve0 = _curve_at(panel, curve_tenors, days[0])
     universe = build_universe_bonds(curve0, days[0], cfg=cfg)
-    universe_tenor = {
-        bond.code: float(t) for bond, t in zip(universe, cfg.portfolio.universe, strict=True)
-    }
+    benchmark0 = build_benchmark(curve0, days[0], bonds=universe, calendar=calendar, cfg=cfg)
     funding_map = _funding_map(funding, days, cfg)
-    lag = int(cfg.pricing.settlement_lag_days)
 
-    ledger = Ledger(
-        calendar,
-        initial_cash=cfg.backtest.init_cash,
-        funding_rate_pct=funding_map[days[0]],
-        funding_rate_by_date=funding_map,
-        cfg=cfg,
-    )
+    def _ledger() -> Ledger:
+        return Ledger(
+            calendar,
+            initial_cash=cfg.backtest.init_cash,
+            funding_rate_pct=funding_map[days[0]],
+            funding_rate_by_date=funding_map,
+            cfg=cfg,
+        )
+
+    ledger = _ledger()
+    bench_ledger = _ledger()
+    bench_bought = False
 
     nav_rows: dict[date, float] = {}
+    bench_nav_rows: dict[date, float] = {}
     exposure_rows: list[dict[str, Any]] = []
     cost_rows: list[dict[str, Any]] = []
     constraint_rows: list[dict[str, Any]] = []
     turnover_rows: dict[date, float] = {}
     signal_rows: list[dict[str, Any]] = []
+    rejected_rows: list[dict[str, Any]] = []
+    # 价差成本按"每次真实成交"累计（基准买入与策略成交分开，避免污染策略成本）
+    order_spread: dict[str, float] = {bond.code: 0.0 for bond in universe}
+    bench_spread_cost = 0.0
+    bench_trade_rows: list[dict[str, Any]] = []
+    trade_spread_rows: list[dict[str, Any]] = []
 
+    band_face = float(cfg.constraints.min_trade_lot) * float(cfg.constraints.rebalance_band_lots)
     nav_high = float(cfg.backtest.init_cash)
     risk_off = False
     pending: TargetKRD | None = None
     last_snapshot = None
+    bench_snapshot = None
 
     # ------------------------------------------------------------------
-    # 目标投影：把策略 tilt 收缩到"构建后仍满足约束"的可行域
+    # 成交前完整校验（R23）
     # ------------------------------------------------------------------
-    def project_target(
+    def project_and_validate(
         target: TargetKRD,
-        benchmark_d: BenchmarkPortfolio,
+        *,
         curve: Curve,
         d: date,
-        nav: float,
-    ) -> TargetKRD:
-        """构造后真实风险校验：4 只券表达 9 个桶会互相牵连，只看目标会低估偏离。"""
-        tol = float(cfg.constraints.relative_krd_tol)
-        budget = tol * benchmark_d.total_dv01
-        dur_tol = float(cfg.constraints.duration_tol)
-        A = krd_matrix(universe, curve, cfg=cfg)
-        key_tenors = list(benchmark_d.krd.keys())
-        settle = calendar.settlement_date(d, lag)
-        durations: dict[float, float] = {}
-        dirty: dict[float, float] = {}
-        for bond in universe:
-            tenor = universe_tenor[bond.code]
-            ytm = float(curve.rate((bond.maturity_date - settle).days / 365.25))
-            durations[tenor] = float(mod_duration(bond, settle, ytm))
-            dirty[tenor] = float(dirty_price_from_ytm(bond, settle, ytm, cfg=cfg))
+        snapshot: Any,
+        benchmark_d: BenchmarkPortfolio,
+        nav_high_water: float,
+    ) -> tuple[dict[str, float] | None, list[TargetKRD], str]:
+        """返回 (可执行面值, 尝试过的目标列表, 拒单原因)。``None`` 表示拒单。"""
+        positions_before = () if snapshot is None else snapshot.positions
+        current_faces = {p.bond.code: float(p.face_value) for p in positions_before}
+        cash_prev = 0.0 if snapshot is None else float(snapshot.cash)
+        pending_prev = 0.0 if snapshot is None else float(getattr(snapshot, "pending_cash", 0.0))
+        # 上一日未结算成交在今日结算：把它视作可用现金（费用也从这里扣，保守起见不重复扣）
+        cash_available = cash_prev + pending_prev
 
         bench_krd = {float(k): float(v) for k, v in benchmark_d.krd.items()}
         dev = {t: float(target.krd.get(t, bench_krd[t])) - bench_krd[t] for t in bench_krd}
-        for iteration in range(6):
+        attempted: list[TargetKRD] = []
+
+        for _iteration in range(6):
             cand = {t: bench_krd[t] + dev[t] for t in bench_krd}
             if min(cand.values()) < 0:
                 dev = {t: max(-bench_krd[t], dev[t]) for t in bench_krd}
                 cand = {t: bench_krd[t] + dev[t] for t in bench_krd}
-            faces = solve_faces(TargetKRD(as_of=target.as_of, krd=cand), universe, curve, cfg=cfg)
-            f = np.array([float(v) for v in faces.values()], dtype=float) / 100.0
-            krd_vec = A @ f
-            krd_map = {float(k): float(v) for k, v in zip(key_tenors, krd_vec, strict=True)}
-            total = float(sum(krd_map.values()))
-            mv = {t: float(faces[code]) / 100.0 * dirty[t] for code, t in universe_tenor.items()}
-            mv_total = float(sum(mv.values()))
-            dur = sum(mv[t] * durations[t] for t in mv) / mv_total if mv_total > 0 else 0.0
-
-            max_dev = max(abs(krd_map[t] - bench_krd[t]) for t in bench_krd)
-            dur_ok = (
-                benchmark_d.duration <= 0
-                or abs(dur - benchmark_d.duration) <= dur_tol * benchmark_d.duration
+            cand_target = TargetKRD(as_of=target.as_of, krd=cand, notes=target.notes)
+            attempted.append(cand_target)
+            orders = build_orders(
+                cand_target,
+                positions_before,
+                universe,
+                curve,
+                min_trade_face=band_face,
+                calendar=calendar,
+                cfg=cfg,
             )
-            total_ok = (
-                float(cfg.constraints.total_dv01_ratio_min) * benchmark_d.total_dv01
-                <= total
-                <= float(cfg.constraints.total_dv01_ratio_max) * benchmark_d.total_dv01
+            # 交易后最终面值（含宇宙外清仓）
+            faces_after = dict(current_faces)
+            settlement_cash = 0.0
+            fee_total = 0.0
+            for order in orders:
+                signed = 1.0 if order.side == "buy" else -1.0
+                faces_after[order.bond.code] = (
+                    faces_after.get(order.bond.code, 0.0) + signed * order.face_value
+                )
+                settle = settlement_for(calendar, d, cfg=cfg)
+                ai = accrued_interest(order.bond, settle, cfg=cfg)
+                amount = (order.clean_price + ai) * order.face_value / 100.0
+                settlement_cash += -amount if order.side == "buy" else amount
+                fee_total += _fee_estimate(order.face_value, order.clean_price, cfg)
+            faces_after = {k: max(v, 0.0) for k, v in faces_after.items()}
+            pending_after = settlement_cash  # T+1 结算前全部为未结算付款
+            risk_proj = project_risk(
+                faces_after,
+                universe,
+                curve,
+                calendar=calendar,
+                cash=cash_available,
+                pending_cash=pending_after,
+                nav=cash_available
+                + sum(_mv for _mv in _market_values(faces_after, universe, curve, d, cfg).values())
+                + pending_after,
+                cfg=cfg,
             )
-            weight_limit = min(
-                float(cfg.portfolio.max_single_bond_weight),
-                float(cfg.risk.limits.max_single_bond_weight),
+            report = check_constraints(
+                risk=risk_proj, benchmark=benchmark_d, nav_high_water=nav_high_water, cfg=cfg
             )
-            max_weight = max(mv.values()) / nav if nav > 0 and mv else 0.0
-            weight_ok = max_weight <= weight_limit + 1e-6
-            if max_dev <= budget and dur_ok and total_ok and weight_ok:
-                # 返回**可达的** KRD（A@faces 的结果），保证 build_orders 能精确复现同一组面值
-                note = f"{target.notes} [引擎约束投影]".strip() if iteration > 0 else target.notes
-                return TargetKRD(as_of=target.as_of, krd=krd_map, notes=note.strip())
+            cash_ok = (
+                risk_proj.cash - fee_total
+                >= float(cfg.constraints.min_cash_fraction) * risk_proj.nav
+            )
+            if report.ok and cash_ok:
+                return faces_after, attempted, ""
             dev = {t: v * 0.5 for t, v in dev.items()}
 
-        return TargetKRD(
-            as_of=target.as_of, krd=bench_krd, notes=f"{target.notes} [引擎收缩到基准]".strip()
-        )
+        return None, attempted, f"6 次投影仍不可行（{len(attempted)} 次尝试）"
+
+    def _market_values(
+        faces: dict[str, float], bonds: tuple[Any, ...], curve: Curve, d: date, config: Config
+    ) -> dict[str, float]:
+        from ficc.portfolio.dates import remaining_years
+        from ficc.pricing.bond import dirty_price_from_ytm
+
+        settle = settlement_for(calendar, d, cfg=config)
+        out: dict[str, float] = {}
+        for bond in bonds:
+            face = float(faces.get(bond.code, 0.0))
+            if face <= 0:
+                continue
+            ytm = float(curve.rate(remaining_years(bond, settle)))
+            out[bond.code] = (
+                face / 100.0 * float(dirty_price_from_ytm(bond, settle, ytm, cfg=config))
+            )
+        return out
 
     for d in days:
         curve_d = _curve_at(panel, curve_tenors, d)
-        benchmark_d = build_benchmark(curve_d, d, bonds=universe, cfg=cfg)
+        benchmark_d = mark_benchmark(
+            benchmark0, bonds=universe, curve=curve_d, as_of=d, calendar=calendar, cfg=cfg
+        )
 
-        # ---- 1) 执行昨日信号（T+1）----
+        # ---- 1) 基准买入持有（与策略同成本/价差/日期口径）----
+        if not bench_bought and d == days[1]:
+            settle = settlement_for(calendar, d, cfg=cfg)
+            for bond in universe:
+                face = float(benchmark0.faces.get(bond.code, 0.0))
+                if face <= 0:
+                    continue
+                clean_exec, _mid, _spread_bp, per100 = execution_price(
+                    bond, curve_d, side="buy", calendar=calendar, cfg=cfg
+                )
+                bench_ledger.submit(
+                    TradeRecord(
+                        trade_id=f"bench-{bond.code}",
+                        bond=bond,
+                        side="buy",
+                        face_value=face,
+                        clean_price=clean_exec,
+                        signal_date=days[0],
+                        trade_date=d,
+                        settlement_date=settle,
+                    )
+                )
+                bench_spread_cost += per100 * face / 100.0
+                bench_trade_rows.append(
+                    {
+                        "trade_id": f"bench-{bond.code}",
+                        "bond_code": bond.code,
+                        "face_value": face,
+                        "clean_price": clean_exec,
+                        "mid_clean_price": _mid,
+                        "spread_cost": per100 * face / 100.0,
+                    }
+                )
+            bench_bought = True
+
+        # ---- 2) 策略成交：先做完整成交前校验，再提交 ----
         executed = 0
         executed_notional = 0.0
+        rejected_reason = ""
+        gate_target: TargetKRD | None = None
         if pending is not None:
-            positions_before = () if last_snapshot is None else last_snapshot.positions
-            orders = build_orders(pending, positions_before, universe, curve_d, cfg=cfg)
-            for order in orders:
-                trade = TradeRecord(
-                    trade_id=f"{strategy.name}-{d:%Y%m%d}-{order.bond.code}-{order.side}",
-                    bond=order.bond,
-                    side=order.side,
-                    face_value=order.face_value,
-                    clean_price=order.clean_price,
-                    signal_date=pending.as_of,
-                    trade_date=d,
-                    settlement_date=calendar.settlement_date(d, lag),
+            faces_ok, attempted, reason = project_and_validate(
+                pending,
+                curve=curve_d,
+                d=d,
+                snapshot=last_snapshot,
+                benchmark_d=benchmark_d,
+                nav_high_water=nav_high,
+            )
+            if faces_ok is None:
+                rejected_reason = reason or "成交前约束不可行"
+                rejected_rows.append(
+                    {
+                        "date": d,
+                        "signal_date": pending.as_of,
+                        "reason": rejected_reason,
+                        "target_total_dv01": pending.total_dv01,
+                        "n_attempts": len(attempted),
+                        "notes": pending.notes,
+                    }
                 )
-                ledger.submit(trade)
-                executed += 1
-                executed_notional += order.face_value * order.clean_price / 100.0
+            else:
+                gate_target = attempted[-1]
+                current_faces = (
+                    {}
+                    if last_snapshot is None
+                    else {p.bond.code: p.face_value for p in last_snapshot.positions}
+                )
+                settle = settlement_for(calendar, d, cfg=cfg)
+                for bond in universe:
+                    target_face = float(faces_ok.get(bond.code, 0.0))
+                    current_face = float(current_faces.get(bond.code, 0.0))
+                    delta = target_face - current_face
+                    if abs(delta) < band_face - 1e-9:
+                        continue
+                    side = "buy" if delta > 0 else "sell"
+                    clean_exec, _mid, _spread_bp, per100 = execution_price(
+                        bond, curve_d, side=side, calendar=calendar, cfg=cfg
+                    )
+                    ledger.submit(
+                        TradeRecord(
+                            trade_id=f"{strategy.name}-{d:%Y%m%d}-{bond.code}-{side}",
+                            bond=bond,
+                            side=side,
+                            face_value=abs(delta),
+                            clean_price=clean_exec,
+                            signal_date=gate_target.as_of,
+                            trade_date=d,
+                            settlement_date=settle,
+                        )
+                    )
+                    executed += 1
+                    executed_notional += abs(delta) * clean_exec / 100.0
+                    _spread_cost = abs(delta) / 100.0 * per100
+                    order_spread[bond.code] = order_spread.get(bond.code, 0.0) + _spread_cost
+                    trade_spread_rows.append(
+                        {
+                            "trade_id": f"{strategy.name}-{d:%Y%m%d}-{bond.code}-{side}",
+                            "spread_bp": _spread_bp,
+                            "spread_cost": _spread_cost,
+                        }
+                    )
             pending = None
 
-        # ---- 2) 记账、估值、风险与约束 ----
+        # ---- 3) 记账与记录 ----
         snapshot = ledger.process_day(d, curve_d)
-        risk = portfolio_risk(snapshot, curve_d, cfg=cfg)
+        bench_snapshot = bench_ledger.process_day(d, curve_d)
+        bench_nav_rows[d] = bench_snapshot.nav
+        risk = portfolio_risk(snapshot, curve_d, calendar=calendar, cfg=cfg)
         if snapshot.positions:
             report = check_constraints(
                 risk=risk, benchmark=benchmark_d, nav_high_water=nav_high, cfg=cfg
             )
         else:
-            # 首日/空仓：没有持仓时谈不上"相对基准中性"，记为预热期而不是违规
             from ficc.portfolio.constraints import ConstraintReport
 
             report = ConstraintReport(as_of=d, violations=(), metrics={"n_positions": 0.0})
@@ -271,13 +406,14 @@ def run_backtest(
                 "date": d,
                 "nav": snapshot.nav,
                 "cash": snapshot.cash,
-                "pending_cash": getattr(snapshot, "pending_cash", 0.0),
+                "pending_cash": float(getattr(snapshot, "pending_cash", 0.0)),
                 "market_value": risk.market_value,
                 "total_dv01": risk.total_dv01,
                 "duration": risk.duration,
                 "leverage": risk.market_value / snapshot.nav if snapshot.nav else float("nan"),
                 "bench_total_dv01": benchmark_d.total_dv01,
                 "bench_duration": benchmark_d.duration,
+                "bench_nav": bench_snapshot.nav,
                 "dv01_ratio": (
                     risk.total_dv01 / benchmark_d.total_dv01
                     if benchmark_d.total_dv01
@@ -291,15 +427,22 @@ def run_backtest(
             }
         )
 
-        # ---- 3) 成本（当日实际发生的费用与融资）----
-        cf_all = ledger.cashflows_frame()
-        cf_all = cf_all.assign(date=pd.to_datetime(cf_all["date"]))
+        cf_all = ledger.cashflows_frame().assign(date=lambda f: pd.to_datetime(f["date"]))
         cf_today = cf_all.loc[cf_all["date"] == pd.Timestamp(d)]
         fee = -float(cf_today.loc[cf_today["kind"] == "fee", "amount"].sum())
         funding_cost = -float(cf_today.loc[cf_today["kind"] == "funding", "amount"].sum())
+        spread_cost = float(sum(order_spread.values()))
         cost_rows.append(
-            {"date": d, "fee": fee, "funding": funding_cost, "total": fee + funding_cost}
+            {
+                "date": d,
+                "fee": fee,
+                "funding": funding_cost,
+                "spread": spread_cost,
+                "bench_spread": bench_spread_cost if d == days[1] else 0.0,
+                "total": fee + funding_cost + spread_cost,
+            }
         )
+        order_spread = {bond.code: 0.0 for bond in universe}
 
         constraint_rows.append(
             {
@@ -309,16 +452,18 @@ def run_backtest(
                 "violation_codes": ";".join(v.code for v in report.violations),
                 "n_positions": len(snapshot.positions),
                 "n_trades": executed,
+                "rejected": bool(rejected_reason),
+                "reject_reason": rejected_reason,
                 **{f"m_{k}": v for k, v in report.metrics.items()},
             }
         )
 
-        # ---- 4) 生成下一日信号（只读 <= d 的数据）----
+        # ---- 4) 下一日信号（只读 <= d 数据）----
         last_snapshot = snapshot
         drawdown_breach = any(v.code == "drawdown_stop" for v in report.violations)
         if drawdown_breach:
             risk_off = True
-        elif risk_off and not drawdown_breach:
+        elif risk_off:
             risk_off = False
 
         ctx = MarketContext(
@@ -334,27 +479,35 @@ def run_backtest(
         if risk_off:
             target = TargetKRD(as_of=d, krd=dict(benchmark_d.krd), notes="风控熔断：回到基准中性")
         else:
-            target = project_target(strategy.target_krd(ctx), benchmark_d, curve_d, d, snapshot.nav)
+            target = strategy.target_krd(ctx)
         pending = target
         signal_rows.append(
             {
                 "date": d,
+                "signal_date": target.as_of,
                 "target_total_dv01": target.total_dv01,
                 "notes": target.notes,
                 "risk_off": risk_off,
             }
         )
 
+    trades_df = ledger.trades_frame()
+    if trade_spread_rows:
+        spread_frame = pd.DataFrame(trade_spread_rows)
+        trades_df = trades_df.merge(spread_frame, on="trade_id", how="left")
+        trades_df["spread_cost"] = trades_df["spread_cost"].fillna(0.0)
     return BacktestResult(
         strategy=strategy.name,
         start=days[0],
         end=days[-1],
         nav=pd.Series(nav_rows, name="nav").sort_index(),
+        benchmark_nav=pd.Series(bench_nav_rows, name="benchmark_nav").sort_index(),
         exposure=pd.DataFrame(exposure_rows),
-        trades=ledger.trades_frame(),
+        trades=trades_df,
         cashflows=ledger.cashflows_frame(),
         costs=pd.DataFrame(cost_rows),
         turnover=pd.Series(turnover_rows, name="turnover").sort_index(),
         constraints=pd.DataFrame(constraint_rows),
         signals=pd.DataFrame(signal_rows),
+        rejected=pd.DataFrame(rejected_rows),
     )

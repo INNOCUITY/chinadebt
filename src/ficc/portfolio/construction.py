@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -36,6 +37,7 @@ from ficc.config import Config, get_config
 from ficc.curve.bootstrap import bootstrap_spot
 from ficc.data.schema import BondStatic
 from ficc.logging import get_logger
+from ficc.portfolio.dates import remaining_years, settlement_for
 from ficc.portfolio.types import TargetKRD
 from ficc.pricing.analytics import key_rate_durations
 from ficc.pricing.bond import dirty_price_from_ytm
@@ -45,8 +47,10 @@ __all__ = [
     "FaceSolution",
     "Order",
     "build_orders",
+    "execution_price",
     "krd_matrix",
     "solve_faces",
+    "spread_bp_for",
 ]
 
 log = get_logger(__name__)
@@ -82,24 +86,84 @@ def _validate_bonds(bonds: Sequence[BondStatic]) -> tuple[BondStatic, ...]:
     return bond_list
 
 
-def _spot_and_settlement(curve: Any, cfg: Config) -> tuple[Any, date]:
+def _spot_and_settlement(
+    curve: Any, cfg: Config, calendar: object | None = None
+) -> tuple[Any, date]:
+    """即期曲线与**组合估值结算日**（R27：必须走 CN_IB 日历，不能再用默认工作日）。"""
     if not hasattr(curve, "as_of"):
         raise TypeError("curve 缺少必需成员 as_of：需要 ficc.curve.Curve")
-    spot = bootstrap_spot(curve)
-    settlement = getattr(spot, "settlement_date", None) or getattr(spot, "as_of", None)
-    if settlement is None:
-        raise ValueError("即期曲线缺少 settlement_date/as_of，无法确定 KRD 起点")
+    settlement = settlement_for(calendar, curve.as_of, cfg=cfg)
+    spot = bootstrap_spot(curve, settlement=settlement, calendar=calendar)
     return spot, settlement
 
 
-def _clean_price(bond: BondStatic, curve: Any, *, cfg: Config) -> float:
-    """决策日曲线报价的**净价**（元/百元面值，YTM 口径）。"""
-    remaining = day_count(curve.as_of, bond.maturity_date) / 365.0
+def spread_bp_for(tenor: float, cfg: Config) -> float:
+    """按期限分类取**双边**收益率价差（bp）：活跃 2/5/10Y、超长 30Y、其余非活跃。
+
+    约定（R26）：配置里的 ``spread_bp_*`` 是**双边价差**，单边成本 = 双边/2，
+    以**收益率 bp** 的形式作用在执行收益率上（买入 ytm−half、卖出 ytm+half）。
+    """
+    costs = cfg.costs
+    if float(tenor) >= 30.0:
+        return float(costs.spread_bp_ultra_long)
+    if 2.0 <= float(tenor) <= 10.0:
+        return float(costs.spread_bp_active)
+    return float(costs.spread_bp_illiquid)
+
+
+def execution_price(
+    bond: BondStatic,
+    curve: Any,
+    *,
+    side: str,
+    calendar: object | None = None,
+    cfg: Config | None = None,
+) -> tuple[float, float, float, float]:
+    """执行价契约（R26/R27 唯一入口）。
+
+    Returns
+    -------
+    (clean_exec, clean_mid, spread_bp, spread_cost_per_100_face)
+        ``clean_*`` 元/百元面值；``spread_bp`` 为**双边**收益率价差；
+        ``spread_cost_per_100_face`` 为单边价差成本（元/百元面值）。
+    """
+    config = _resolve_config(cfg)
+    spread_bp = spread_bp_for(_tenor_label(bond), config)
+    clean_exec, clean_mid, spread_cost = _clean_price(
+        bond, curve, calendar=calendar, cfg=config, side=side, spread_bp=spread_bp
+    )
+    return clean_exec, clean_mid, spread_bp, spread_cost
+
+
+def _clean_price(
+    bond: BondStatic,
+    curve: Any,
+    *,
+    calendar: object | None,
+    cfg: Config,
+    side: str = "buy",
+    spread_bp: float = 0.0,
+) -> tuple[float, float, float]:
+    """执行净价 / 中间净价 / 单边价差成本（元）。
+
+    价格在**结算日**（观察日 T+N，CN_IB 日历）计算，收益率取老化后的剩余期限；
+    半价差以收益率 bp 调整执行收益率（买入价更低、卖出价更高）。
+    """
+    settlement = settlement_for(calendar, curve.as_of, cfg=cfg)
+    remaining = remaining_years(bond, settlement)
     if remaining <= 0.0:
         raise ValueError(f"{bond.code}: 剩余期限非正（{remaining}），不能报价")
-    ytm = float(curve.rate(remaining))
-    dirty = dirty_price_from_ytm(bond, curve.as_of, ytm, cfg=cfg)
-    return dirty - accrued_interest(bond, curve.as_of, cfg=cfg)
+    ytm_mid = float(curve.rate(remaining))
+    half_bp = float(spread_bp) / 2.0
+    if half_bp < 0:
+        raise ValueError(f"spread_bp 不能为负，实际 {spread_bp!r}")
+    # 1bp = 0.01 个百分点；买入收益率上浮 → 价格下降（付半价差）
+    ytm_exec = ytm_mid - half_bp * 0.01 if side == "buy" else ytm_mid + half_bp * 0.01
+    ai = accrued_interest(bond, settlement, cfg=cfg)
+    clean_mid = dirty_price_from_ytm(bond, settlement, ytm_mid, cfg=cfg) - ai
+    clean_exec = dirty_price_from_ytm(bond, settlement, ytm_exec, cfg=cfg) - ai
+    spread_cost = abs(clean_exec - clean_mid)  # 元/百元面值
+    return clean_exec, clean_mid, spread_cost
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +174,7 @@ def krd_matrix(
     curve: Any,
     *,
     key_tenors: Sequence[float] | None = None,
+    calendar: object | None = None,
     cfg: Config | None = None,
 ) -> np.ndarray:
     """KRD 矩阵，shape ``(n_buckets, n_bonds)``，单位 **元/bp per 100 元面值**。
@@ -120,7 +185,7 @@ def krd_matrix(
     config = _resolve_config(cfg)
     tenors = _resolve_key_tenors(key_tenors, config)
     bond_list = _validate_bonds(bonds)
-    spot, settlement = _spot_and_settlement(curve, config)
+    spot, settlement = _spot_and_settlement(curve, config, calendar)
 
     matrix = np.zeros((len(tenors), len(bond_list)), dtype=float)
     for column, bond in enumerate(bond_list):
@@ -178,6 +243,7 @@ def solve_faces(
     curve: Any,
     *,
     max_face_per_bond: float | None = None,
+    calendar: object | None = None,
     cfg: Config | None = None,
 ) -> FaceSolution:
     """把目标 KRD 向量解成各券面值（有界最小二乘、面值非负、按最小成交单位取整）。
@@ -217,6 +283,13 @@ def solve_faces(
         upper_face = float(max_face_per_bond)
         if not math.isfinite(upper_face) or upper_face < 0:
             raise ValueError(f"max_face_per_bond 必须为非负有限数，实际 {max_face_per_bond!r}")
+        # R29：上限必须先映射到可交易的整手面值集合，否则会出现 2.6M 这种非整手解
+        upper_face = math.floor(upper_face / lot) * lot
+        if upper_face < lot:
+            raise ValueError(
+                f"max_face_per_bond={max_face_per_bond!r} 小于一个整手 {lot:g} 元，无可行解"
+            )
+        notes.append(f"单券面值上限映射到整手：{upper_face:g} 元（原始 {max_face_per_bond!r}）")
     upper_units = upper_face / 100.0
 
     # 拟合行 = 目标 KRD 的桶（策略输出的目标向量）；target 为空时才用默认桶。
@@ -229,7 +302,7 @@ def solve_faces(
         raise ValueError(
             f"target.krd 至少需要 2 个期限桶（key_rate_durations 契约），实际 {tenors}"
         )
-    matrix = krd_matrix(bond_list, curve, key_tenors=tenors, cfg=config)
+    matrix = krd_matrix(bond_list, curve, key_tenors=tenors, calendar=calendar, cfg=config)
     target_vector = np.array(
         [float(target.krd.get(float(tenor), 0.0)) for tenor in tenors], dtype=float
     )
@@ -302,7 +375,11 @@ def solve_faces(
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Order:
-    """一笔调仓订单（面值元；价格元/百元面值）。"""
+    """一笔调仓订单（面值元；价格元/百元面值）。
+
+    ``clean_price`` 是**执行净价**（已含半价差）；``mid_clean_price`` 是曲线中间价；
+    ``spread_cost`` 是该笔交易的**单边价差成本（元）**，用于成本分解。
+    """
 
     bond: BondStatic
     side: Literal["buy", "sell"]
@@ -310,6 +387,20 @@ class Order:
     clean_price: float
     target_face: float
     current_face: float
+    mid_clean_price: float = 0.0
+    spread_bp: float = 0.0
+    spread_cost: float = 0.0
+
+
+_CODE_TENOR = re.compile(r"SYN-(?P<tenor>\d+(?:\.\d+)?)Y-")
+
+
+def _tenor_label(bond: BondStatic) -> float:
+    """券的期限标签（用于价差分类；优先从 code 解析）。"""
+    match = _CODE_TENOR.search(bond.code)
+    if match:
+        return float(match.group("tenor"))
+    return day_count(bond.issue_date, bond.maturity_date) / 365.25
 
 
 def _normalise_positions(
@@ -338,9 +429,15 @@ def build_orders(
     bonds: Sequence[BondStatic],
     curve: Any,
     *,
+    min_trade_face: float | None = None,
+    calendar: object | None = None,
     cfg: Config | None = None,
 ) -> tuple[Order, ...]:
-    """对比目标面值与当前持仓，生成订单（跳过 < ``min_trade_lot`` 的碎单）。
+    """对比目标面值与当前持仓，生成订单（跳过小于成交阈值的碎单）。
+
+    ``min_trade_face`` 默认 ``min_trade_lot``；引擎传 ``rebalance_band_lots × lot``
+    作为调仓死区（抑制"债券老化/整手取整"造成的日常抖单）。
+
 
     Parameters
     ----------
@@ -367,8 +464,12 @@ def build_orders(
     """
     config = _resolve_config(cfg)
     lot = float(config.constraints.min_trade_lot)
+    threshold = float(min_trade_face) if min_trade_face is not None else lot
+    if not math.isfinite(threshold) or threshold <= 0:
+        raise ValueError(f"min_trade_face 必须为正的有限数，实际 {min_trade_face!r}")
+    threshold = max(threshold, lot)
     bond_list = _validate_bonds(bonds)
-    solution = solve_faces(target, bond_list, curve, cfg=config)
+    solution = solve_faces(target, bond_list, curve, calendar=calendar, cfg=config)
     current_bonds, current_faces = _normalise_positions(snapshot_positions)
 
     universe_codes = [bond.code for bond in bond_list]
@@ -379,7 +480,7 @@ def build_orders(
         target_face = float(solution.get(bond.code, 0.0))
         current_face = float(current_faces.get(bond.code, 0.0))
         delta = target_face - current_face
-        if abs(delta) < lot - _EPS:
+        if abs(delta) < threshold - _EPS:
             continue
         if delta < 0.0:
             if -delta > current_face + _EPS:
@@ -390,14 +491,20 @@ def build_orders(
             side: Literal["buy", "sell"] = "sell"
         else:
             side = "buy"
+        clean_exec, clean_mid, spread_bp, spread_per_100 = execution_price(
+            bond, curve, side=side, calendar=calendar, cfg=config
+        )
         orders.append(
             Order(
                 bond=bond,
                 side=side,
                 face_value=abs(delta),
-                clean_price=_clean_price(bond, curve, cfg=config),
+                clean_price=clean_exec,
                 target_face=target_face,
                 current_face=current_face,
+                mid_clean_price=clean_mid,
+                spread_bp=spread_bp,
+                spread_cost=abs(delta) / 100.0 * spread_per_100,
             )
         )
 
@@ -405,16 +512,22 @@ def build_orders(
         bond = current_bonds[code]
         current_face = float(current_faces[code])
         delta = -current_face
-        if abs(delta) < lot - _EPS:
+        if abs(delta) < threshold - _EPS:
             continue
+        clean_exec, clean_mid, spread_bp, spread_per_100 = execution_price(
+            bond, curve, side="sell", calendar=calendar, cfg=config
+        )
         orders.append(
             Order(
                 bond=bond,
                 side="sell",
                 face_value=abs(delta),
-                clean_price=_clean_price(bond, curve, cfg=config),
+                clean_price=clean_exec,
                 target_face=0.0,
                 current_face=current_face,
+                mid_clean_price=clean_mid,
+                spread_bp=spread_bp,
+                spread_cost=abs(delta) / 100.0 * spread_per_100,
             )
         )
     return tuple(orders)

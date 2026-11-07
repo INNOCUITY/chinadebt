@@ -215,6 +215,8 @@ class ConstraintsConfig(_Model):
     min_cash_fraction: float = -0.20
     # 最小成交面值（元）：低于该值不做调仓，避免碎单
     min_trade_lot: float = 1_000_000.0
+    # 调仓死区（单位 lot）：|Δface| 小于该值不交易，抑制"老化/取整"造成的日常抖单
+    rebalance_band_lots: float = 2.0
     # 允许的日换手率上限（成交面值 / NAV），超过则报警
     max_daily_turnover: float = 2.0
 

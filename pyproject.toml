@@ -49,7 +49,7 @@ testpaths = ["tests"]
 # `-p no:debugging`：pytest 的 debugging 插件会 import pdb/readline，在部分环境
 # （如本机 anaconda 的 readline 扩展）会导致段错误。禁用后不影响任何测试逻辑，
 # 只是不提供 --pdb/--trace 交互调试；需要调试时用 `pytest --pdb -p debugging`。
-addopts = ["-q", "--strict-markers", "-m", "not network", "-p", "no:debugging"]
+addopts = ["-q", "--strict-markers", "-m", "not network", "-p", "no:debugging", "-p", "no:capture"]
 markers = [
     "slow: 慢速测试（全样本回测、敏感性网格）",
     "network: 需要联网的测试",

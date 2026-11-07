@@ -300,8 +300,8 @@ class SpotCurve:
     observation_date : date | None
         观察日（曲线估值日），默认等于 ``as_of``。
     settlement_date : date | None
-        结算日（现金流/贴现起点，T+N **工作日**），默认等于 ``observation_date``；
-        必须是工作日且 ≥ ``observation_date``。
+        结算日（现金流/贴现起点，T+N 交易日），默认等于 ``observation_date``；
+        必须 ≥ ``observation_date``，且是 ``calendar`` 的交易日（未传日历时按工作日规则）。
     zero_rates_pct : np.ndarray
         连续复利零息利率，**百分数**（``2.35`` 表示 2.35%）；与 ``times`` 等长。
     method : str
@@ -325,6 +325,8 @@ class SpotCurve:
     source_curve_method: str = ""
     observation_date: date | None = None
     settlement_date: date | None = None
+    # R27：真实 CN_IB 日历；存在时用它校验 settlement（调休周六也是交易日）
+    calendar: Any = None
 
     def __post_init__(self) -> None:
         as_of = self.as_of
@@ -366,7 +368,16 @@ class SpotCurve:
             raise ValueError(
                 f"settlement_date({settlement_date}) 不能早于 observation_date({observation_date})"
             )
-        if not is_business_day(settlement_date):
+        calendar = self.calendar
+        if calendar is not None:
+            if not hasattr(calendar, "is_trading_day"):
+                raise TypeError("calendar 必须提供 is_trading_day(d)")
+            if not calendar.is_trading_day(settlement_date):
+                raise ValueError(
+                    f"settlement_date({settlement_date}) 不是 CN_IB 交易日；"
+                    "结算日必须按传入的 TradingCalendar 推算"
+                )
+        elif not is_business_day(settlement_date):
             raise ValueError(
                 f"settlement_date({settlement_date}) 不是工作日；结算日必须按工作日规则推算"
                 "（见 ficc.utils.calendar）"
@@ -447,6 +458,7 @@ def bootstrap_spot(
     curve: Curve,
     *,
     settlement: date | None = None,
+    calendar: object | None = None,
     freq_rule: Mapping[str, int] | None = None,
 ) -> SpotCurve:
     """从 YTM 曲线 bootstrap 合成即期（零息）曲线。
@@ -467,10 +479,13 @@ def bootstrap_spot(
     curve : Curve
         源曲线（通常为 ``ficc.curve.fit_curve`` 的产物）；用其 ``tenors``/``rates``。
     settlement : date | None
-        结算日（现金流/贴现起点）。``None`` 时按
-        ``ficc.utils.calendar.settlement_date(curve.as_of, cfg.pricing.settlement_lag_days)``
-        推算（当前 T+1，**工作日**口径；2024-06-28 周五 → 2024-07-01 周一）。
-        显式传入时必须 ≥ ``curve.as_of`` 且为工作日，否则抛 ``ValueError``。
+        结算日（现金流/贴现起点）。``None`` 时：传了 ``calendar`` 就按真实
+        CN_IB 日历推算（含调休工作日，如 2019-02-02 周六是交易日）；未传
+        ``calendar`` 时退回简单工作日规则（2024-06-28 周五 → 2024-07-01 周一）。
+        显式传入时必须 ≥ ``curve.as_of`` 且是**该日历的交易日**，否则抛 ``ValueError``。
+    calendar : object | None
+        ``TradingCalendar``（或同接口对象）；用于结算日推算与校验。R27：调用方
+        必须显式传入，避免"曲线层 10-01、账本 10-08"的日期契约割裂。
     freq_rule : Mapping[str, int] | None
         付息频率覆盖（键支持 ``"10Y"/"10.0"/10`` 等）；``None`` 用默认中债规则：
         ``<1Y`` 零息、``1Y–7Y`` 年付、``≥10Y`` 半年付。
@@ -527,9 +542,15 @@ def bootstrap_spot(
     cfg = get_config()
     lag = int(cfg.pricing.settlement_lag_days)
     observation = curve.as_of
+    if calendar is not None and not hasattr(calendar, "settlement_date"):
+        raise TypeError("calendar 必须提供 settlement_date(as_of, lag) 与 is_trading_day(d)")
     if settlement is None:
-        resolved_settlement = _calendar_settlement_date(observation, lag)
-        settlement_source = "config"
+        if calendar is not None:
+            resolved_settlement = calendar.settlement_date(observation, lag)  # type: ignore[attr-defined]
+            settlement_source = "calendar"
+        else:
+            resolved_settlement = _calendar_settlement_date(observation, lag)
+            settlement_source = "config"
     else:
         resolved_settlement = settlement
         if isinstance(resolved_settlement, datetime):
@@ -541,7 +562,13 @@ def bootstrap_spot(
         raise ValueError(
             f"settlement({resolved_settlement}) 不能早于 observation date({observation})"
         )
-    if not is_business_day(resolved_settlement):
+    if calendar is not None:
+        if not calendar.is_trading_day(resolved_settlement):  # type: ignore[attr-defined]
+            raise ValueError(
+                f"settlement({resolved_settlement}) 不是 CN_IB 交易日；"
+                "结算日必须按传入的 TradingCalendar 推算"
+            )
+    elif not is_business_day(resolved_settlement):
         raise ValueError(
             f"settlement({resolved_settlement}) 不是工作日；结算日必须按工作日规则推算"
             "（2024-06-28 周五的 T+1 是 2024-07-01 周一，不是 06-29 周六）"
@@ -644,6 +671,7 @@ def bootstrap_spot(
         source_curve_method=str(curve.method),
         observation_date=observation,
         settlement_date=settlement,
+        calendar=calendar,
     )
 
 

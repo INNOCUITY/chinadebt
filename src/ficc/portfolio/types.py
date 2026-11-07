@@ -61,6 +61,9 @@ class BenchmarkPortfolio:
     duration: float
     krd: Mapping[float, float]
     weights: Mapping[float, float] = field(default_factory=dict)
+    # 买入持有基准的**固定面值**（起点确定后不再重配，R22）；每日只做 mark-to-market
+    faces: Mapping[str, float] = field(default_factory=dict)
+    notional: float = 0.0
 
     @property
     def codes(self) -> tuple[str, ...]:

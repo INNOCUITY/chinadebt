@@ -3,7 +3,7 @@
 设计原则（评审 R14 / Phase 2）
 ------------------------------
 对账必须走**独立于账本的实现路径**。只验证"各项相加 = total"是用恒等式自证，
-不能证明归因正确；因此本模块的六项检查都从原始事件/快照**重新计算**：
+不能证明归因正确；因此本模块的七项检查都从原始事件/快照**重新计算**：
 
 1. :func:`check_cash_identity`：``cash_begin + Σ(事件金额) == cash_end``，
    按事件重算（不复用账本累计值），失败时列出差额附近/金额最大的事件；
@@ -20,12 +20,24 @@
 5. :func:`check_full_price_identity`：``dirty_price == clean_price + accrued_interest``；
 6. :func:`check_attribution_closure`：``Σ attribution.components − ledger_pnl``
    的**残差单独报告**（不吸收进任何分项），残差必须 < 容差；人为改动任一分项
-   都应使检查失败（篡改检测，证明不是自证）。
+   都应使检查失败（篡改检测，证明不是自证）。**未提供 attribution 时不静默
+   跳过**：:func:`reconcile_all` 仍输出一条 ``executed=False`` 的记录（R30）；
+7. :func:`check_coupon_entitlement`：**独立重建**每只券的付息日集合与
+   "付息日日初已结算面值"（用成交/结算日重算），计算每期应付票息与应付日
+   （非交易日顺延到下一交易日），再与 cashflows 中 ``kind=="coupon"`` 的事件
+   逐笔比较金额与日期（R24/R30）。不 import 账本内部函数、不复用账本事件。
+
+检查的"是否执行"与"是否通过"分离：:class:`CheckResult.executed` 为 ``False``
+表示**未执行（not run）**，例如未提供 attribution 输入或未提供债券条款；
+:attr:`ReconciliationReport.passed` 只统计已执行的检查，避免把"未执行"当成
+"通过"或把可选检查缺失当成失败。
 
 数据契约（只消费纯数据，不 import Ledger）
 ------------------------------------------
 - ``trades``: ``trade_id, bond_code, side, face_value, clean_price,
-  signal_date, trade_date, settlement_date, fee``
+  signal_date, trade_date, settlement_date, fee``；票息权益校验额外需要债券条款
+  ``coupon_pct, freq, issue_date, maturity_date``（可选 ``accrual``，缺省按
+  ``coupon`` 处理）。缺少条款列时第 7 项标记为 ``executed=False``。
 - ``cashflows``: ``date, kind, amount, bond_code, trade_id, note``
   （``kind`` ∈ initial/trade_buy/trade_sell/coupon/principal/fee/funding/
   deposit/withdrawal/external；后四类视为外部现金流）
@@ -39,7 +51,7 @@
 
 容差与边界
 ----------
-六项检查默认容差均为 **1e-6（元）**；判定统一为 ``误差 <= 容差`` 通过
+七项检查默认容差均为 **1e-6（元）**；判定统一为 ``误差 <= 容差`` 通过
 （恰好等于容差通过，略超失败）。可通过各函数的 ``tolerance=`` 覆盖。
 
 单位：金额为元，面值为元，价格为"每 100 元面值"的价格，误差单位为元/价格点
@@ -48,7 +60,9 @@
 
 from __future__ import annotations
 
+import calendar as _stdlib_calendar
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -69,6 +83,7 @@ __all__ = [
     "ReconciliationReport",
     "check_attribution_closure",
     "check_cash_identity",
+    "check_coupon_entitlement",
     "check_full_price_identity",
     "check_nav_identity",
     "check_pnl_identity",
@@ -124,6 +139,14 @@ class CheckResult:
 
     ``max_abs_error`` 为该检查的独立重算误差；``tolerance`` 为判定阈值；
     判定规则固定为 ``max_abs_error <= tolerance``（容差边界含等号）。
+
+    ``executed`` 区分"是否执行"与"是否通过"（R30）：
+
+    - ``executed=True``（默认）：检查已执行，``passed`` 有意义；
+    - ``executed=False``：检查**未执行（not run）**，例如 ``reconcile_all``
+      未收到 ``attribution`` 输入、或 trades 缺少债券条款列；此时 ``passed``
+      固定为 ``False`` 但**不计入** :attr:`ReconciliationReport.passed`，
+      ``detail`` 必须写明未执行原因，不允许静默少一行。
     """
 
     name: str
@@ -131,25 +154,32 @@ class CheckResult:
     detail: str
     max_abs_error: float | None = None
     tolerance: float | None = None
+    executed: bool = True
 
 
 @dataclass(frozen=True)
 class ReconciliationReport:
-    """六项（或五项 + 归因）对账结果集合。"""
+    """七项对账结果集合（含未执行项）。"""
 
     checks: tuple[CheckResult, ...]
 
     @property
     def passed(self) -> bool:
-        """所有检查均通过才为 True。"""
-        return all(check.passed for check in self.checks)
+        """**已执行**的检查全部通过才为 True（未执行项不参与判定）。"""
+        return all(check.passed for check in self.checks if check.executed)
+
+    @property
+    def executed_count(self) -> int:
+        """已执行的检查数量。"""
+        return sum(1 for check in self.checks if check.executed)
 
     def to_frame(self) -> pd.DataFrame:
-        """转为明细表（含 name/passed/max_abs_error/tolerance/detail）。"""
+        """转为明细表（含 name/executed/passed/max_abs_error/tolerance/detail）。"""
         return pd.DataFrame(
             [
                 {
                     "name": check.name,
+                    "executed": bool(check.executed),
                     "passed": bool(check.passed),
                     "max_abs_error": check.max_abs_error,
                     "tolerance": check.tolerance,
@@ -160,11 +190,11 @@ class ReconciliationReport:
         )
 
     def raise_if_failed(self) -> None:
-        """任一项失败则抛出 ``ValueError``（附失败项与详情）。"""
-        failed = [check for check in self.checks if not check.passed]
+        """任一**已执行**检查失败则抛出 ``ValueError``（附失败项与详情）。"""
+        failed = [check for check in self.checks if check.executed and not check.passed]
         if not failed:
             return
-        lines = [f"对账失败（{len(failed)}/{len(self.checks)} 项）:"]
+        lines = [f"对账失败（{len(failed)}/{self.executed_count} 项已执行检查）:"]
         lines.extend(f"- {check.name}: {check.detail}" for check in failed)
         raise ValueError("\n".join(lines))
 
@@ -938,6 +968,328 @@ def check_attribution_closure(
 
 
 # ---------------------------------------------------------------------------
+# 7. 独立票息权益校验（R24 / R30）
+# ---------------------------------------------------------------------------
+# 债券条款列：第 7 项需要这些列独立重建付息日；缺失时标记 executed=False。
+COUPON_TERM_COLUMNS: tuple[str, ...] = ("coupon_pct", "freq", "issue_date", "maturity_date")
+COUPON_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "bond_code",
+    "side",
+    "face_value",
+    "settlement_date",
+)
+
+
+def _local_coupon_schedule(
+    issue: date, maturity: date, freq: int, accrual: str
+) -> tuple[date, ...]:
+    """**独立**重建付息日序列（不 import 账本/定价层的实现）。
+
+    规则与项目合成券契约一致：规则附息按 ``freq``（1/2）从起息日按月推进，
+    起息日在月末时后续付息日锚定目标月末；非规则附息券只有 ``[起息日, 到期日]``
+    （唯一现金流在到期日）。
+    """
+    if accrual != "coupon":
+        return (issue, maturity)
+    if int(freq) not in (1, 2):
+        raise ValueError(f"不支持的付息频率 freq={freq}（仅支持 1/2）")
+    step = 12 // int(freq)
+    end_of_month = issue.day == _stdlib_calendar.monthrange(issue.year, issue.month)[1]
+    dates: list[date] = [issue]
+    index = 1
+    while True:
+        months = step * index
+        year = issue.year + (issue.month - 1 + months) // 12
+        month = (issue.month - 1 + months) % 12 + 1
+        last_day = _stdlib_calendar.monthrange(year, month)[1]
+        day = last_day if end_of_month else min(issue.day, last_day)
+        nxt = date(year, month, day)
+        if nxt >= maturity:
+            break
+        dates.append(nxt)
+        index += 1
+    if dates[-1] != maturity:
+        dates.append(maturity)
+    return tuple(dates)
+
+
+def _local_complete_years(issue: date, maturity: date) -> int:
+    """利随本清券到期日的整年数 = 不晚于到期日的周年个数（独立实现）。
+
+    例：起息 2020-04-01、到期 2027-04-01 → 7；到期日不在周年日时只计满整年
+    （如 2027-05-01 → 7），不会把不足一年的区间凑成整年。
+    """
+    end_of_month = issue.day == _stdlib_calendar.monthrange(issue.year, issue.month)[1]
+    years = 0
+    while True:
+        year = issue.year + years + 1
+        last_day = _stdlib_calendar.monthrange(year, issue.month)[1]
+        day = last_day if end_of_month else min(issue.day, last_day)
+        if date(year, issue.month, day) > maturity:
+            return years
+        years += 1
+
+
+def _coupon_amount_from_terms(
+    coupon_pct: float,
+    face: float,
+    freq: int,
+    accrual: str,
+    is_maturity: bool,
+    *,
+    issue: date,
+    maturity: date,
+) -> float:
+    """按条款重算一期票息金额（元）；独立于账本 ``_coupon_amount``。"""
+    annual = coupon_pct / 100.0 * face
+    if accrual == "coupon":
+        return annual / float(freq)
+    if accrual == "lump_sum" and is_maturity:
+        return annual * float(_local_complete_years(issue, maturity))
+    return 0.0
+
+
+def _coupon_pay_date(coupon_date: date, calendar: Any) -> date:
+    """票息应付日：交易日当日到账；非交易日顺延到下一交易日（与账本契约一致）。"""
+    if calendar.is_trading_day(coupon_date):
+        return coupon_date
+    return calendar.next_trading_day(coupon_date, 1)
+
+
+def check_coupon_entitlement(
+    trades: pd.DataFrame,
+    cashflows: pd.DataFrame,
+    calendar: Any = None,
+    *,
+    tolerance: float | None = None,
+) -> CheckResult:
+    """独立重建票息登记权益并与 ``cashflows`` 的 coupon 事件逐笔比对。
+
+    权益口径（与账本契约一致，但**独立实现**）：
+
+    - 归属 = **付息日日初的已结算面值**：用成交日期/结算日期从 ``trades``
+      重算（买入在结算日增加、卖出在结算日减少），结算日 ≤ 付息日前一自然日
+      的持仓享息；付息日当天成交或结算的买方不享本期票息；
+    - 金额 = 规则附息 ``coupon_pct/100 × face / freq``；利随本清券只在到期日
+      支付累计票息；贴现券无票息；
+    - 应付日 = 付息日为交易日则当日，否则**顺延到下一交易日**；
+    - 与 ``cashflows`` 中 ``kind=="coupon"`` 事件按（券、应付日）逐笔比较金额。
+
+    输入不足时明确标记未执行，不静默通过：
+
+    - ``trades`` 为空 → 通过（``detail`` 说明"无票息事件"）；
+    - 缺债券条款列 ``coupon_pct/freq/issue_date/maturity_date`` → ``executed=False``；
+    - 未提供 ``calendar``（无法核对顺延日）→ ``executed=False``。
+
+    Parameters
+    ----------
+    trades : pandas.DataFrame
+        成交明细，至少含 ``bond_code/side/face_value/settlement_date`` 与债券条款列。
+    cashflows : pandas.DataFrame
+        现金流事件（``date/kind/amount``，``kind=="coupon"`` 为票息）。
+    calendar : TradingCalendar | None
+        实测交易日历；用于判定付息日与顺延应付日。
+    tolerance : float | None
+        金额容差，默认 1e-6 元。
+
+    Returns
+    -------
+    CheckResult
+        ``name="coupon_entitlement"``；失败时 ``detail`` 列出券、付息日、期望、实际。
+    """
+    tol = CASH_TOLERANCE if tolerance is None else float(tolerance)
+    name = "coupon_entitlement"
+    events = _normalise_cashflows(cashflows)
+    coupon_events = events[events["kind"] == "coupon"].copy()
+    frame = _require_frame(trades, "trades", COUPON_REQUIRED_COLUMNS)
+    if frame.empty:
+        return CheckResult(
+            name=name,
+            passed=True,
+            detail="无交易，无票息事件可校验",
+            max_abs_error=0.0,
+            tolerance=tol,
+        )
+    missing_terms = [column for column in COUPON_TERM_COLUMNS if column not in frame.columns]
+    if missing_terms:
+        return CheckResult(
+            name=name,
+            passed=False,
+            detail=(
+                f"trades 缺少债券条款列 {missing_terms}，无法独立重建付息日/权益；"
+                "第 7 项未执行（not run）"
+            ),
+            max_abs_error=None,
+            tolerance=tol,
+            executed=False,
+        )
+    if calendar is None:
+        return CheckResult(
+            name=name,
+            passed=False,
+            detail="未提供交易日历 calendar，无法核对非交易日顺延应付日；第 7 项未执行（not run）",
+            max_abs_error=None,
+            tolerance=tol,
+            executed=False,
+        )
+
+    work = frame.copy()
+    work["bond_code"] = work["bond_code"].astype(str)
+    work["side"] = work["side"].astype(str).str.strip().str.lower()
+    unknown_sides = sorted(set(work["side"]) - {"buy", "sell"})
+    if unknown_sides:
+        raise ValueError(f"trades.side 只能是 buy/sell，实际含 {unknown_sides}")
+    work["face_value"] = pd.to_numeric(work["face_value"], errors="raise").astype(float)
+    work["settlement_date"] = pd.to_datetime(work["settlement_date"], errors="raise")
+    for column in ("issue_date", "maturity_date"):
+        work[column] = pd.to_datetime(work[column], errors="raise")
+    work["coupon_pct"] = pd.to_numeric(work["coupon_pct"], errors="raise").astype(float)
+    work["freq"] = pd.to_numeric(work["freq"], errors="raise").astype(int)
+    work["accrual"] = (
+        work["accrual"].astype(str).str.strip().str.lower()
+        if "accrual" in work.columns
+        else "coupon"
+    )
+
+    # 每只券的条款（同 code 必须一致）与按结算日的已结算面值变动
+    terms: dict[str, dict[str, Any]] = {}
+    settlements: dict[str, list[tuple[date, float]]] = {}
+    violations: list[str] = []
+    for row in work.itertuples(index=False):
+        code = str(row.bond_code)
+        term = {
+            "coupon_pct": float(row.coupon_pct),
+            "freq": int(row.freq),
+            "issue": row.issue_date.date(),
+            "maturity": row.maturity_date.date(),
+            "accrual": str(row.accrual),
+        }
+        locked = terms.get(code)
+        if locked is None:
+            terms[code] = term
+        elif locked != term:
+            violations.append(f"{code} 条款不一致：{locked} vs {term}")
+        settle = row.settlement_date.date()
+        delta = float(row.face_value) if str(row.side) == "buy" else -float(row.face_value)
+        settlements.setdefault(code, []).append((settle, delta))
+    for code in settlements:
+        settlements[code].sort(key=lambda item: item[0])
+
+    def _settled_face_before(code: str, day: date) -> float:
+        """付息日（/到期日）日初的已结算面值：只累加结算日严格早于该日的成交。"""
+        total = 0.0
+        for settle, delta in settlements.get(code, ()):
+            if settle >= day:
+                break
+            total += delta
+        return total
+
+    window_start: date
+    window_end: date
+    if len(events):
+        window_start = events["date"].min().date()
+        window_end = events["date"].max().date()
+    else:
+        window_start = min(settle for items in settlements.values() for settle, _ in items)
+        window_end = max(settle for items in settlements.values() for settle, _ in items)
+
+    expected: dict[tuple[str, date], float] = {}
+    skipped_beyond_window = 0
+    for code, term in terms.items():
+        if term["accrual"] == "discount":
+            continue  # 贴现券无票息事件
+        if term["accrual"] not in ("coupon", "lump_sum"):
+            violations.append(f"{code} 未知计息方式 accrual={term['accrual']!r}")
+            continue
+        schedule = _local_coupon_schedule(
+            term["issue"], term["maturity"], term["freq"], term["accrual"]
+        )
+        for coupon_date in schedule[1:]:  # 起息日不是付息日
+            if not (window_start <= coupon_date <= window_end):
+                continue
+            face = _settled_face_before(code, coupon_date)
+            if face <= 1e-9:
+                continue
+            is_maturity = coupon_date == term["maturity"]
+            amount = _coupon_amount_from_terms(
+                term["coupon_pct"],
+                face,
+                term["freq"],
+                term["accrual"],
+                is_maturity,
+                issue=term["issue"],
+                maturity=term["maturity"],
+            )
+            if amount <= 0.0:
+                continue
+            try:
+                pay_date = _coupon_pay_date(coupon_date, calendar)
+            except ValueError:
+                # 日历无法给出顺延应付日（通常已超出日历/窗口末尾）：
+                # 账本尚未支付（应收挂账），本期不进入比对，明确计入 detail。
+                skipped_beyond_window += 1
+                continue
+            if pay_date > window_end:
+                # 应付日落在对账窗口之后：账本尚未产生现金事件，本期不比对。
+                skipped_beyond_window += 1
+                continue
+            expected[(code, pay_date)] = amount + expected.get((code, pay_date), 0.0)
+
+    actual: dict[tuple[str, date], float] = {}
+    for row in coupon_events.itertuples(index=False):
+        code = str(row.bond_code) if pd.notna(row.bond_code) else ""
+        actual[(code, row.date.date())] = float(row.amount) + actual.get(
+            (code, row.date.date()), 0.0
+        )
+
+    errors: list[float] = []
+    for key in sorted(set(expected) | set(actual), key=lambda item: (item[0], item[1])):
+        want = expected.get(key, 0.0)
+        got = actual.get(key, 0.0)
+        error = abs(got - want)
+        errors.append(error)
+        if error <= tol:
+            continue
+        if key not in actual:
+            violations.append(
+                f"{key[0]} 付息日(应付日) {key[1]} 期望 {want:.6f} 实际 0（缺 coupon 事件）"
+            )
+        elif key not in expected:
+            violations.append(
+                f"{key[0]} 应付日 {key[1]} 期望 0（无权益）实际 {got:.6f}（多出 coupon 事件）"
+            )
+        else:
+            violations.append(
+                f"{key[0]} 付息日(应付日) {key[1]} 期望 {want:.6f} 实际 {got:.6f} "
+                f"差 {got - want:+.6f}"
+            )
+
+    max_error = max(errors, default=0.0)
+    passed = not violations and max_error <= tol
+    lines = [
+        "独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）："
+        f"{len(terms)} 只券、{len(expected)} 笔应付票息，cashflows 实际 coupon 事件 "
+        f"{len(coupon_events)} 笔；最大金额误差={max_error:.6f}；容差={tol:g}"
+    ]
+    if not expected and coupon_events.empty:
+        lines.append("无票息事件（窗口内无应付票息，cashflows 也无 coupon 事件）")
+    if skipped_beyond_window:
+        lines.append(
+            f"另有 {skipped_beyond_window} 笔应付日超出对账窗口/日历范围，未纳入比对"
+            "（账本尚未支付，属应收挂账）"
+        )
+    if violations:
+        lines.append(f"差异 {len(violations)} 项：" + "；".join(violations[:5]))
+    return CheckResult(
+        name=name,
+        passed=bool(passed),
+        detail="；".join(lines),
+        max_abs_error=max_error,
+        tolerance=tol,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 def _snapshot_positions(snapshots: pd.DataFrame, *, first: bool) -> pd.DataFrame:
@@ -969,19 +1321,27 @@ def reconcile_all(
     tolerance: float | None = None,
     calendar: Any = None,
 ) -> ReconciliationReport:
-    """执行完整对账（独立重算；残差单独报告）。
+    """执行完整对账（独立重算；残差单独报告；未执行项显式标记）。
 
     与账本的对接约定：只消费 ``trades_frame()`` / ``cashflows_frame()`` /
     ``snapshots_frame()`` / ``nav_series()`` 的列，不 import Ledger 类。
     现金恒等式的窗口取 ``(首个快照日, 末个快照日]``：首日快照的 cash 已包含
     此前所有事件（含 initial 出资），因此只累加窗口内事件，避免重复计算。
 
+    检查顺序（共 7 项）：现金 / 持仓 / NAV / PnL / 全价 / 归因闭合 / 票息权益。
+    第 6 项在 ``attribution=None`` 时**不省略**，而是输出
+    ``executed=False, passed=False`` 的 not-run 记录（R30）；第 7 项在 trades
+    缺债券条款列或未提供 ``calendar`` 时同样标记 not-run。
+    :attr:`ReconciliationReport.passed` 只统计 ``executed=True`` 的检查。
+
     Parameters
     ----------
     attribution : Series/DataFrame/dict | None
-        归因分项；为 ``None`` 时不生成 attribution 检查（其余五项仍执行）。
+        归因分项；为 ``None`` 时第 6 项标记为未执行（not run），其余六项仍执行。
     external_flows : Series/DataFrame/dict | None
         显式外部现金流声明；未声明但窗口内出现 external 类事件会抛错。
+    calendar : TradingCalendar | None
+        实测交易日历；第 7 项需要它核对非交易日顺延应付日，缺失时标记 not-run。
     """
     base_tol = DEFAULT_TOLERANCE if tolerance is None else float(tolerance)
     cash = _normalise_cashflows(cashflows)
@@ -1022,7 +1382,21 @@ def reconcile_all(
         )
     )
     checks.append(check_full_price_identity(snap, tolerance=base_tol))
-    if attribution is not None:
+    if attribution is None:
+        checks.append(
+            CheckResult(
+                name="attribution_closure",
+                passed=False,
+                executed=False,
+                detail=(
+                    "未提供 attribution 输入：第六项（归因闭合）未执行（not run），"
+                    "残差未核对；ReconciliationReport.passed 不统计未执行项"
+                ),
+                max_abs_error=None,
+                tolerance=base_tol,
+            )
+        )
+    else:
         ledger_pnl = float(
             nav_series.iloc[-1]
             - nav_series.iloc[0]
@@ -1031,6 +1405,7 @@ def reconcile_all(
             )[1]
         )
         checks.append(check_attribution_closure(ledger_pnl, attribution, tolerance=base_tol))
+    checks.append(check_coupon_entitlement(trades_frame, cash, calendar, tolerance=base_tol))
     return ReconciliationReport(checks=tuple(checks))
 
 

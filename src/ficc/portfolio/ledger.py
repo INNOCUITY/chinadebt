@@ -15,12 +15,32 @@
    ``funding_rate_pct/365`` **逐自然日**计提（含周末/节假日），但融资成本在
    每次 :meth:`Ledger.process_day` 时**合并成一笔**、事件日期 = 该 ``as_of``
    （NAV 快照日），从而对账侧能把全部内部现金流映射到 NAV 日；支持零成本对照。
-4. **NAV 恒等式（trade-date 会计）**：
+4. **合成券登记权益（R24）**：经济持仓（:attr:`_faces`，成交日生效）与**已结算
+   面值**（:attr:`_settled_faces`，仅在结算日增减）分离；票息/本金归属按
+   **付息日（或到期日）日初的已结算面值**判定（详见「登记权益规则」一节），
+   因此付息日当天成交/结算的买方**不享本期票息**。
+5. **NAV 恒等式（trade-date 会计）**：
    ``nav == cash + Σ(face/100 × dirty) + pending_cash``。成交在 ``trade_date``
    生效（经济敞口进持仓），现金在 ``settlement_date`` 划转；未结算成交的应付/应收
    以 ``pending_cash``（买入为负、卖出为正）计入 NAV，避免未结算期间把未付买入款
    双计一次。导出 :meth:`Ledger.snapshots_frame` 时按快照行**独立重算一次**并校验。
-5. **可复现**：不依赖当前时间/随机数；同一组成交、曲线、参数逐位可复现。
+6. **可复现**：不依赖当前时间/随机数；同一组成交、曲线、参数逐位可复现。
+
+登记权益规则（合成券，必须明示）
+--------------------------------
+- **归属判定日**：票息归属付息日、本金归属到期日的**日初**已结算面值
+  （``entitlement = _settled_faces`` 的快照）；实现见
+  :meth:`Ledger._process_calendar_day`。
+- **享息条件**：结算日 ≤ 付息日前一自然日 的持仓享本期票息/本金。付息日
+  （或到期日）当天**成交或结算**的买方**不享本期票息/本金**——经济风险已随成交
+  转移，但登记权益尚未转移。
+- **付息日当天卖出**：卖方在付息日日初仍登记在册，仍享本期票息；买方通过全价中
+  的应计利息（付息日当天 AI 从 0 重新累积）补偿，这是债券市场惯例。
+- **非交易日付息**：归属仍按**付息日（日历日）日初**的已结算面值判定，**支付**
+  顺延到下一交易日（:meth:`Ledger._pay_or_defer`）；顺延只影响现金到账日，
+  不改变归属日与金额。
+- 该规则是**本项目的合成券简化契约**，不代表逐券真实登记结算规则；真实债券的
+  登记日/除息日以中债/托管机构公告为准。
 
 会计口径（必须明示）
 --------------------
@@ -28,15 +48,20 @@
 - ``pending_cash`` 是**未结算成交在结算日将划转的带符号金额**：买入为负（未来
   付现）、卖出为正（未来收现），按 ``clean_price + accrued_interest(bond,
   settlement_date)`` 全价 × ``face/100`` 计算。
+- ``face_value``（快照/持仓）是**经济持仓面值**（成交日生效）；``settled_face``
+  是**已结算/登记面值**（结算日生效）。两者在未结算期间不同：买入成交日经济
+  面值已增加、登记面值尚未增加；卖出成交日经济面值已减少、登记面值尚未减少。
 - NAV（trade-date 会计）= ``cash + ΣMV + pending_cash``：成交日只反映价格变动，
   结算日 ``cash`` 变动、``pending_cash`` 归零，NAV 连续。旧版
   ``nav = cash + ΣMV`` 会在未结算期间把未付买入款双计，已由 C-013 修正。
 - 手续费：``fee_bp`` 按**净价成交金额**（``face/100 × clean_price``）计，
   结算费按笔 + ``TradeRecord.fee`` 叠加，写 ``fee`` 事件（结算日）。
-- 融资：每个**自然日**日终对负现金计提（``365`` 天基数，含周末/节假日）；
-  在 :meth:`Ledger.process_day` 结束时把「上次处理日+1 → as_of」区间的利息
-  **合并为一笔** ``funding`` 事件，事件日期 = ``as_of``（交易日/NAV 快照日）。
-  事件金额仍等于逐日计息之和（与逐日入账的总成本按复利路径完全相同）。
+- 融资（R25）：FDR007 是**融资代理利率**（不是逐笔回购合同/真实成交成本）；
+  每个**自然日**日终对负现金按 ``ACT/365`` 计提（含周末/节假日），缺少当日利率时
+  取 **≤ 该日的最近已知利率**（历史 as-of 前向填充，**禁止取未来值**；早于所有
+  已知日期才回退构造时的 ``funding_rate_pct``）；利息直接计入现金，对负现金等价
+  于逐日复利。融资成本在每次 :meth:`Ledger.process_day` 时**合并为一笔**、
+  事件日期 = ``as_of``（NAV 快照日），从而对账侧能把全部内部现金流映射到 NAV 日。
 
 导出四件套（列名即对账契约）
 ----------------------------
@@ -45,8 +70,8 @@
   maturity_date, accrual, market``
 - ``cashflows_frame``：``date, kind, amount, bond_code, trade_id, note``
 - ``snapshots_frame``：``as_of, cash, pending_cash, nav, bond_code, face_value,
-  remaining_years, ytm_pct, clean_price, accrued_interest, dirty_price,
-  market_value, mod_duration, dv01, n_positions, n_pending, notes``
+  settled_face, remaining_years, ytm_pct, clean_price, accrued_interest,
+  dirty_price, market_value, mod_duration, dv01, n_positions, n_pending, notes``
   （持仓级长表；每个快照至少一行，无持仓时持仓列为 NaN）
 - ``nav_series``：``pd.Series``，index 名 ``as_of``、序列名 ``nav``
 
@@ -55,6 +80,7 @@
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -118,6 +144,7 @@ SNAPSHOTS_COLUMNS: tuple[str, ...] = (
     "nav",
     "bond_code",
     "face_value",
+    "settled_face",
     "remaining_years",
     "ytm_pct",
     "clean_price",
@@ -182,7 +209,13 @@ class CashFlowEvent:
 
 @dataclass(frozen=True)
 class PositionView:
-    """某一 ``as_of`` 的持仓估值视图（金额元，价格元/百元面值）。"""
+    """某一 ``as_of`` 的持仓估值视图（金额元，价格元/百元面值）。
+
+    ``face_value`` 是**经济持仓面值**（成交日生效）；``settled_face`` 是
+    **已结算/登记面值**（结算日生效），票息/本金归属按后者在付息日/到期日日初的
+    快照判定。未结算期间两者不同，例如买入成交日 ``face_value`` 已增加而
+    ``settled_face`` 尚未增加。
+    """
 
     bond: BondStatic
     face_value: float
@@ -194,6 +227,7 @@ class PositionView:
     market_value: float
     mod_duration: float | None
     dv01: float | None
+    settled_face: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -280,6 +314,7 @@ class Ledger:
             self._funding_rates[_check_date(day, field="funding_rate_by_date 的日期")] = float(
                 value
             )
+        self._funding_dates_sorted: list[date] | None = None  # 懒排序缓存（前向填充用）
 
         self._trades: list[TradeRecord] = []
         self._trade_ids: set[str] = set()
@@ -287,7 +322,8 @@ class Ledger:
         self._events: list[CashFlowEvent] = []
         self._snapshots: list[LedgerSnapshot] = []
         self._positions: dict[str, BondStatic] = {}  # code -> 锁定条款
-        self._faces: dict[str, float] = {}  # code -> 面值
+        self._faces: dict[str, float] = {}  # code -> 经济持仓面值（成交日生效）
+        self._settled_faces: dict[str, float] = {}  # code -> 已结算/登记面值（结算日生效）
         self._coupon_schedules: dict[str, tuple[date, ...]] = {}
         self._applied: set[str] = set()
         self._settled: set[str] = set()
@@ -310,12 +346,29 @@ class Ledger:
         return self._funding_rate_pct
 
     def set_funding_rate(self, effective_date: date, rate_pct: float) -> None:
-        """逐日设置融资利率（百分数）；未覆盖日期回落到构造时的基础利率。"""
+        """逐日设置融资利率（百分数）。
+
+        未覆盖的自然日按 **≤ 该日的最近已知利率** 前向填充（历史 as-of 口径，
+        不取未来值）；只有早于所有已知日期的自然日才回退构造时的基础利率
+        ``funding_rate_pct``。因此本方法只影响 ``effective_date`` 及其之后
+        未显式覆盖的日期，不会把周末/假期利率打回期初值。
+        """
         day = _check_date(effective_date, field="effective_date")
         rate = float(rate_pct)
         if not math.isfinite(rate) or rate < 0:
             raise ValueError(f"rate_pct 必须是非负有限数，实际 {rate_pct!r}")
         self._funding_rates[day] = rate
+        self._funding_dates_sorted = None  # 失效缓存
+
+    def _rate_on(self, day: date) -> float:
+        """``day`` 当日适用的融资利率：≤day 的最近已知值（前向填充），否则基础利率。"""
+        if self._funding_dates_sorted is None:
+            self._funding_dates_sorted = sorted(self._funding_rates)
+        dates = self._funding_dates_sorted
+        index = bisect.bisect_right(dates, day) - 1
+        if index < 0:
+            return self._funding_rate_pct
+        return self._funding_rates[dates[index]]
 
     # ---- 提交成交 ------------------------------------------------------
     def submit(self, trade: TradeRecord) -> None:
@@ -432,40 +485,68 @@ class Ledger:
         return snapshot
 
     def _process_calendar_day(self, day: date) -> None:
-        """处理单个日历日（按经济事件顺序）。"""
-        # 1) 成交日：经济敞口生效（持仓变化），现金尚未划转
+        """处理单个日历日（按经济事件顺序）。
+
+        顺序固定为：
+
+        1. **日初登记权益快照**：``entitlement = dict(self._settled_faces)``——
+           票息/本金归属只看付息日/到期日**日初**的已结算面值，因此当天成交或
+           当天结算的买方不进入本日权益（R24）；
+        2. 成交日：经济敞口生效（:attr:`_faces` 变化），现金尚未划转；
+        3. 结算日：现金划转 + 费用，并更新 :attr:`_settled_faces`（买入增加、
+           卖出减少，卖出超过已结算面值抛错）；同一结算日先处理买入再处理卖出
+           （DVP 净额顺序），避免同券同日买卖的结算顺序依赖；
+        4. 票息：用第 1 步的 ``entitlement`` 而非 :attr:`_faces` 计金额；
+        5. 到期：本金按 ``entitlement`` 兑付并清空经济/登记持仓（末期票息已在上一步）；
+        6. 顺延到账的票息/本金（非交易日付息/到期，见 :meth:`_pay_or_defer`）。
+        """
+        # 1) 日初登记权益快照：票息/本金归属 = 付息日/到期日日初的已结算面值
+        entitlement = dict(self._settled_faces)
+        # 2) 成交日：经济敞口生效（持仓变化），现金尚未划转
         for trade in self._trades:
             if trade.trade_date == day and trade.trade_id not in self._applied:
                 self._apply_trade(trade)
-        # 2) 结算日：现金划转 + 费用
-        for trade in self._trades:
-            if trade.settlement_date == day and trade.trade_id not in self._settled:
-                self._settle_trade(trade)
-        # 3) 票息（付息日持有者；非交易日顺延支付）
+        # 3) 结算日：现金划转 + 费用 + 已结算面值更新（先买入后卖出）
+        for side in ("buy", "sell"):
+            for trade in self._trades:
+                if (
+                    trade.settlement_date == day
+                    and trade.trade_id not in self._settled
+                    and trade.side == side
+                ):
+                    self._settle_trade(trade)
+        # 4) 票息（付息日日初已结算面值；非交易日顺延支付）
         for code, schedule in self._coupon_schedules.items():
             if day not in schedule:
                 continue
-            face = self._faces.get(code, 0.0)
+            face = entitlement.get(code, 0.0)
             if face <= 0.0:
                 continue
-            bond = self._positions.get(code)
+            bond = self._known_bonds.get(code)
             if bond is None:
                 continue
             amount = _coupon_amount(bond, face, day)
             if amount <= 0.0:
                 continue
             self._pay_or_defer("coupon", amount, code, day, f"付息日 {day}")
-        # 4) 到期：本金兑付 + 持仓归零（末期票息已在上一步处理）
-        for code, face in list(self._faces.items()):
+        # 5) 到期：本金按到期日日初已结算面值兑付 + 持仓归零（末期票息已在上一步处理）
+        for code, face in entitlement.items():
             if face <= 0.0:
                 continue
-            bond = self._positions.get(code)
+            bond = self._known_bonds.get(code)
             if bond is None or day != bond.maturity_date:
                 continue
+            economic = self._faces.get(code, 0.0)
+            if abs(economic - face) > 1e-9:
+                raise RuntimeError(
+                    f"{code}: 到期日 {day} 的经济持仓 {economic} 与登记权益 {face} 不一致；"
+                    "结算日必须早于到期日（submit 已校验，内部状态异常）"
+                )
             self._pay_or_defer("principal", face, code, day, f"到期日 {day}")
             self._faces.pop(code, None)
             self._positions.pop(code, None)
-        # 5) 顺延到账的票息/本金
+            self._settled_faces.pop(code, None)
+        # 6) 顺延到账的票息/本金
         for kind, amount, code, note in self._receivables.pop(day, []):
             self._cash += amount
             self._events.append(
@@ -473,19 +554,22 @@ class Ledger:
             )
 
     def _accrue_funding(self, day: date) -> float:
-        """对 ``day`` 日终负现金计提一天融资（365 基数，含周末/节假日）。
+        """对 ``day`` 日终负现金计提一天融资（ACT/365，含周末/节假日）。
 
-        返回当日利息（负值）；**不**写事件——由 :meth:`process_day` 统一合并入账。
+        利率取 ``≤ day 的最近已知值``（历史 as-of 前向填充，**不取未来值**）；
+        早于所有已知日期才回退构造时的 ``funding_rate_pct``。返回当日利息（负值）；
+        **不**写事件——由 :meth:`process_day` 统一合并入账（事件日期 = NAV 日）。
         """
         if self._cash >= 0.0:
             return 0.0
-        rate = self._funding_rates.get(day, self._funding_rate_pct)
+        rate = self._rate_on(day)
         interest = self._cash * rate / 100.0 / 365.0  # 负值
         if interest != 0.0:
             self._cash += interest
         return interest
 
     def _apply_trade(self, trade: TradeRecord) -> None:
+        """成交日：更新**经济持仓**面值（现金与已结算/登记面值不动）。"""
         code = trade.bond.code
         locked = self._positions.get(code)
         if locked is not None and locked != trade.bond:
@@ -511,12 +595,20 @@ class Ledger:
         self._applied.add(trade.trade_id)
 
     def _settle_trade(self, trade: TradeRecord) -> None:
+        """结算日：现金划转 + 费用 + **已结算/登记面值**增减（R24）。
+
+        已结算面值只在结算日变化：买入增加、卖出减少；卖出超过已结算面值直接
+        抛错（登记权益不能卖空）。经济持仓面值由 :meth:`_apply_trade` 在成交日维护。
+        """
         bond = trade.bond
         ai = accrued_interest(bond, trade.settlement_date, cfg=self._cfg)
         gross = trade.face_value / 100.0 * (trade.clean_price + ai)
         fee = self._trade_fee(trade)
         if trade.side == "buy":
             self._cash -= gross
+            self._settled_faces[bond.code] = (
+                self._settled_faces.get(bond.code, 0.0) + trade.face_value
+            )
             self._events.append(
                 CashFlowEvent(
                     date=trade.settlement_date,
@@ -528,7 +620,18 @@ class Ledger:
                 )
             )
         else:
+            available = self._settled_faces.get(bond.code, 0.0)
+            if trade.face_value > available + 1e-9:
+                raise ValueError(
+                    f"{trade.trade_id}: 卖出结算面值 {trade.face_value} 超过 {bond.code} "
+                    f"结算日日初已结算面值 {available}（登记权益不足，禁止卖空已结算面值）"
+                )
+            remaining = available - trade.face_value
             self._cash += gross
+            if remaining <= 1e-9:
+                self._settled_faces.pop(bond.code, None)
+            else:
+                self._settled_faces[bond.code] = remaining
             self._events.append(
                 CashFlowEvent(
                     date=trade.settlement_date,
@@ -609,6 +712,7 @@ class Ledger:
                     market_value=face / 100.0 * dirty,
                     mod_duration=mod,
                     dv01=dv01_per_100 * face / 100.0,
+                    settled_face=self._settled_faces.get(code, 0.0),
                 )
             )
         pending = tuple(
@@ -626,6 +730,25 @@ class Ledger:
             notes.append(
                 f"存在 {len(pending)} 笔未结算成交（pending_settlements），"
                 f"pending_cash={pending_cash:.2f} 元"
+            )
+        # 经济持仓 vs 已结算/登记面值：未结算成交期间两者不同；票息/本金归属按
+        # 付息日/到期日日初的已结算面值（R24）。只在确实不一致时提示，避免噪音。
+        mismatches = sorted(
+            (
+                code,
+                self._faces.get(code, 0.0),
+                self._settled_faces.get(code, 0.0),
+            )
+            for code in set(self._faces) | set(self._settled_faces)
+            if abs(self._faces.get(code, 0.0) - self._settled_faces.get(code, 0.0)) > 1e-9
+        )
+        if mismatches:
+            shown = "；".join(
+                f"{code} 经济{face:g}/登记{settled:g}" for code, face, settled in mismatches[:3]
+            )
+            notes.append(
+                "经济持仓面值≠已结算/登记面值（票息/本金归属按付息日/到期日日初的"
+                f"已结算面值）：{shown}"
             )
         outstanding = sum(
             amount for items in self._receivables.values() for _kind, amount, _code, _note in items
@@ -712,6 +835,7 @@ class Ledger:
                         **base,
                         "bond_code": None,
                         "face_value": float("nan"),
+                        "settled_face": float("nan"),
                         "remaining_years": float("nan"),
                         "ytm_pct": float("nan"),
                         "clean_price": float("nan"),
@@ -729,6 +853,7 @@ class Ledger:
                         **base,
                         "bond_code": position.bond.code,
                         "face_value": position.face_value,
+                        "settled_face": position.settled_face,
                         "remaining_years": position.remaining_years,
                         "ytm_pct": position.ytm_pct,
                         "clean_price": position.clean_price,

@@ -21,6 +21,7 @@ from ficc.portfolio.construction import (
     krd_matrix,
     solve_faces,
 )
+from ficc.portfolio.dates import settlement_for
 from ficc.portfolio.ledger import PositionView
 from ficc.portfolio.types import TargetKRD
 from ficc.pricing.analytics import key_rate_durations, mod_duration
@@ -262,7 +263,12 @@ def test_build_orders_audit_fields_and_side() -> None:
         column = next(i for i, candidate in enumerate(bonds) if candidate.code == order.bond.code)
         assert order.target_face == pytest.approx(faces_true[column], abs=1e-6)
         assert order.current_face == pytest.approx(current_faces[column], abs=1e-6)
-        assert order.clean_price == pytest.approx(100.0, abs=1e-9)  # 平价券
+        # 买入执行价 = 中间价 + 半价差；平价券的中间价为 100
+        # 买入执行价 = 中间价 + 半价差；平价券中间价为结算日净价（≈100）
+        assert order.mid_clean_price == pytest.approx(100.0, abs=1e-3)
+        assert order.clean_price >= order.mid_clean_price
+        assert order.spread_bp > 0 and order.spread_cost > 0
+        assert order.clean_price >= order.mid_clean_price
     # 确定性
     again = build_orders(target, positions(bonds, current_faces, curve), bonds, curve)
     assert again == orders
@@ -343,12 +349,20 @@ def test_build_orders_clean_price_matches_pricing_layer() -> None:
             for tenor, value in zip(BUCKETS, matrix_[:, 0], strict=True)
         },
     )
-    order = build_orders(target, [], [bond], curve)[0]
-    remaining = day_count(AS_OF, bond.maturity_date) / 365.0
+    from ficc.config import get_config
+
+    cfg = get_config()
+    settlement = settlement_for(None, AS_OF, cfg=cfg)
+    order = build_orders(target, [], [bond], curve, cfg=cfg)[0]
+    remaining = day_count(settlement, bond.maturity_date) / 365.0
     ytm = float(curve.rate(remaining))
-    expected_clean = dirty_price_from_ytm(bond, AS_OF, ytm) - accrued_interest(bond, AS_OF)
-    assert order.clean_price == pytest.approx(expected_clean, rel=1e-12)
-    assert order.clean_price > 100.0  # 2.5% 票面高于 2% 曲线 → 溢价
+    expected_clean = dirty_price_from_ytm(bond, settlement, ytm, cfg=cfg) - accrued_interest(
+        bond, settlement, cfg=cfg
+    )
+    assert order.mid_clean_price == pytest.approx(expected_clean, rel=1e-12)
+    # 买入执行价含半价差：高于中间价；且 >100（2.5% 票面高于 2% 曲线 → 溢价）
+    assert order.clean_price >= order.mid_clean_price
+    assert order.clean_price > 100.0
 
 
 def test_face_solution_is_dict_subclass() -> None:
@@ -358,3 +372,22 @@ def test_face_solution_is_dict_subclass() -> None:
     solution = solve_faces(target, bonds, curve)
     assert isinstance(solution, dict)
     assert isinstance(solution, FaceSolution)
+
+
+def test_r29_face_cap_is_lot_aligned() -> None:
+    """R29：max_face_per_bond=2.6M、lot=1M 时，解必须 ≤2.6M 且是整手（不能返回 2.6M）。"""
+    from ficc.config import get_config
+
+    cfg = get_config()
+    curve = flat_curve()
+    bonds = universe(curve)
+    target = TargetKRD(
+        as_of=AS_OF,
+        krd={t: 1_000.0 for t in BUCKETS},
+    )
+    solution = solve_faces(target, bonds, curve, max_face_per_bond=2.6e6, cfg=cfg)
+    lot = float(cfg.constraints.min_trade_lot)
+    for face in solution.values():
+        assert face <= 2.6e6 + 1e-9
+        assert face == pytest.approx(round(face / lot) * lot, abs=1e-6)
+    assert any("整手" in note for note in solution.notes)

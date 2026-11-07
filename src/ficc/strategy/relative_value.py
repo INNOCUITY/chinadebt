@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ficc.curve.fitting import fit_curve
-from ficc.strategy.base import BaseStrategy
+from ficc.strategy.base import BaseStrategy, _project_simplex_cap
 
 if TYPE_CHECKING:
     from ficc.portfolio.types import MarketContext, TargetKRD
@@ -150,17 +150,19 @@ class RelativeValueStrategy(BaseStrategy):
         budget = self.alpha_fraction * float(ctx.benchmark.total_dv01)
         cap = float(getattr(params, "max_position_per_tenor", 1.0))
         raw_shares = {tenor: abs(z) / score_sum for tenor, z in triggered.items()}
-        if cap > 0:
-            capped = {tenor: min(share, cap) for tenor, share in raw_shares.items()}
-            capped_sum = float(sum(capped.values()))
-            shares = {tenor: share / capped_sum for tenor, share in capped.items()}
-        else:  # pragma: no cover - 防御式
+        if 0.0 < cap < 1.0:
+            # R28：单桶权重上限必须投影到单纯形∩盒（裁剪后归一化会重新越界；
+            # 单触发桶时 cap 完全失效）。cap×n<1 时预算用不完，允许留空。
+            shares, unused = _project_simplex_cap(raw_shares, cap=cap)
+        else:  # cap>=1 或未配置：普通归一化
             shares = raw_shares
+            unused = False
         deltas = {tenor: np.sign(triggered[tenor]) * budget * shares[tenor] for tenor in triggered}
         detail = ", ".join(
             f"{tenor:g}Y z={triggered[tenor]:+.2f}→{'+' if triggered[tenor] > 0 else '−'}"
             f"{budget * shares[tenor]:.0f}"
             for tenor in sorted(triggered)
         )
-        notes = f"rv: NSS残差 z 触发（窗口{window}d，entry={entry:g}）：{detail} 元/bp"
+        budget_note = "；单桶上限生效，预算未用满" if unused else ""
+        notes = f"rv: NSS残差 z 触发（窗口{window}d，entry={entry:g}）：{detail} 元/bp{budget_note}"
         return self.tilt(ctx, deltas, notes=notes)
