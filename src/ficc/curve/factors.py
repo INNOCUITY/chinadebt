@@ -1,52 +1,57 @@
-"""可观测曲线因子（推荐口径）——没有 NS/NSS 参数识别性问题。
+"""可观测曲线因子、PCA 与正交化（第二轮评审 R14/R15/R16/R21 后的契约）。
 
-为什么需要这个模块（R02 的结论）
----------------------------------
-NS/NSS 的参数在 11 个期限点上存在严重的**识别性问题**：同一组收益率可以有
-多组几乎等价的参数。评审复现：2023-10-11 → 10-12 各节点收益率最大只变动
-**0.04 个百分点**，但锚定拟合的 ``b1`` 从 ``-2.3959`` 跳到 ``-0.9227``
-（约 147bp），``τ1`` 从 0.222 跳到 1.5、``τ2`` 从 0.481 跳到 30。也就是说
-**模型参数不能直接当因子用**（锚定只固定了 b0，b1/b2/b3/τ 仍会换解）。
+因子契约（R14，**对外固定**）
+----------------------------
+:func:`observable_factors` 固定返回 4 列（顺序固定，见 :data:`FACTOR_COLUMNS`）：
 
-因此项目的**推荐因子口径**是直接由观测收益率构造的三个量（单位：百分点，
-日变动 ×100 即 bp）：
+- ``level_all``：**固定 11 个标准期限**（3M/6M/1Y/2Y/3Y/5Y/7Y/10Y/15Y/20Y/30Y）的等权均值。
+  任一期缺失 → 该日 NaN，**不得**按可用期限重新归一化（否则定义随数据漂移）。
+- ``level_long``：10Y/15Y/20Y/30Y 等权均值；
+- ``slope``：10Y − 2Y；
+- ``curvature``：2×5Y − 2Y − 10Y。
 
-- ``level``：10Y/15Y/20Y/30Y 的均值（与锚定 ``b0`` 的定义一致，长端水平）；
-- ``slope``：10Y − 2Y 期限利差（曲线陡平）；
-- ``curvature``：2×5Y − 2Y − 10Y 蝶式/曲度（中间相对两端的凸起）。
+单位均为**百分点**（日变动 ×100 即 bp）。``level`` 是 ``level_long`` 的**弃用别名**
+（需显式 ``include_deprecated_level=True`` 才返回，并触发 DeprecationWarning）。
 
-它们只依赖当天的可观测收益率、**没有任何拟合或识别环节**，因此日间连续、
-可复现、也不会因为优化器换解而跳变。需要参数化因子时请走因果方案
-（冻结训练窗口的 τ，或状态空间/卡尔曼平滑），见 :mod:`ficc.curve.fitting` 的
-模块 docstring。
+为什么用可观测因子而不是 NS/NSS 参数（R02 结论）
+--------------------------------------------------
+NS/NSS 参数存在严重识别性问题（同一组收益率可对应多组等价参数；2023-10-12 案例：
+收益率只动 0.04pp，锚定 b1 却跳 147bp）。可观测因子直接由收益率线性组合得到，
+无拟合、无识别、日间连续；需要参数化因子时必须走因果方案（冻结训练窗 τ 或状态
+空间模型），见 :mod:`ficc.curve.fitting` 模块 docstring。
 
-用法
-----
->>> from ficc.curve.factors import observable_factors, factor_jump_sensitivity
->>> factors = observable_factors(panel)          # index=date, columns=level/slope/curvature
->>> factor_jump_sensitivity(factors)             # 每个因子的日变动分布与最大跳变日
+PCA 与 winsor 统一口径（R16，**关键**）
+---------------------------------------
+``clip``（截尾）与线性聚合**不可交换**：``clip(mean(Δy)) ≠ mean(clip(Δy))``。
+因此本模块把预处理收敛成**单一入口** :func:`preprocess_changes`：
 
-PCA 与因子正交性
-----------------
-- :func:`pca_factors`：对**收益率变化 Δy（bp）**做 PCA（``window=None`` 全样本；
-  ``window=250`` 走前滚动，避免前视）。默认**去均值**（只保留变化），
-  ``center=False`` 提供"含均值"对照版本。
-- :func:`factor_crosscheck`：用可观测因子的 Δ 与 PC1–3 分数做相关与回归 R²，
-  检验"level↔PC1 / slope↔PC2 / curvature↔PC3"是否成立（不达标如实报告）。
-- :func:`orthogonalize`：把 slope 对 level、curvature 对 level+slope 回归取残差，
-  得到正交化因子（用于检查"水平/斜率/曲率"是否真的互相独立）。
-- :func:`factor_correlation`：因子相关矩阵（levels 或 changes 两种口径）。
-- :class:`PCAResult`：loadings（tenor×k）、explained_variance_ratio、scores（date×k）、
-  mean、window；滚动口径另带 ``loadings_history`` / ``rolling_evr``。
+1. 先算逐期限 Δy（bp，完整样本、固定 11 期限）；
+2. 若设 ``winsor_bp``，对矩阵**逐期限、逐观测**截尾；
+3. PCA 用该截尾矩阵估载荷/打分；
+4. 因子变化用**同一个**截尾矩阵经 :func:`factor_changes_from_processed`
+   （固定权重矩阵 :func:`factor_weight_matrix`）线性聚合。
 
-PC 符号约定（**不是为了好看，而是让方向可比较**）：PC1 载荷和为正；PC2 用
-**斜率坐标**（10Y 载荷 − 2Y 载荷）为正定方向；PC3 用**曲率坐标**
-（2×5Y − 2Y − 10Y 载荷）为正定方向。``factor_crosscheck`` 仍会如实报告实际
-相关系数——若经验数据不符合该方向，结论就是"不符合"。
+:class:`PCAResult` 携带 ``processed_changes``，调用方拿不到"各算各的"的中间量；
+若要做"原始因子变化 vs 清洗后 PC"的对照，必须显式
+``factor_crosscheck(..., use_raw_factor_changes=True)`` 并在报告里标注为另一种诊断。
+
+验收映射（R15）
+---------------
+:data:`FACTOR_TARGETS` 显式给出 ``因子 → (目标 PC, 相关系数门槛)``；未知因子只输出
+``exploratory_corr``（探索性相关）与 ``target_pc=None / meets_target=None``，
+**不给达标判词**（避免事后挑 PC 冒充事前假设检验）。
+
+正交化（R21，因果边界）
+-----------------------
+:func:`fit_orthogonalizer` 在**训练窗**上拟合线性投影并保存系数；
+:meth:`Orthogonalizer.transform` / :meth:`Orthogonalizer.inverse` 冻结系数后应用。
+无 ``window`` 时必须显式 ``fit_scope="full"``，且报告须标注"样本内诊断"——
+样本内水平正交不等于日频风险正交（变化空间相关可能显著非零）。
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -54,27 +59,136 @@ import numpy as np
 import pandas as pd
 
 from ficc.curve.fitting import _normalize_panel
+from ficc.data.schema import CANONICAL_TENORS
 
 __all__ = [
+    "CANONICAL_TENOR_GRID",
+    "DEPRECATED_FACTOR_ALIASES",
+    "FACTOR_COLUMNS",
+    "FACTOR_TARGETS",
+    "Orthogonalizer",
     "PCAResult",
+    "evaluate_factor_target",
+    "factor_changes_from_processed",
     "factor_correlation",
     "factor_crosscheck",
+    "factor_definition_table",
     "factor_jump_sensitivity",
+    "factor_weight_matrix",
+    "fit_orthogonalizer",
     "loading_stability",
     "observable_factors",
     "orthogonalize",
     "pca_factors",
+    "preprocess_changes",
 ]
 
-# PCA 最小样本量（太少时 SVD 不稳定）
-PCA_MIN_OBS: int = 60
-# 各可观测因子"理论上"对应的主成分（用于交叉校验方向）
-PCA_EXPECTED_COMPONENT: dict[str, str] = {"level": "PC1", "slope": "PC2", "curvature": "PC3"}
-
-# 因子定义（写死期限，便于复核与写进报告）
-LEVEL_TENORS: tuple[float, ...] = (10.0, 15.0, 20.0, 30.0)
+# 固定 11 个标准期限（level_all 的母集；缺一不可，不做可用列重归一化）
+CANONICAL_TENOR_GRID: tuple[float, ...] = tuple(float(t) for t in CANONICAL_TENORS)
+# 对外因子契约：顺序固定
+FACTOR_COLUMNS: tuple[str, ...] = ("level_all", "level_long", "slope", "curvature")
+# 弃用别名（旧代码里的 level = 长端 level）
+DEPRECATED_FACTOR_ALIASES: dict[str, str] = {"level": "level_long"}
+# 验收映射（R15）：因子 → (目标 PC, 相关系数门槛)。未知因子不给门槛。
+FACTOR_TARGETS: dict[str, tuple[str, float]] = {
+    "level_all": ("PC1", 0.95),
+    "level_long": ("PC1", 0.95),
+    "slope": ("PC2", 0.50),
+    "curvature": ("PC3", 0.50),
+}
+LEVEL_ALL_TENORS: tuple[float, ...] = CANONICAL_TENOR_GRID
+LEVEL_LONG_TENORS: tuple[float, ...] = (10.0, 15.0, 20.0, 30.0)
 SLOPE_TENORS: tuple[float, float] = (10.0, 2.0)  # 10Y - 2Y
 CURVATURE_TENORS: tuple[float, float, float] = (5.0, 2.0, 10.0)  # 2*5Y - 2Y - 10Y
+
+# PCA 最小样本量
+PCA_MIN_OBS: int = 60
+
+
+# ---------------------------------------------------------------------------
+# 因子定义与权重
+# ---------------------------------------------------------------------------
+def factor_definition_table() -> pd.DataFrame:
+    """因子定义表（供文档自动生成 / 报告附录）。
+
+    Returns
+    -------
+    pandas.DataFrame
+        列：``factor`` / ``definition`` / ``weights`` / ``unit`` /
+        ``target_pc`` / ``target_threshold`` / ``deprecated``。
+    """
+    rows = [
+        {
+            "factor": "level_all",
+            "definition": "固定 11 个标准期限的等权均值；任一缺失→NaN，不重归一化",
+            "weights": "每个标准期限 1/11",
+            "unit": "%",
+            "target_pc": FACTOR_TARGETS["level_all"][0],
+            "target_threshold": FACTOR_TARGETS["level_all"][1],
+            "deprecated": False,
+        },
+        {
+            "factor": "level_long",
+            "definition": "10/15/20/30Y 等权均值（长端水平）",
+            "weights": "10Y/15Y/20Y/30Y 各 1/4",
+            "unit": "%",
+            "target_pc": FACTOR_TARGETS["level_long"][0],
+            "target_threshold": FACTOR_TARGETS["level_long"][1],
+            "deprecated": False,
+        },
+        {
+            "factor": "slope",
+            "definition": "10Y − 2Y 期限利差",
+            "weights": "10Y +1；2Y −1",
+            "unit": "%",
+            "target_pc": FACTOR_TARGETS["slope"][0],
+            "target_threshold": FACTOR_TARGETS["slope"][1],
+            "deprecated": False,
+        },
+        {
+            "factor": "curvature",
+            "definition": "2×5Y − 2Y − 10Y（蝶式/曲度）",
+            "weights": "5Y +2；2Y −1；10Y −1",
+            "unit": "%",
+            "target_pc": FACTOR_TARGETS["curvature"][0],
+            "target_threshold": FACTOR_TARGETS["curvature"][1],
+            "deprecated": False,
+        },
+        {
+            "factor": "level",
+            "definition": "DEPRECATED：level_long 的别名（旧接口）",
+            "weights": "同 level_long",
+            "unit": "%",
+            "target_pc": None,
+            "target_threshold": None,
+            "deprecated": True,
+        },
+    ]
+    table = pd.DataFrame(rows)
+    table.attrs["note"] = "level_all 使用固定 11 期限；不得按可用期限重新归一化"
+    return table
+
+
+def factor_weight_matrix(tenors: tuple[float, ...] | None = None) -> pd.DataFrame:
+    """固定因子权重矩阵（行=因子，列=标准期限）：``Δfactor(bp) = W · Δy(bp)``。"""
+    grid = tuple(float(t) for t in (tenors if tenors is not None else CANONICAL_TENOR_GRID))
+    weights = np.zeros((len(FACTOR_COLUMNS), len(grid)))
+    for j, tenor in enumerate(grid):
+        weights[0, j] = 1.0 / len(grid)  # level_all
+        if tenor in LEVEL_LONG_TENORS:
+            weights[1, j] = 1.0 / len(LEVEL_LONG_TENORS)
+        if tenor == SLOPE_TENORS[0]:
+            weights[2, j] = 1.0
+        if tenor == SLOPE_TENORS[1]:
+            weights[2, j] = -1.0
+        if tenor == CURVATURE_TENORS[0]:
+            weights[3, j] = 2.0
+        if tenor in (CURVATURE_TENORS[1], CURVATURE_TENORS[2]):
+            weights[3, j] = -1.0
+    matrix = pd.DataFrame(weights, index=list(FACTOR_COLUMNS), columns=list(grid))
+    matrix.columns.name = "tenor"
+    matrix.attrs["unit"] = "per 1bp of Δy"
+    return matrix
 
 
 def _column(frame: pd.DataFrame, tenor: float) -> pd.Series:
@@ -84,27 +198,36 @@ def _column(frame: pd.DataFrame, tenor: float) -> pd.Series:
     return pd.Series(np.nan, index=frame.index, dtype=float)
 
 
-def observable_factors(panel: pd.DataFrame) -> pd.DataFrame:
-    """由观测收益率直接构造 level / slope / curvature 三因子。
+def _canonical_frame(panel: pd.DataFrame) -> pd.DataFrame:
+    """规范化面板并固定到 11 个标准期限（缺失列补 NaN）。"""
+    frame = _normalize_panel(panel)
+    return frame.reindex(columns=list(CANONICAL_TENOR_GRID))
+
+
+# ---------------------------------------------------------------------------
+# 可观测因子（固定契约）
+# ---------------------------------------------------------------------------
+def observable_factors(
+    panel: pd.DataFrame,
+    *,
+    include_deprecated_level: bool = False,
+) -> pd.DataFrame:
+    """由观测收益率构造 4 个固定因子。
 
     Parameters
     ----------
     panel : pandas.DataFrame
-        宽表：``index = 日期``，``columns = 期限（年，float）``，
-        ``values = 到期收益率（百分数）``。缺失期限保持 NaN（不填充）。
+        收益率宽表：``index=日期``，``columns=期限（年）``，values 为**百分数**。
+    include_deprecated_level : bool
+        是否额外返回弃用别名 ``level``（= ``level_long``，触发 DeprecationWarning）。
+        默认 ``False``，保证输出列严格等于 :data:`FACTOR_COLUMNS`。
 
     Returns
     -------
     pandas.DataFrame
-        ``index`` 与输入相同（日期），``columns = ["level", "slope", "curvature"]``，
-        单位均为**百分点**（日变动 ×100 即 bp）。
-
-        - ``level`` = mean(y10, y15, y20, y30)
-        - ``slope`` = y10 − y2
-        - ``curvature`` = 2·y5 − y2 − y10
-
-        任一所需期限缺失时对应因子为 NaN（例如 2016-01 至 2019-01 缺 2Y，
-        这段区间 ``slope``/``curvature`` 为空，不做插值）。
+        ``index`` 与输入相同；列固定为 ``level_all, level_long, slope, curvature``
+        （单位：百分点）。任一所需期限缺失时对应因子为 NaN：
+        ``level_all`` 要求**全部 11 个标准期限**存在（缺一即 NaN，不重新归一化）。
 
     Raises
     ------
@@ -112,31 +235,53 @@ def observable_factors(panel: pd.DataFrame) -> pd.DataFrame:
         ``panel`` 不是 DataFrame。
     ValueError
         ``panel`` 为空或列不是数值期限。
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> idx = pd.to_datetime(["2024-06-28"])
+    >>> cols = [0.25, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30]
+    >>> panel = pd.DataFrame([[1.5] * 11], index=idx, columns=cols)
+    >>> observable_factors(panel).columns.tolist()
+    ['level_all', 'level_long', 'slope', 'curvature']
     """
-    frame = _normalize_panel(panel)
-    level = (
-        _column(frame, LEVEL_TENORS[0])
-        + _column(frame, LEVEL_TENORS[1])
-        + _column(frame, LEVEL_TENORS[2])
-        + _column(frame, LEVEL_TENORS[3])
-    ) / float(len(LEVEL_TENORS))
+    frame = _canonical_frame(panel)
+    level_all = frame.mean(axis=1, skipna=False)  # 任一 NaN → 整行 NaN
+    level_long = frame.loc[:, list(LEVEL_LONG_TENORS)].mean(axis=1, skipna=False)
     slope = _column(frame, SLOPE_TENORS[0]) - _column(frame, SLOPE_TENORS[1])
     curvature = (
         2.0 * _column(frame, CURVATURE_TENORS[0])
         - _column(frame, CURVATURE_TENORS[1])
         - _column(frame, CURVATURE_TENORS[2])
     )
-    factors = pd.DataFrame({"level": level, "slope": slope, "curvature": curvature})
+    factors = pd.DataFrame(
+        {
+            "level_all": level_all,
+            "level_long": level_long,
+            "slope": slope,
+            "curvature": curvature,
+        },
+        index=frame.index,
+    )
     factors.index.name = "date"
     factors.attrs["unit"] = "percentage points"
-    factors.attrs["definitions"] = {
-        "level": f"mean of {LEVEL_TENORS}",
-        "slope": "y10 - y2",
-        "curvature": "2*y5 - y2 - y10",
-    }
+    factors.attrs["definitions"] = (
+        factor_definition_table().set_index("factor")["definition"].to_dict()
+    )
+    if include_deprecated_level:
+        warnings.warn(
+            "observable_factors(include_deprecated_level=True) 返回的 'level' 是 "
+            "level_long 的弃用别名；新代码请直接用 level_long。",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        factors["level"] = factors["level_long"]
     return factors
 
 
+# ---------------------------------------------------------------------------
+# 因子跳变敏感性
+# ---------------------------------------------------------------------------
 def factor_jump_sensitivity(
     factors: pd.DataFrame,
     *,
@@ -147,25 +292,16 @@ def factor_jump_sensitivity(
     Parameters
     ----------
     factors : pandas.DataFrame
-        :func:`observable_factors` 的输出（或同构的因子宽表，单位百分点）。
+        :func:`observable_factors` 的输出（或同构因子宽表，单位百分点）。
     threshold_bp : float
         "大跳变"阈值（bp），用于计数列 ``n_above_threshold``。
 
     Returns
     -------
     pandas.DataFrame
-        ``index = 因子名``，列：
-
-        - ``n``：有效日变动样本数；
-        - ``mean_abs_bp`` / ``std_bp``：日变动的均值绝对值 / 标准差（bp）；
-        - ``p95_abs_bp`` / ``p99_abs_bp`` / ``max_abs_bp``：分位与最大值（bp）；
-        - ``max_date``：最大跳变发生的日期；
-        - ``n_above_threshold``：超过 ``threshold_bp`` 的天数。
-
-    Raises
-    ------
-    ValueError
-        ``factors`` 为空或没有数值列。
+        ``index = 因子名``，列：``n`` / ``mean_abs_bp`` / ``std_bp`` /
+        ``p95_abs_bp`` / ``p99_abs_bp`` / ``max_abs_bp`` / ``max_date`` /
+        ``n_above_threshold``。
     """
     if not isinstance(factors, pd.DataFrame):
         raise TypeError(f"factors 必须是 DataFrame，实际 {type(factors).__name__}")
@@ -215,44 +351,110 @@ def factor_jump_sensitivity(
 
 
 # ---------------------------------------------------------------------------
-# PCA：样本 = 收益率变化 Δy（bp）
+# R16：共享预处理（clip 逐期限 Δy）与固定权重聚合
+# ---------------------------------------------------------------------------
+def preprocess_changes(panel: pd.DataFrame, *, winsor_bp: float | None = None) -> pd.DataFrame:
+    """PCA 与因子的**唯一**预处理入口：逐期限 Δy（bp），可选对称截尾。
+
+    ``clip`` 与线性聚合不可交换（``clip(mean) != mean(clip)``），因此必须先得到
+    逐期限、逐观测的截尾变动矩阵，再同时喂给 PCA 与因子聚合。
+
+    Parameters
+    ----------
+    panel : pandas.DataFrame
+        收益率宽表（百分点）。缺任一标准期限的日期会被剔除（complete-case），
+        且跨缺失段的差分也会被剔除（不做跨缺口差分）。
+    winsor_bp : float | None
+        对称截尾阈值（bp）。``None`` 不截尾。
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``index=date``，``columns=11 个标准期限``，values 为 Δy（**bp**）——
+        已按需截尾。``attrs`` 记录 ``winsor_bp``、``unit="bp"``、样本区间。
+
+    Raises
+    ------
+    ValueError
+        panel 缺标准期限、样本不足、``winsor_bp`` 非法。
+    TypeError
+        panel 不是 DataFrame。
+    """
+    if not isinstance(panel, pd.DataFrame):
+        raise TypeError(f"panel 必须是 DataFrame，实际 {type(panel).__name__}")
+    frame = _normalize_panel(panel)
+    missing_tenors = [t for t in CANONICAL_TENOR_GRID if t not in frame.columns]
+    if missing_tenors:
+        raise ValueError(f"panel 缺少标准期限 {missing_tenors}；level_all 需要固定 11 期限")
+    frame = frame.reindex(columns=list(CANONICAL_TENOR_GRID))
+    changes = frame.diff() * 100.0  # 百分点 → bp
+    changes = changes.dropna(axis=0, how="any")
+    if changes.shape[0] < PCA_MIN_OBS:
+        raise ValueError(
+            f"样本不足：只有 {changes.shape[0]} 条完整 Δy 观测，至少需要 {PCA_MIN_OBS}"
+        )
+    if winsor_bp is not None:
+        limit = float(winsor_bp)
+        if not np.isfinite(limit) or limit <= 0:
+            raise ValueError(f"winsor_bp 必须是正数，实际 {winsor_bp!r}")
+        changes = changes.clip(lower=-limit, upper=limit)
+    changes.index.name = "date"
+    changes.attrs["winsor_bp"] = winsor_bp
+    changes.attrs["unit"] = "bp"
+    changes.attrs["sample_start"] = changes.index.min()
+    changes.attrs["sample_end"] = changes.index.max()
+    return changes
+
+
+def factor_changes_from_processed(processed_changes: pd.DataFrame) -> pd.DataFrame:
+    """用固定权重把**已预处理**的逐期限 Δy（bp）聚合为因子变化（bp）。
+
+    ``Δfactor = W · Δy``，其中 ``W`` 来自 :func:`factor_weight_matrix`。
+    这是 R16 要求的"同一路径"聚合：不得对因子聚合值再做截尾。
+    """
+    if not isinstance(processed_changes, pd.DataFrame):
+        raise TypeError(
+            f"processed_changes 必须是 DataFrame，实际 {type(processed_changes).__name__}"
+        )
+    missing = [t for t in CANONICAL_TENOR_GRID if t not in processed_changes.columns]
+    if missing:
+        raise ValueError(f"processed_changes 缺少标准期限 {missing}")
+    weights = factor_weight_matrix().to_numpy(dtype=float)
+    values = processed_changes.loc[:, list(CANONICAL_TENOR_GRID)].to_numpy(dtype=float)
+    result = pd.DataFrame(
+        values @ weights.T, index=processed_changes.index, columns=list(FACTOR_COLUMNS)
+    )
+    result.index.name = processed_changes.index.name
+    result.attrs["unit"] = "bp"
+    result.attrs["winsor_bp"] = processed_changes.attrs.get("winsor_bp")
+    result.attrs["note"] = "由同一 processed_changes 经固定权重线性聚合得到（R16）"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PCA
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PCAResult:
-    """PCA 结果容器。
+    """PCA 结果容器（样本永远是收益率变化 Δy，单位 bp）。
 
     Parameters
     ----------
     loadings : pandas.DataFrame
-        载荷，``index = tenor``（年），``columns = PC1..PCk``。滚动口径下为
-        各窗口载荷的均值。
+        载荷 ``index=tenor``，``columns=PC1..``。滚动口径为各窗口载荷的均值。
     explained_variance_ratio : np.ndarray
-        各主成分解释方差占比，长度 k。滚动口径下为各窗口的均值。
+        各主成分解释方差占比。
     scores : pandas.DataFrame
-        主成分分数，``index = date``，``columns = PC1..PCk``。
-        滚动口径下为**走前**（用前 ``window`` 个观测估载荷、再投影当日 Δy）的分数。
+        主成分分数 ``index=date``。滚动口径下为**走前**打分（用前 window 个观测
+        估载荷、再投影当日 Δy）。
     mean : pandas.Series
-        样本 Δy 的逐期限均值（bp），``index = tenor``。
-    window : int | None
-        滚动窗口长度；``None`` 表示全样本。
-    n_obs : int
-        参与 PCA 的观测数。
-    center : bool
-        是否对 Δy 去均值（``True`` = 只保留变化；``False`` = 含均值对照版）。
-    loadings_history : pandas.DataFrame | None
-        滚动口径下每个估计窗口的载荷，``index = 打分日``，
-        ``columns = MultiIndex(component, tenor)``；全样本为 ``None``。
-    rolling_evr : pandas.DataFrame | None
-        滚动口径下每个窗口的解释方差占比；全样本为 ``None``。
-    tenors : np.ndarray
-        参与 PCA 的期限（年）。
-
-    Notes
-    -----
-    本模块的 PCA **永远以收益率变化 Δy（bp）为样本**，不是收益率水平：
-    收益率水平高度共线且非平稳，对水平做 PCA 得到的"第一主成分"更多是趋势，
-    不能当作日频风险因子。去均值版本（默认）对应"只解释日变动"；含均值版本
-    用于对照（第一主成分会吸收样本期漂移）。
+        ``processed_changes`` 的逐期限均值（bp）。
+    window, n_obs, center : 同 :func:`pca_factors`。
+    loadings_history / rolling_evr : 滚动口径的逐窗载荷与 EVR。
+    tenors : 参与 PCA 的期限（年）。
+    winsor_bp : 截尾阈值（bp）或 None。
+    processed_changes : pandas.DataFrame
+        **共享预处理后的逐期限 Δy（bp）**；PCA 与因子聚合都只能用它（R16）。
     """
 
     loadings: pd.DataFrame
@@ -266,6 +468,7 @@ class PCAResult:
     rolling_evr: pd.DataFrame | None = None
     tenors: np.ndarray = field(default_factory=lambda: np.asarray([], dtype=float))
     winsor_bp: float | None = None
+    processed_changes: pd.DataFrame | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -275,20 +478,6 @@ class PCAResult:
         object.__setattr__(self, "n_obs", int(self.n_obs))
 
 
-def _delta_y_bp(panel: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """计算 PCA 样本：``Δy = diff(panel)·100``（bp），并剔除不完整/跨缺失段的差分。"""
-    frame = _normalize_panel(panel)
-    if frame.shape[0] < 2:
-        raise ValueError("panel 至少需要 2 个交易日才能计算收益率变化")
-    changes = frame.diff() * 100.0
-    changes = changes.dropna(axis=0, how="any")
-    if changes.shape[0] < PCA_MIN_OBS:
-        raise ValueError(
-            f"PCA 样本不足：只有 {changes.shape[0]} 条完整 Δy 观测，至少需要 {PCA_MIN_OBS}"
-        )
-    return frame, changes
-
-
 def _component_names(k: int) -> list[str]:
     return [f"PC{i + 1}" for i in range(k)]
 
@@ -296,7 +485,11 @@ def _component_names(k: int) -> list[str]:
 def _align_pca_signs(
     loadings: np.ndarray, scores: np.ndarray, tenors: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """固定 PCA 符号约定，使因子方向可跨窗口比较（PC 符号本身是不可识别的）。"""
+    """固定 PCA 符号约定（PC 符号不可识别；约定只为方向可比较）。
+
+    PC1：载荷和为正；PC2：斜率坐标（10Y−2Y 载荷）为正；PC3：曲率坐标
+    （2×5Y−2Y−10Y 载荷）为正。用坐标而非单个期限，避免近零载荷处的噪声翻符号。
+    """
     tenors = np.asarray(tenors, dtype=float)
     loadings = loadings.copy()
     scores = scores.copy()
@@ -306,16 +499,12 @@ def _align_pca_signs(
         return int(np.argmin(np.abs(tenors - tenor)))
 
     i2, i5, i10 = index_of(2.0), index_of(5.0), index_of(10.0)
-    # PC1：载荷和为正（"水平"方向）。
     if k >= 1 and float(np.sum(loadings[:, 0])) < 0:
         loadings[:, 0] *= -1.0
         scores[:, 0] *= -1.0
-    # PC2：用**斜率坐标**（10Y−2Y）定方向，而不是单个最短期限——最短期限的
-    # PC2 载荷可能接近 0，用它会因噪声随机翻符号（滚动窗口里尤其明显）。
     if k >= 2 and (loadings[i10, 1] - loadings[i2, 1]) < 0:
         loadings[:, 1] *= -1.0
         scores[:, 1] *= -1.0
-    # PC3：用**曲率坐标**（2×5Y−2Y−10Y）定方向。
     if k >= 3 and (2.0 * loadings[i5, 2] - loadings[i2, 2] - loadings[i10, 2]) < 0:
         loadings[:, 2] *= -1.0
         scores[:, 2] *= -1.0
@@ -325,7 +514,7 @@ def _align_pca_signs(
 def _fit_pca(
     x: np.ndarray, *, center: bool, n_components: int, tenors: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """对 ``x``（n×p，bp）做 SVD PCA，返回 ``(loadings p×k, scores n×k, evr k)``。"""
+    """SVD PCA：返回 ``(loadings p×k, scores n×k, evr k)``。"""
     x = np.asarray(x, dtype=float)
     if x.ndim != 2:
         raise ValueError(f"PCA 输入必须是二维矩阵，实际 shape={x.shape}")
@@ -356,45 +545,35 @@ def pca_factors(
     Parameters
     ----------
     panel : pandas.DataFrame
-        收益率宽表（``index = date``，``columns = 期限（年）``，values 百分数）。
+        收益率宽表（百分点）。
     window : int | None
-        ``None``：全样本 PCA，样本为全部完整 Δy 观测；整数：滚动窗口（观测数）。
-        滚动口径下每个打分日只用**之前** ``window`` 个观测估载荷，再投影当日 Δy，
-        因此分数不含前视信息。
+        ``None`` 全样本；整数 = 走前滚动窗口（观测数）。
     n_components : int
-        主成分个数（默认 3）。
+        主成分数（默认 3）。
     center : bool
-        是否对 Δy 去均值。默认 ``True``（只保留变化）；``False`` 为"含均值"对照版。
+        是否对 Δy 去均值（默认 ``True``，即只解释日变动；``False`` 为对照口径）。
     winsor_bp : float | None
-        对 Δy 做**对称截尾**（winsorize）的阈值（bp）；``None`` 不处理。
-        中国 2002–2009 年数据存在单日数百 bp 的异常跳变（如 2004-08-17），
-        不处理会让 PCA 第一主成分被 30Y/短端异常日主导。稳健性对照用
-        ``winsor_bp=10`` 等；这是**数据清洗**，不是调整因子定义。
+        逐期限 Δy 截尾阈值（bp）。与因子变化共享同一 ``processed_changes``（R16）。
 
     Returns
     -------
     PCAResult
-        见 :class:`PCAResult`。
+        含 ``processed_changes``（共享预处理结果）。
 
     Raises
     ------
-    ValueError
-        panel 为空/非法、样本不足、``window`` 非法。
+    ValueError / TypeError
+        panel 非法、样本不足、``window`` 非法、``winsor_bp`` 非法。
     """
     if not isinstance(panel, pd.DataFrame):
         raise TypeError(f"panel 必须是 DataFrame，实际 {type(panel).__name__}")
     n_components = int(n_components)
     if n_components < 1:
         raise ValueError("n_components 必须 ≥1")
-    _, changes = _delta_y_bp(panel)
-    tenors = changes.columns.to_numpy(dtype=float)
-    dates = changes.index
-    x = changes.to_numpy(dtype=float)
-    if winsor_bp is not None:
-        limit = float(winsor_bp)
-        if not np.isfinite(limit) or limit <= 0:
-            raise ValueError(f"winsor_bp 必须是正数，实际 {winsor_bp!r}")
-        x = np.clip(x, -limit, limit)
+    processed = preprocess_changes(panel, winsor_bp=winsor_bp)
+    tenors = processed.columns.to_numpy(dtype=float)
+    dates = processed.index
+    x = processed.to_numpy(dtype=float)
     component_names = _component_names(n_components)
 
     if window is None:
@@ -411,6 +590,7 @@ def pca_factors(
             center=center,
             tenors=tenors,
             winsor_bp=winsor_bp,
+            processed_changes=processed,
         )
 
     window = int(window)
@@ -441,7 +621,7 @@ def pca_factors(
     loadings_history = pd.DataFrame(
         load_hist.reshape(n_scores, -1), index=score_index, columns=history_columns
     )
-    mean_loadings = load_hist.mean(axis=0)  # (k, p)
+    mean_loadings = load_hist.mean(axis=0)
     return PCAResult(
         loadings=pd.DataFrame(
             mean_loadings.T, index=pd.Index(tenors, name="tenor"), columns=component_names[:k]
@@ -456,37 +636,29 @@ def pca_factors(
         rolling_evr=rolling_evr,
         tenors=tenors,
         winsor_bp=winsor_bp,
+        processed_changes=processed,
     )
 
 
 def loading_stability(pca: PCAResult) -> pd.DataFrame:
-    """滚动口径下载荷的时序稳定性（载荷与全样本向量的相关、标准差、EVR 波动）。
-
-    Returns
-    -------
-    pandas.DataFrame
-        ``index = PC1..PCk``，列：``evr_mean`` / ``evr_std`` /
-        ``loading_std_mean``（各期限载荷时间序列标准差的均值）/
-        ``corr_with_fullsample_mean``（每个窗口载荷向量与全样本载荷向量的
-        横截面相关系数的均值）/ ``corr_with_fullsample_min`` / ``n_windows``。
-
-    Raises
-    ------
-    ValueError
-        传入的是全样本 PCA（没有 ``loadings_history``）。
-    """
+    """滚动口径下载荷的时序稳定性（与全样本载荷相关、时序标准差、EVR 波动）。"""
     if pca.loadings_history is None or pca.rolling_evr is None:
         raise ValueError("loading_stability 需要滚动窗口 PCA 结果（window 不为 None）")
     rows: list[dict[str, float]] = []
     for component in pca.loadings.columns:
-        series = pca.loadings_history[component]  # index=date, columns=tenor
+        series = pca.loadings_history[component]
         full = pca.loadings[component].to_numpy(dtype=float)
-        corrs = []
+        corrs: list[float] = []
+        cosines: list[float] = []
         for _, row in series.iterrows():
             values = row.to_numpy(dtype=float)
-            if np.std(values) == 0 or np.std(full) == 0:
-                continue
-            corrs.append(float(np.corrcoef(values, full)[0, 1]))
+            # 余弦相似度：对"水平型"PC（载荷跨期限近乎相等）比 Pearson 稳定
+            denom = float(np.linalg.norm(values) * np.linalg.norm(full))
+            if denom > 0:
+                cosines.append(float(values @ full / denom))
+            # Pearson：跨期限方差极小时不稳定，仅作辅助
+            if np.std(values) > 0 and np.std(full) > 0:
+                corrs.append(float(np.corrcoef(values, full)[0, 1]))
         evr_series = pca.rolling_evr[component]
         rows.append(
             {
@@ -494,6 +666,8 @@ def loading_stability(pca: PCAResult) -> pd.DataFrame:
                 "evr_mean": float(evr_series.mean()),
                 "evr_std": float(evr_series.std(ddof=0)),
                 "loading_std_mean": float(series.std(axis=0, ddof=0).mean()),
+                "cosine_with_fullsample_mean": float(np.mean(cosines)) if cosines else float("nan"),
+                "cosine_with_fullsample_min": float(np.min(cosines)) if cosines else float("nan"),
                 "corr_with_fullsample_mean": float(np.mean(corrs)) if corrs else float("nan"),
                 "corr_with_fullsample_min": float(np.min(corrs)) if corrs else float("nan"),
                 "n_windows": int(series.shape[0]),
@@ -503,11 +677,28 @@ def loading_stability(pca: PCAResult) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# 因子交叉校验与正交化
+# R15：显式验收映射
 # ---------------------------------------------------------------------------
+def evaluate_factor_target(
+    factor: str, correlation: float
+) -> tuple[str | None, float | None, bool | None]:
+    """按 :data:`FACTOR_TARGETS` 给出 ``(target_pc, threshold, meets_target)``。
+
+    未知因子返回 ``(None, None, None)``（只允许探索性相关，不得判达标）。
+    已知因子只有相关系数 **≥ 门槛** 才算达标（方向由 PC 符号约定统一）。
+    """
+    target = FACTOR_TARGETS.get(str(factor).lower())
+    if target is None:
+        return None, None, None
+    pc, threshold = target
+    if not np.isfinite(correlation):
+        return pc, threshold, None
+    return pc, threshold, bool(correlation >= threshold)
+
+
 def _regression_r2(y: np.ndarray, scores: np.ndarray) -> float:
-    """``y`` 对 ``[const, scores]`` 回归的 R²（用于"因子能被前 k 个 PC 解释多少"）。"""
-    mask = np.isfinite(y)
+    """``y`` 对 ``[const, scores]`` 回归的 R²。"""
+    mask = np.isfinite(y) & np.isfinite(scores).all(axis=1)
     if mask.sum() < scores.shape[1] + 2:
         return float("nan")
     y_valid = y[mask]
@@ -525,53 +716,53 @@ def factor_crosscheck(
     factors: pd.DataFrame,
     pca: PCAResult,
     *,
-    winsor_bp: float | None = None,
+    use_raw_factor_changes: bool = False,
 ) -> pd.DataFrame:
-    """用可观测因子（变化口径）与 PC1–PC3 分数交叉校验。
+    """可观测因子变化与 PC1–3 的交叉校验（R15/R16 契约）。
 
-    因子的相关性一律用**日变化**（``Δfactor × 100``，bp）与 PC 分数（也是 Δy 的
-    线性组合，bp）计算，避免"水平对变化"的量纲错配。
-
-    Parameters
-    ----------
-    factors : pandas.DataFrame
-        :func:`observable_factors` 的输出（或同构因子表，单位百分点）。
-    pca : PCAResult
-        :func:`pca_factors` 的结果。
-    winsor_bp : float | None
-        对因子日变化做同样的对称截尾（bp）。``None`` 时**自动沿用
-        ``pca.winsor_bp``**，保证"样本处理"与 PCA 一致（否则比较不公平）；
-        显式传 0 或 False 可关闭。
+    **同口径（默认）**：因子变化由 ``pca.processed_changes`` 经固定权重聚合
+    （:func:`factor_changes_from_processed`），与 PCA 共享同一截尾矩阵。
+    ``use_raw_factor_changes=True`` 是另一种诊断口径（直接用传入 factors 的
+    ``diff()*100``），调用方必须在报告中单独标注。
 
     Returns
     -------
     pandas.DataFrame
-        ``index = 因子名``，列：
-
-        - ``corr_pc1`` / ``corr_pc2`` / ``corr_pc3``：Δfactor 与对应 PC 分数的相关；
-        - ``r2_pc1_3``：Δfactor 对 PC1–PC3 回归的 R²；
-        - ``expected_pc``：该因子理论上对应的主成分（level→PC1…）；
-        - ``corr_expected``：与 expected PC 的相关系数；
-        - ``sign_consistent``：``corr_expected > 0``（在 PC 符号约定下方向一致）；
-        - ``meets_target``：level 要求 ``corr_pc1 > 0.95``；其余要求方向一致且
-          ``|corr_expected| > 0.5``（不达标如实标记，不调整定义凑数）。
+        ``index=factor``，列：``corr_pc1/2/3``、``r2_pc1_3``、
+        ``target_pc`` / ``target_threshold`` / ``corr_target`` / ``meets_target``、
+        ``exploratory_corr`` / ``exploratory_pc``、``sample_note``。
 
     Raises
     ------
     ValueError
-        因子或 PCA 结果为空、样本交集不足。
+        输入为空、样本交集不足、或缺少 ``processed_changes`` 却未声明原始口径。
     """
     if factors.empty:
         raise ValueError("factors 为空")
     if pca.scores.empty:
         raise ValueError("pca.scores 为空")
-    changes = factors.diff() * 100.0
-    effective_winsor = pca.winsor_bp if winsor_bp is None else winsor_bp
-    if effective_winsor:
-        limit = float(effective_winsor)
-        if not np.isfinite(limit) or limit <= 0:
-            raise ValueError(f"winsor_bp 必须是正数，实际 {winsor_bp!r}")
-        changes = changes.clip(lower=-limit, upper=limit)
+    factor_names = [str(name) for name in factors.columns]
+
+    if use_raw_factor_changes:
+        raw_changes = factors.astype(float).diff() * 100.0
+        changes = raw_changes.loc[:, factor_names]
+        sample_note = "raw factor changes (diagnostic; NOT same winsor pipeline as PCA)"
+    else:
+        if pca.processed_changes is None:
+            raise ValueError(
+                "pca 缺少 processed_changes；R16 要求 PCA 与因子共享同一预处理。"
+                "若确实要做原始对照，请显式 use_raw_factor_changes=True 并在报告标注"
+            )
+        processed_changes = pca.processed_changes
+        known_changes = factor_changes_from_processed(processed_changes)
+        changes = pd.DataFrame(index=processed_changes.index)
+        for name in factor_names:
+            if name in known_changes.columns:
+                changes[name] = known_changes[name]
+            else:  # 未知因子：只能用原始变化（探索性）
+                changes[name] = factors[name].astype(float).diff() * 100.0
+        sample_note = "factor changes = W · processed Δy (shared winsor pipeline)"
+
     common_index = changes.index.intersection(pca.scores.index)
     if common_index.size < PCA_MIN_OBS:
         raise ValueError(
@@ -585,7 +776,7 @@ def factor_crosscheck(
 
     rows: list[dict[str, object]] = []
     score_matrix = scores.to_numpy(dtype=float)
-    for name in changes.columns:
+    for name in factor_names:
         y = changes[name].to_numpy(dtype=float)
         mask = np.isfinite(y) & np.isfinite(score_matrix).all(axis=1)
         row: dict[str, object] = {"factor": name}
@@ -596,99 +787,251 @@ def factor_crosscheck(
                 continue
             corrs[component] = float(np.corrcoef(y[mask], score_matrix[mask, j])[0, 1])
         for j in range(3):
-            component = f"PC{j + 1}"
-            row[f"corr_pc{j + 1}"] = corrs.get(component, float("nan"))
+            row[f"corr_pc{j + 1}"] = corrs.get(f"PC{j + 1}", float("nan"))
         row["r2_pc1_3"] = _regression_r2(y, score_matrix[:, : min(3, score_matrix.shape[1])])
-        expected = PCA_EXPECTED_COMPONENT.get(str(name).lower())
-        if expected is None:
-            expected = max(corrs, key=lambda comp: abs(corrs[comp])) if corrs else None
-        row["expected_pc"] = expected
-        corr_expected = float(corrs.get(expected, float("nan"))) if expected else float("nan")
-        row["corr_expected"] = corr_expected
-        sign_consistent = bool(np.isfinite(corr_expected) and corr_expected > 0)
-        row["sign_consistent"] = sign_consistent
-        if str(name).lower() == "level":
-            row["meets_target"] = bool(
-                np.isfinite(corrs.get("PC1", np.nan)) and corrs["PC1"] > 0.95
+        target = FACTOR_TARGETS.get(name.lower())
+        if target is not None:
+            target_pc, threshold, meets = evaluate_factor_target(
+                name, float(corrs.get(target[0], float("nan")))
             )
+            row["target_pc"] = target_pc
+            row["target_threshold"] = threshold
+            row["corr_target"] = (
+                float(corrs.get(target_pc, float("nan"))) if target_pc else float("nan")
+            )
+            row["meets_target"] = meets
+            row["exploratory_corr"] = float("nan")
+            row["exploratory_pc"] = None
+            row["sample_note"] = sample_note
         else:
-            row["meets_target"] = bool(sign_consistent and abs(corr_expected) > 0.5)
+            best_component = max(corrs, key=lambda comp: abs(corrs[comp])) if corrs else None
+            row["target_pc"] = None
+            row["target_threshold"] = None
+            row["corr_target"] = float("nan")
+            row["meets_target"] = None
+            row["exploratory_corr"] = (
+                float(abs(corrs[best_component])) if best_component else float("nan")
+            )
+            row["exploratory_pc"] = best_component
+            row["sample_note"] = f"{sample_note}; unknown factor → exploratory only"
         rows.append(row)
-    return pd.DataFrame(rows).set_index("factor")
+    result = pd.DataFrame(rows).set_index("factor")
+    result.index.name = "factor"
+    result.attrs["sample_note"] = sample_note
+    result.attrs["winsor_bp"] = pca.winsor_bp
+    return result
 
 
-def _ols_residual(y: np.ndarray, regressors: list[np.ndarray]) -> np.ndarray:
-    """``y`` 对 ``[const, *regressors]`` 回归后的残差（NaN 保持 NaN）。"""
+# ---------------------------------------------------------------------------
+# R21：训练窗正交化（fit / transform / inverse）
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Orthogonalizer:
+    """冻结的线性正交化器（slope⟂level、curvature⟂level+slope）。
+
+    由 :func:`fit_orthogonalizer` 在**训练窗**上拟合；之后 :meth:`transform` /
+    :meth:`inverse` 只使用冻结系数，**不**再看新数据（前视不变）。
+    """
+
+    level_column: str
+    slope_column: str
+    curvature_column: str
+    columns: tuple[str, ...]
+    slope_coef: np.ndarray  # [const, level]
+    curvature_coef: np.ndarray  # [const, level, slope]
+    fit_scope: str  # "window" | "full"
+    fit_window: int | None
+    fit_start: pd.Timestamp | object
+    fit_end: pd.Timestamp | object
+    n_fit: int
+
+    def transform(self, factors: pd.DataFrame) -> pd.DataFrame:
+        """对任意行数应用冻结系数，返回正交化因子（列名加 ``_orth``）。"""
+        frame = self._normalize(factors)
+        level = frame[self.level_column].to_numpy(dtype=float)
+        slope = frame[self.slope_column].to_numpy(dtype=float)
+        curvature = frame[self.curvature_column].to_numpy(dtype=float)
+        slope_orth = slope - (self.slope_coef[0] + self.slope_coef[1] * level)
+        curvature_orth = curvature - (
+            self.curvature_coef[0] + self.curvature_coef[1] * level + self.curvature_coef[2] * slope
+        )
+        out = frame.copy()
+        out[self.slope_column] = slope_orth
+        out[self.curvature_column] = curvature_orth
+        out = out.rename(
+            columns={
+                self.slope_column: f"{self.slope_column}_orth",
+                self.curvature_column: f"{self.curvature_column}_orth",
+            }
+        )
+        out.attrs["orthogonalizer"] = self.describe()
+        return out
+
+    def inverse(self, orthogonal_factors: pd.DataFrame) -> pd.DataFrame:
+        """把正交化因子还原为原始因子（用于核对可逆性与归因）。"""
+        frame = orthogonal_factors.copy()
+        slope_orth_name = f"{self.slope_column}_orth"
+        curvature_orth_name = f"{self.curvature_column}_orth"
+        missing = [
+            name for name in (slope_orth_name, curvature_orth_name) if name not in frame.columns
+        ]
+        if missing:
+            raise ValueError(f"正交化因子缺少列 {missing}；无法 inverse")
+        level = frame[self.level_column].to_numpy(dtype=float)
+        slope = frame[slope_orth_name].to_numpy(dtype=float) + (
+            self.slope_coef[0] + self.slope_coef[1] * level
+        )
+        curvature = frame[curvature_orth_name].to_numpy(dtype=float) + (
+            self.curvature_coef[0] + self.curvature_coef[1] * level + self.curvature_coef[2] * slope
+        )
+        out = frame.drop(columns=[slope_orth_name, curvature_orth_name])
+        out[self.slope_column] = slope
+        out[self.curvature_column] = curvature
+        out.attrs["inverse_of"] = self.describe()
+        return out
+
+    def describe(self) -> dict[str, object]:
+        """简要描述（供报错/报告标注）。"""
+        return {
+            "level_column": self.level_column,
+            "slope_column": self.slope_column,
+            "curvature_column": self.curvature_column,
+            "fit_scope": self.fit_scope,
+            "fit_window": self.fit_window,
+            "fit_start": self.fit_start.isoformat()
+            if isinstance(self.fit_start, pd.Timestamp)
+            else self.fit_start,
+            "fit_end": self.fit_end.isoformat()
+            if isinstance(self.fit_end, pd.Timestamp)
+            else self.fit_end,
+            "n_fit": self.n_fit,
+        }
+
+    def _normalize(self, factors: pd.DataFrame) -> pd.DataFrame:
+        required = [self.level_column, self.slope_column, self.curvature_column]
+        missing = [name for name in required if name not in factors.columns]
+        if missing:
+            raise ValueError(f"factors 缺少列 {missing}；训练时列为 {list(self.columns)}")
+        return factors.astype(float)
+
+
+def _resolve_factor_columns(factors: pd.DataFrame) -> tuple[str, str, str]:
+    """找出 level/slope/curvature 三列（level 优先 level_all，其次 level_long / level）。"""
+    level_column = None
+    for candidate in ("level_all", "level_long", "level"):
+        if candidate in factors.columns:
+            level_column = candidate
+            break
+    if level_column is None:
+        raise ValueError("factors 缺少 level 列（level_all / level_long / level）")
+    missing = [name for name in ("slope", "curvature") if name not in factors.columns]
+    if missing:
+        raise ValueError(f"factors 缺少列 {missing}")
+    return level_column, "slope", "curvature"
+
+
+def _fit_ols(y: np.ndarray, exog: list[np.ndarray]) -> np.ndarray:
+    """最小二乘（带截距），返回系数 ``[const, *exog]``；不足样本抛 ValueError。"""
     mask = np.isfinite(y)
-    for regressor in regressors:
-        mask &= np.isfinite(regressor)
-    residual = np.full_like(y, np.nan, dtype=float)
-    n_valid = int(mask.sum())
-    if n_valid < len(regressors) + 2:
-        return residual
-    design = np.column_stack([np.ones(n_valid), *[reg[mask] for reg in regressors]])
+    for column in exog:
+        mask &= np.isfinite(column)
+    if int(mask.sum()) < len(exog) + 2:
+        raise ValueError(
+            f"正交化拟合样本不足：需要 ≥{len(exog) + 2} 个有效观测，实际 {int(mask.sum())}"
+        )
+    design = np.column_stack([np.ones(int(mask.sum())), *[column[mask] for column in exog]])
     beta, *_ = np.linalg.lstsq(design, y[mask], rcond=None)
-    residual[mask] = y[mask] - design @ beta
-    return residual
+    return beta
+
+
+def fit_orthogonalizer(
+    factors: pd.DataFrame,
+    *,
+    window: int | None = None,
+    fit_scope: str = "window",
+) -> Orthogonalizer:
+    """在**训练窗**上拟合线性正交化器（R21）。
+
+    Parameters
+    ----------
+    factors : pandas.DataFrame
+        至少包含 ``level_*`` / ``slope`` / ``curvature`` 列（百分点）。
+    window : int | None
+        训练窗长度（行数）。大于 0 时**只使用前 window 行**拟合（后续行不参与，
+        保证前视不变性）。
+    fit_scope : {"window", "full"}
+        ``window is None`` 时必须显式传 ``"full"`` 才允许全样本拟合；该口径只能
+        作**样本内诊断**，不能当作因果正交。
+
+    Returns
+    -------
+    Orthogonalizer
+        冻结系数的正交化器。
+
+    Raises
+    ------
+    ValueError
+        factors 非法、window 非法、未显式声明 full 拟合、样本不足。
+    """
+    if factors.empty:
+        raise ValueError("factors 为空")
+    level_column, slope_column, curvature_column = _resolve_factor_columns(factors)
+    columns = tuple(str(name) for name in factors.columns)
+    if window is None:
+        if fit_scope != "full":
+            raise ValueError(
+                "未指定 window 时必须显式 fit_scope='full' 才允许全样本拟合"
+                "（且只能在报告中标注为样本内诊断）"
+            )
+        training = factors
+    else:
+        window = int(window)
+        if window < 30 or window > len(factors):
+            raise ValueError(f"window 必须在 [30, {len(factors)}] 区间内，实际 {window}")
+        training = factors.iloc[:window]
+    finite_rows = training.loc[:, [level_column, slope_column, curvature_column]].dropna()
+    if finite_rows.empty:
+        raise ValueError("训练窗内没有完整观测，无法拟合正交化器")
+    level = finite_rows[level_column].to_numpy(dtype=float)
+    slope = finite_rows[slope_column].to_numpy(dtype=float)
+    curvature = finite_rows[curvature_column].to_numpy(dtype=float)
+    slope_coef = _fit_ols(slope, [level])
+    curvature_coef = _fit_ols(curvature, [level, slope])
+    return Orthogonalizer(
+        level_column=level_column,
+        slope_column=slope_column,
+        curvature_column=curvature_column,
+        columns=columns,
+        slope_coef=np.asarray(slope_coef, dtype=float),
+        curvature_coef=np.asarray(curvature_coef, dtype=float),
+        fit_scope="full" if window is None else "window",
+        fit_window=window,
+        fit_start=training.index[0] if len(training) else pd.NaT,
+        fit_end=training.index[-1] if len(training) else pd.NaT,
+        n_fit=int(finite_rows.shape[0]),
+    )
 
 
 def orthogonalize(
     factors: pd.DataFrame,
     *,
     space: Literal["levels", "changes"] = "levels",
+    window: int | None = None,
+    fit_scope: str = "full",
 ) -> pd.DataFrame:
-    """把 slope 对 level、curvature 对 level+slope 回归取残差，得到正交化因子。
+    """**旧接口（保留兼容）**：拟合 + 变换一步完成；新代码请用
+    :func:`fit_orthogonalizer` + :meth:`Orthogonalizer.transform`。
 
-    Parameters
-    ----------
-    factors : pandas.DataFrame
-        至少包含 ``level`` / ``slope`` / ``curvature`` 三列（单位百分点）。
-    space : {"levels", "changes"}
-        ``"levels"``（默认）在因子**水平**上正交化（指标间的静态独立性）；
-        ``"changes"`` 在日变化（bp）上正交化（更适合做日频信号）。
-
-    Returns
-    -------
-    pandas.DataFrame
-        ``index`` 与输入一致，列 ``["level", "slope_orth", "curvature_orth"]``
-        （``level`` 原样保留；后两列为回归残差）。
-
-    Notes
-    -----
-    正交化是**对样本**做的线性投影：残差与回归变量在该样本内严格正交
-    （相关系数 ≈ 0，见 ``tests/test_pca_factors.py``），但样本内正交不代表
-    经济上独立，也不保证样本外仍然正交；报告里需说明这一点。
-
-    Raises
-    ------
-    ValueError
-        缺少必要列或 ``space`` 非法。
+    注意：不指定 ``window`` 时默认 ``fit_scope="full"``（样本内诊断，见 R21）。
+    ``space="changes"`` 时在日变化上拟合与变换。
     """
-    required = ["level", "slope", "curvature"]
-    missing = [name for name in required if name not in factors.columns]
-    if missing:
-        raise ValueError(f"factors 缺少必要列 {missing}；需要 {required}")
     if space not in ("levels", "changes"):
         raise ValueError(f"space 必须是 'levels' 或 'changes'，实际 {space!r}")
-    data = factors[required].astype(float)
+    data = factors.astype(float)
     if space == "changes":
         data = data.diff() * 100.0
-    level = data["level"].to_numpy(dtype=float)
-    slope = data["slope"].to_numpy(dtype=float)
-    curvature = data["curvature"].to_numpy(dtype=float)
-    slope_orth = _ols_residual(slope, [level])
-    curvature_orth = _ols_residual(curvature, [level, slope])
-    result = pd.DataFrame(
-        {"level": level, "slope_orth": slope_orth, "curvature_orth": curvature_orth},
-        index=data.index,
-    )
-    result.index.name = data.index.name
-    result.attrs["space"] = space
-    result.attrs["regression"] = {
-        "slope_orth": "slope ~ 1 + level",
-        "curvature_orth": "curvature ~ 1 + level + slope",
-    }
-    return result
+    orthogonalizer = fit_orthogonalizer(data, window=window, fit_scope=fit_scope)
+    return orthogonalizer.transform(data)
 
 
 def factor_correlation(
@@ -696,7 +1039,7 @@ def factor_correlation(
     *,
     space: Literal["levels", "changes"] = "levels",
 ) -> pd.DataFrame:
-    """因子相关矩阵（``space="levels"`` 用水平值，``"changes"`` 用日变化 bp）。"""
+    """因子相关矩阵（``space="levels"`` 水平值；``"changes"`` 日变化 bp）。"""
     if factors.empty:
         raise ValueError("factors 为空")
     if space not in ("levels", "changes"):

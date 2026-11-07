@@ -30,8 +30,9 @@ KRD（关键期限久期）用**即期（零息）曲线**实现：只依赖鸭�
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import numpy as np
@@ -46,6 +47,7 @@ from ficc.pricing.conventions import (
     quote_face_value,
     validate_settlement,
 )
+from ficc.utils.calendar import is_business_day
 
 __all__ = [
     "convexity",
@@ -237,6 +239,85 @@ def _validate_spot(spot: Any) -> None:
         raise ValueError("spot.times 必须是一维、严格递增、至少 2 个点的期限网格")
 
 
+def _coerce_spot_date(value: Any, *, field: str) -> date | None:
+    """把 spot 上的日期字段规范成 ``date``（None 原样返回）。"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raise TypeError(f"spot.{field} 必须是 date/datetime，实际 {type(value).__name__}")
+
+
+def _read_spot_dates(spot: Any) -> tuple[date | None, date | None, bool]:
+    """读取即期曲线的日期契约（鸭子类型）。
+
+    返回 ``(结算日, 参考日, 是否回退)``：
+
+    - 结算日：优先 ``spot.settlement_date``；缺失时回退 ``observation_date``/
+      ``as_of`` 并标记 ``used_fallback=True``；
+    - 参考日：``observation_date``（曲线观察日），缺失回退 ``as_of``。
+
+    曲线线（``spot.bootstrap``）正在给 ``SpotCurve`` 增加
+    ``observation_date`` / ``settlement_date``；本函数不 import 曲线层实现。
+    """
+    expected = _coerce_spot_date(getattr(spot, "settlement_date", None), field="settlement_date")
+    observed = _coerce_spot_date(getattr(spot, "observation_date", None), field="observation_date")
+    as_of = _coerce_spot_date(getattr(spot, "as_of", None), field="as_of")
+    reference = observed if observed is not None else as_of
+    if expected is None:
+        expected = reference
+        return expected, reference, True
+    return expected, reference, False
+
+
+def _validate_krd_date_contract(
+    settlement: date, spot: Any, *, allow_mismatch: bool = False
+) -> None:
+    """R17：校验 KRD 的结算日/工作日/曲线参考日契约。
+
+    1. ``settlement`` 必须是工作日（周末不可结算）；
+    2. ``settlement >= 曲线参考日``（观察日 / ``as_of``）；
+    3. 若 ``spot`` 暴露 ``settlement_date``，要求 ``settlement == spot.settlement_date``；
+       否则视为日期错位，默认抛 :class:`ValueError`；显式
+       ``allow_mismatch=True`` 时只 warning（留出曲线线未升级的过渡期）。
+       若 ``spot`` 只有 ``observation_date``/``as_of``（``settlement_date`` 缺失），
+       回退用其做校验并 warning，提示应升级曲线对象。
+
+    说明：定价层不隐式假设 ``curve.as_of == 结算日``——这是 R17 的核心错位。
+    """
+    if not is_business_day(settlement):
+        raise ValueError(
+            f"KRD 结算日 {settlement}({settlement:%a}) 不是工作日：结算不应发生在周末；"
+            "请传入经 ficc.utils.calendar 推算的结算日"
+        )
+
+    expected, reference, used_fallback = _read_spot_dates(spot)
+    if used_fallback:
+        warnings.warn(
+            "spot 未暴露 settlement_date，KRD 日期契约回退用 observation_date/as_of 校验；"
+            "请升级曲线对象（SpotCurve 应提供 observation_date 与 settlement_date）",
+            UserWarning,
+            stacklevel=3,
+        )
+    if reference is not None and settlement < reference:
+        raise ValueError(
+            f"KRD 结算日 {settlement} 早于曲线参考日 {reference}：现金流起点不能早于曲线观察日"
+        )
+    if expected is not None and settlement != expected:
+        message = (
+            f"KRD 结算日 {settlement} 与曲线结算日 {expected} 不一致（R17 日期契约）；"
+            "应以 spot.settlement_date 为现金流/贴现起点"
+        )
+        if allow_mismatch:
+            warnings.warn(
+                message + "；allow_mismatch=True，已放行但结果可能错位", UserWarning, stacklevel=3
+            )
+        else:
+            raise ValueError(message + "；如确认要用其它结算日，请显式传 allow_mismatch=True")
+
+
 def _spot_discount_vector(spot: Any, times: np.ndarray) -> np.ndarray:
     """把 ``spot.discount`` 的返回值统一成与 ``times`` 同形的一维数组。
 
@@ -329,6 +410,7 @@ def key_rate_durations(
     spot: Any,
     *,
     key_tenors: Sequence[float] | None = None,
+    allow_mismatch: bool = False,
     cfg: Config | None = None,
 ) -> dict[float, float]:
     """即期曲线口径的关键期限久期（KRD），单位 **元/报价面值/bp**。
@@ -362,30 +444,46 @@ def key_rate_durations(
       映射）；③ 曲线形状/息票效应（各期现金流对应不同零息利率、KRD 分布在
       整条曲线上，而 YTM DV01 用单一修正久期概括）。
 
-    Parameters
-    ----------
+    日期契约（R17）
+    ----------------
+    结算日是现金流/贴现的**起点**，与曲线观察日/结算日必须一致：
+
+    - ``settlement`` 必须是**工作日**（周末不可结算）；
+    - ``settlement >= 曲线参考日``（``spot.observation_date``，缺失回退 ``as_of``）；
+    - 若 ``spot`` 暴露 ``settlement_date``，要求 ``settlement == spot.settlement_date``，
+      否则抛 :class:`ValueError`；``allow_mismatch=True`` 时降级为 warning（过渡期用）。
+    - 曲线对象若缺少 ``settlement_date``（当前 ``SpotCurve`` 正在补充），本函数回退
+      用 ``observation_date``/``as_of`` 校验并 **warning**，不静默接受错位日期。
+
+    参数
+    ----
     bond : BondStatic
     settlement : date
     spot : Any
         鸭子类型即期曲线：``times``（严格递增，年）、``zero_rate(t)``（连续复利，
-        百分数）、``discount(t) = exp(-zero_rate(t)/100·t)``。
+        百分数）、``discount(t) = exp(-zero_rate(t)/100·t)``；可选
+        ``observation_date`` / ``settlement_date`` / ``as_of`` 用于日期契约。
     key_tenors : Sequence[float] | None
         关键期限（年）；``None`` 时读 ``cfg.risk.key_tenors_krd``。
+    allow_mismatch : bool
+        结算日与 ``spot.settlement_date`` 不一致时是否放行（只 warning 不报错）。
     cfg : Config | None
 
-    Returns
-    -------
+    返回
+    ----
     dict[float, float]
         关键期限 → KRD（元/报价面值/bp，多头为负）。
 
-    Notes
-    -----
-    时间口径：现金流时间按 ``(现金流日 − 结算日).days / 365`` 映射到即期曲线
-    （ACT/365）。要求 ``settlement`` 与 ``spot`` 的定价日一致——``spot`` 应是
-    以结算日为起点的即期（零息）曲线；跨定价日使用会让时间轴错位。
+    时间口径（必须单列，不是官方即期对账）
+    --------------------------------------
+    现金流时间按 ``(现金流日 − 结算日).days / 365`` 映射到曲线 ``times``
+    （ACT/365 名义年限）；曲线 ``times`` 同样是名义年限。这是**内部一致的
+    ACT/365 名义期限近似**，不是中债官方“即期对账”口径，跨闰年会有
+    ≤1 天的名义期限误差；报告与对账时不得称其为官方即期估值。
     """
     validate_settlement(bond, settlement)
     _validate_spot(spot)
+    _validate_krd_date_contract(settlement, spot, allow_mismatch=allow_mismatch)
     keys = _resolve_key_tenors(key_tenors, cfg)
     times, amounts, disc0 = _spot_cashflows(bond, settlement, spot, cfg=cfg)
     pv0 = float(np.dot(amounts, disc0))

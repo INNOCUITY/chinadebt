@@ -44,11 +44,15 @@ from ficc.pricing.bond import (
     ytm_from_dirty_price,
 )
 from ficc.pricing.carry import (
+    FACTOR_TENORS,
     FundingRateUnavailableError,
     carry_roll_down,
     decompose_realized,
+    factor_basis_value,
+    ns_scenario_projection,
     par_modified_duration,
     resolve_funding_rate_pct,
+    roll_down_aging,
 )
 from ficc.pricing.conventions import (
     Basis,
@@ -74,6 +78,7 @@ from ficc.pricing.conventions import (
 
 __all__ = [
     "CF_COLUMNS",
+    "FACTOR_TENORS",
     "Basis",
     "ConventionError",
     "CouponPeriod",
@@ -94,16 +99,19 @@ __all__ = [
     "dirty_price_from_ytm",
     "dv01",
     "dv01_finite_diff",
+    "factor_basis_value",
     "is_leap_year",
     "is_on_coupon_date",
     "key_rate_durations",
     "macaulay_duration",
     "mod_duration",
     "next_coupon_date",
+    "ns_scenario_projection",
     "par_modified_duration",
     "pricing_config",
     "quote_face_value",
     "resolve_funding_rate_pct",
+    "roll_down_aging",
     "settlement_date",
     "spot_dv01",
     "validate_settlement",

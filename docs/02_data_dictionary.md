@@ -305,7 +305,7 @@ data/
 ### 6.1 可疑跳变点清单：`reports/data_quality_suspect.csv`
 
 **用途**：标记**横截面不一致型**异常点（多为中债官方文件在 2002–2005 的孤立跳变），
-供 PCA/因子分析等下游按 date 排除或 winsor。**只标记，不剔除、不改原始数据**——
+供 PCA/因子分析等下游做离线敏感性分析；用于滚动研究时必须另外处理标签可得时间。**只标记，不剔除、不改原始数据**——
 是否过滤属于研究结论，不属于数据清洗。
 
 生成命令：
@@ -324,8 +324,7 @@ python -m ficc.data.quality --suspect-report --suspect-out reports/data_quality_
 | `reversal` | `t-1→t` 与 `t→t+1` 方向相反、两段幅度均超阈值，且 t 的变动显著偏离同日其他期限中位数（跳出去又跳回来） | `spike_bp=50`；`reversal_bp=40` |
 | `level_outlier` | 收益率超出合理区间（默认全局 `[0.2%, 12%]`，可用 `level_bounds` 按期限分档） | `level_min=0.2`；`level_max=12` |
 
-相对 `|Δ|>100bp` 的朴素阈值，横截面判据能把**数据错误**与**真实行情**区分开：
-真实系统性行情里各期限同向变动（其他期限中位数不小），不会触发孤立/往返判据。
+横截面判据用于筛选人工复核候选，**不能保证区分数据错误与真实行情**。局部期限的真实流动性冲击也会触发，例如下述 2013 钱荒日期；不得把所有命中点称为已确认的官方错误。
 
 **字段表**：
 
@@ -346,7 +345,7 @@ python -m ficc.data.quality --suspect-report --suspect-out reports/data_quality_
 同一 `(date, tenor)` 可能同时命中不同类型（例如既 `idiosyncratic_spike` 又 `reversal`），
 报告按 `severity` 后 `|delta_bp|` 降序排列。
 
-**全样本实测（2026-11-06 数据）**：共 **289** 条（high 82 / medium 67 / low 140），
+**全样本实测（2026-11-07 复核现有产物）**：共 **289 条命中记录、229 个唯一 (date, tenor) 点、109 个日期**；96.54% 的命中记录在 2002–2004。共 **289** 条（high 82 / medium 67 / low 140），
 按类型 147 / 139 / 3；按年份 `2002:86、2003:81、2004:112、2005:9、2013:1`；
 按期限 30Y:111、20Y:63、3M:25、6M:23、15Y:23 等。典型命中：
 
@@ -360,20 +359,47 @@ python -m ficc.data.quality --suspect-report --suspect-out reports/data_quality_
 > 2013-06-27（3M −60bp，其他期限中位数 −3bp）也被标记，但属于"钱荒"真实极端行情，
 > 下游可结合宏观事件人工复核；标记≠剔除。
 
-**下游用法建议**：
+**下游用法与可得时间（2026-11-07 修订）**：
+
+- `idiosyncratic_spike`、`level_outlier` 的判据最早在当日曲线发布后可得；`reversal` 使用 `t+1`，最早下一观测日可确认。当前 CSV 没有 `known_at`，其中 `next_value` 也不可当日使用。全样本清单仅作事后诊断；回测需实现可得时间字段和仅依赖历史的过滤。
+- 不要先 `drop` 日期再直接 `diff()`：这会把跨越缺口的多日变动当作单日变动。现有 109 个日期的删除会产生 **72 个跨缺口差分**。离线排除示例应保留原交易日索引，将被标记日置 NaN，再差分并删除不完整差分，因而同时屏蔽异常日前后相邻收益率变化。
+- winsor 对照应先统一处理逐期限 Δy，再从同一矩阵计算 PCA 与可观测因子；不能分别对聚合前/后的对象截尾却称为“同口径”。固定阈值也会压低真实极端风险，应并列保留未截尾压力场景。
 
 ```python
-import pandas as pd
 sus = pd.read_csv("reports/data_quality_suspect.csv", parse_dates=["date"])
-panel = panel.drop(index=sorted(sus["date"].unique()))      # 按日排除（推荐，保留全期限一致性）
-# 或：对 (date, tenor) 命中点 winsorize/置 NaN，再由插值模块显式处理
-# PCA/因子：先剔除可疑日，或使用稳健协方差 + 收益率 winsor
+# 仅限事后敏感性分析；不是可直接供历史交易使用的当日标签
+masked = panel.copy()
+masked.loc[masked.index.intersection(sus["date"].unique())] = float("nan")
+delta_bp = masked.diff().mul(100).dropna(how="any")
 ```
+
+**入口契约待修复（R20）**：生产长表的冲突去重已有校验，但新 `quality._panel_from_long` 使用 `keep="last"`，`reporting.load_panel` 使用 `keep="first"` 而未先检查冲突。两者应复用数据层校验；当前不应绕过生产验证入口喂入未经验证的重复长表。
 
 **防护**：检测函数只读 `curve_long`，不写 `data/`；报告输出固定写入 `reports/`，
 不修改版本目录与 manifest。CLI 参数 `--suspect-out` 可改输出路径（测试用）。
 
 ---
+
+### 6.2 `known_at`：可疑点的因果可用性（R21）
+
+`reports/data_quality_suspect.csv` 新增 `known_at` 列，表示**该条标记最早可被决策使用的时间**：
+
+| `kind` | `known_at` | 原因 |
+|--------|------------|------|
+| `reversal` | **下一交易日** | 判据用到 t+1 的数据（跳出去又跳回），当天收盘时不可知 |
+| `idiosyncratic_spike` | 当日 | 只用截面一致性，收盘后可判定 |
+| `level_outlier` | 当日 | 只用当日水平区间 |
+
+**使用纪律**：下游只允许使用 `known_at <= decision_date` 的记录（`quality.filter_causally_usable()` 已提供）；
+**禁止**把 `reversal` 标记当作当日过滤条件，否则就是前视偏差。
+实测：289 条记录中 `known_at` 无缺失；139 条 `reversal` 全部满足 `known_at > date`（如 2004-08-18 → 2004-08-19、
+2002-04-26 → 2002-04-27），150 条 spike/level 满足 `known_at == date`。
+
+### 6.3 重复记录的校验规则（R20）
+
+质量入口（`run_quality_checks`、`check_jumps`、`detect_suspect_dates`、`write_suspect_report`）统一走
+`_dedupe_validated`：**一致重复可去重、冲突重复抛 `DataValidationError` 并列出 date/tenor/各取值**，
+结果与输入行序无关。不再有裸 `keep="first"/"last"`。
 
 ## 7. 2Y 回补报告（`backfill_2y_report.json`）
 

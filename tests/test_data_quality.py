@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import io
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -434,3 +435,224 @@ def test_real_sample_lead_anomalies_are_flagged() -> None:
     assert summary["n_total"] == len(suspects)
     assert summary["by_year"].get("2002", 0) > 0
     assert summary["n_high"] > 0
+
+
+# ---------------------------------------------------------------------------
+# R20：统一重复校验（一致重复可去重、冲突必须报错、行序无关）
+# ---------------------------------------------------------------------------
+from ficc.data.quality import (  # noqa: E402
+    filter_causally_usable,
+)
+
+
+def _conflict_frame(frame: pd.DataFrame, day: pd.Timestamp, tenor: float) -> pd.DataFrame:
+    """复制 frame 并在指定 (date, tenor) 的一行上制造 +0.5pp 冲突。"""
+    out = frame.copy()
+    mask = (out["date"] == day) & ((out["tenor"].astype(float) - tenor).abs() < 1e-9)
+    positions = list(out.index[mask])
+    assert len(positions) >= 2, "需要先构造重复行才能注入冲突"
+    out.loc[positions[0], "ytm_pct"] = out.loc[positions[0], "ytm_pct"] + 0.5
+    return out
+
+
+def test_r20_conflicting_duplicates_raise_with_detail(tmp_path: Path) -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    day = list(panel.index)[10]
+    duplicated = pd.concat([clean, clean], ignore_index=True)
+    conflict = _conflict_frame(duplicated, day, 10.0)
+    output = tmp_path / "suspects.csv"
+
+    entry_points = [
+        ("run_quality_checks", lambda f: run_quality_checks(f)),
+        ("check_jumps", lambda f: check_jumps(f)),
+        ("detect_suspect_dates", lambda f: detect_suspect_dates(f)),
+        ("write_suspect_report", lambda f: write_suspect_report(f, output=output)),
+    ]
+    details: list[str] = []
+    for name, call in entry_points:
+        with pytest.raises(DataValidationError, match="冲突") as excinfo:
+            call(conflict)
+        message = str(excinfo.value)
+        assert "拒绝静默去重" in message, name
+        assert "2023-" in message, name
+        assert "10" in message, name
+        details.append(message.split("冲突明细", 1)[-1])
+        if output.exists():
+            output.unlink()
+    # 四个入口共用同一套校验逻辑 → 冲突明细完全一致
+    assert len(set(details)) == 1
+
+
+def test_r20_consistent_duplicates_row_order_invariant(tmp_path: Path) -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    spike_day = list(panel.index)[60]
+    clean.loc[
+        (clean["date"] == spike_day) & ((clean["tenor"].astype(float) - 10.0).abs() < 1e-9),
+        "ytm_pct",
+    ] += 0.80
+    duplicated = pd.concat([clean, clean], ignore_index=True)
+    forward = duplicated.reset_index(drop=True)
+    reversed_order = duplicated.iloc[::-1].reset_index(drop=True)
+
+    report_forward = run_quality_checks(forward)
+    report_reversed = run_quality_checks(reversed_order)
+    for key in ("rows", "n_dates", "date_min", "date_max", "dup_duplicate_groups"):
+        assert report_forward.summary[key] == report_reversed.summary[key], key
+    assert report_forward.summary["dup_duplicate_groups"] > 0  # 一致重复仍被统计
+
+    suspects_forward = detect_suspect_dates(forward)
+    suspects_reversed = detect_suspect_dates(reversed_order)
+    assert not suspects_forward.empty
+    pd.testing.assert_frame_equal(suspects_forward, suspects_reversed)
+
+    out_a = tmp_path / "a.csv"
+    out_b = tmp_path / "b.csv"
+    write_suspect_report(forward, output=out_a)
+    write_suspect_report(reversed_order, output=out_b)
+    assert out_a.read_text(encoding="utf-8-sig") == out_b.read_text(encoding="utf-8-sig")
+
+
+def test_r20_conflict_error_row_order_invariant() -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    day = list(panel.index)[10]
+    duplicated = pd.concat([clean, clean], ignore_index=True)
+    conflict = _conflict_frame(duplicated, day, 10.0)
+    forward = conflict.reset_index(drop=True)
+    reversed_order = conflict.iloc[::-1].reset_index(drop=True)
+
+    with pytest.raises(DataValidationError) as exc_forward:
+        detect_suspect_dates(forward)
+    with pytest.raises(DataValidationError) as exc_reversed:
+        detect_suspect_dates(reversed_order)
+    assert str(exc_forward.value) == str(exc_reversed.value)
+
+
+def test_r20_real_curve_long_has_no_conflicts() -> None:
+    if not REAL_PROCESSED.exists():
+        pytest.skip("缺少 data/processed/curve_long.parquet（先运行 fetch_data --offline）")
+    frame = pd.read_parquet(REAL_PROCESSED)
+    report = run_quality_checks(frame, jump_threshold_bp=20.0)  # 不抛冲突
+    assert report.summary["rows"] == 67_472
+    detail, summary = duplicate_report(frame)
+    assert summary["conflict_groups"] == 0
+    assert detail.loc[~detail["consistent"]].empty
+
+
+# ---------------------------------------------------------------------------
+# R21：可疑点 known_at 因果可用性
+# ---------------------------------------------------------------------------
+def test_r21_known_at_synthetic_causality() -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    dates = list(panel.index)
+    spike_day = dates[60]
+    clean.loc[
+        (clean["date"] == spike_day) & ((clean["tenor"].astype(float) - 10.0).abs() < 1e-9),
+        "ytm_pct",
+    ] += 0.80
+    suspects = detect_suspect_dates(clean)
+
+    # 全表无缺失、无早于 date 的 known_at（无前视）
+    assert suspects["known_at"].notna().all()
+    assert (suspects["known_at"] >= suspects["date"]).all()
+
+    spike_hits = suspects[
+        (suspects["kind"] == "idiosyncratic_spike")
+        & (suspects["date"] == spike_day)
+        & ((suspects["tenor"].astype(float) - 10.0).abs() < 1e-9)
+    ]
+    assert len(spike_hits) == 1
+    assert spike_hits.iloc[0]["known_at"] == spike_hits.iloc[0]["date"]
+
+    reversal_hits = suspects[
+        (suspects["kind"] == "reversal")
+        & (suspects["date"] == spike_day)
+        & ((suspects["tenor"].astype(float) - 10.0).abs() < 1e-9)
+    ]
+    assert len(reversal_hits) == 1
+    reversal_row = reversal_hits.iloc[0]
+    assert reversal_row["known_at"] > reversal_row["date"]
+    assert reversal_row["known_at"] == dates[61]  # 下一交易日
+
+
+def test_r21_known_at_real_data_causality() -> None:
+    if not REAL_PROCESSED.exists():
+        pytest.skip("缺少 data/processed/curve_long.parquet（先运行 fetch_data --offline）")
+    frame = pd.read_parquet(REAL_PROCESSED)
+    suspects = detect_suspect_dates(frame)
+
+    assert suspects["known_at"].notna().all()
+    assert (suspects["known_at"] >= suspects["date"]).all()
+    reversal = suspects.loc[suspects["kind"] == "reversal"]
+    assert len(reversal) > 0
+    assert (reversal["known_at"] > reversal["date"]).all()
+    non_reversal = suspects.loc[suspects["kind"] != "reversal"]
+    assert (non_reversal["known_at"] == non_reversal["date"]).all()
+
+    # 具体复核：reversal 的 known_at = 下一交易日
+    hit_30y = suspects[
+        (suspects["date"] == pd.Timestamp("2002-04-26"))
+        & ((suspects["tenor"].astype(float) - 30.0).abs() < 1e-9)
+        & (suspects["kind"] == "reversal")
+    ]
+    assert not hit_30y.empty
+    assert pd.Timestamp(hit_30y.iloc[0]["known_at"]) == pd.Timestamp("2002-04-27")
+    for tenor in (0.25, 1.0, 2.0):
+        hit = suspects[
+            (suspects["date"] == pd.Timestamp("2004-08-18"))
+            & ((suspects["tenor"].astype(float) - tenor).abs() < 1e-9)
+            & (suspects["kind"] == "reversal")
+        ]
+        assert not hit.empty
+        assert pd.Timestamp(hit.iloc[0]["known_at"]) == pd.Timestamp("2004-08-19")
+
+    # 因果过滤：2004-08-18 当天不可用，2004-08-19 收盘后才可用
+    before = filter_causally_usable(suspects, date(2004, 8, 18))
+    after = filter_causally_usable(suspects, date(2004, 8, 19))
+    assert (before["known_at"] <= pd.Timestamp("2004-08-18")).all()
+    assert len(after) > len(before)
+    assert (after["known_at"] <= pd.Timestamp("2004-08-19")).all()
+
+
+def test_r21_csv_contains_known_at(tmp_path: Path) -> None:
+    clean = _clean_panel_long()
+    panel = _panel_wide(clean)
+    spike_day = list(panel.index)[60]
+    clean.loc[
+        (clean["date"] == spike_day) & ((clean["tenor"].astype(float) - 10.0).abs() < 1e-9),
+        "ytm_pct",
+    ] += 0.80
+    output = tmp_path / "suspects.csv"
+    _, _, summary = write_suspect_report(clean, output=output)
+    written = pd.read_csv(output, parse_dates=["date", "known_at"])
+    assert "known_at" in written.columns
+    assert written["known_at"].notna().all()
+    assert (written["known_at"] >= written["date"]).all()
+    assert summary["known_at"]["n_missing"] == 0
+    assert summary["known_at"]["reversal_all_next_day"] is True
+    assert summary["known_at"]["n_later"] == int((written["known_at"] > written["date"]).sum())
+
+
+def test_r21_filter_causally_usable_requires_known_at() -> None:
+    legacy = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-01-02")],
+            "tenor": [10.0],
+            "term_label": ["10Y"],
+            "kind": ["idiosyncratic_spike"],
+            "prev_value": [2.0],
+            "value": [9.0],
+            "next_value": [2.0],
+            "delta_bp": [700.0],
+            "median_cross_delta_bp": [0.0],
+            "roundtrip_bp": [float("nan")],
+            "severity": ["high"],
+        }
+    )
+    with pytest.raises(DataValidationError, match="known_at"):
+        filter_causally_usable(legacy, date(2024, 1, 2))
+    empty = filter_causally_usable(pd.DataFrame(), date(2024, 1, 2))
+    assert empty.empty

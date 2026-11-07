@@ -73,7 +73,7 @@ import pandas as pd  # noqa: E402
 
 from ficc.config import get_config  # noqa: E402
 from ficc.curve.factors import factor_jump_sensitivity, observable_factors  # noqa: E402
-from ficc.curve.fitting import fit_panel  # noqa: E402
+from ficc.curve.products import build_fit_products, build_fit_summary  # noqa: E402
 from ficc.data.schema import CANONICAL_TENORS, TENOR_LABELS  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 
@@ -383,102 +383,43 @@ def main() -> int:
 
     panel, source = load_panel(cfg)
     fit_input = _fit_input(panel)
+    log.info("数据来源: %s", source)
     log.info("参与拟合: %d 个交易日；权重口径=%s", len(fit_input), weights_mode)
 
-    # ---- 两套拟合 × 两种模型分别落盘 ----
+    # ---- 用共享库函数生成拟合产品（R12：脚本与 pipeline 同一实现）----
     products: dict[tuple[str, str], tuple[pd.DataFrame, pd.DataFrame]] = {}
-    timings: dict[tuple[str, str], float] = {}
+    timings: dict[str, float] = {}
     for method in _METHODS:
-        for fit_mode, param_mode, residuals_mode in _FIT_MODES:
-            t0 = time.perf_counter()
-            params, residuals = fit_panel(
-                fit_input,
-                method=method,
-                weights=cfg.curve.weights,  # R07：显式传配置口径，不用默认值
-                param_mode=param_mode,
-                residuals_mode=residuals_mode,
-                progress=True,
-            )
-            timings[(method, fit_mode)] = time.perf_counter() - t0
-            products[(method, fit_mode)] = (params, residuals)
-            log.info(
-                "全样本 %s %s 拟合完成，用时 %.2fs",
-                method.upper(),
-                fit_mode,
-                timings[(method, fit_mode)],
-            )
-            params.to_csv(
-                report_dir / f"curve_fit_params_{method}_{fit_mode}.csv", encoding="utf-8-sig"
-            )
-            residuals.to_csv(
-                report_dir / f"curve_fit_residuals_{method}_{fit_mode}.csv", encoding="utf-8-sig"
-            )
-            fitted = fit_input + residuals / 100.0
-            fitted.to_csv(
-                report_dir / f"curve_fit_fitted_{method}_{fit_mode}.csv", encoding="utf-8-sig"
-            )
-
-    # ---- 统计长表 ----
-    rows: list[dict[str, object]] = []
-    for method in _METHODS:
+        t0 = time.perf_counter()
+        product_paths = build_fit_products(
+            cfg,
+            fit_input,
+            method=method,
+            out_dir=report_dir,
+            include_summary=False,
+        )
+        timings[method] = time.perf_counter() - t0
+        log.info(
+            "全样本 %s 产品落盘完成（free+anchored），用时 %.2fs",
+            method.upper(),
+            timings[method],
+        )
         for fit_mode, _, _ in _FIT_MODES:
-            params, residuals = products[(method, fit_mode)]
-            stats = overall_stats(params, residuals)
-            stats.update(
-                {
-                    "method": method.upper(),
-                    "fit_mode": fit_mode,
-                    "weights_mode": weights_mode,
-                    "source": source,
-                    "scope": "overall",
-                    "tenor": np.nan,
-                    "fit_seconds": timings[(method, fit_mode)],
-                }
+            params = pd.read_csv(
+                product_paths[f"params_{method}_{fit_mode}"], index_col=0, parse_dates=True
             )
-            rows.append(stats)
-            by_tenor = residual_table(residuals)
-            for tenor, row in by_tenor.iterrows():
-                rows.append(
-                    {
-                        "method": method.upper(),
-                        "fit_mode": fit_mode,
-                        "weights_mode": weights_mode,
-                        "source": source,
-                        "scope": "tenor",
-                        "tenor": float(tenor),
-                        "n_days": float(len(params)),
-                        "n_obs": float(row["n"]),
-                        "rmse_mean_bp": np.nan,
-                        "rmse_median_bp": np.nan,
-                        "rmse_p95_bp": np.nan,
-                        "rmse_max_bp": np.nan,
-                        "resid_mean_bp": row["mean_bp"],
-                        "resid_std_bp": row["std_bp"],
-                        "mae_bp": row["mae_bp"],
-                        "p95_abs_bp": row["p95_abs_bp"],
-                        "n_over_5bp": np.nan,
-                        "n_fail": np.nan,
-                        "n_unstable": np.nan,
-                        "b0_in_range_pct": np.nan,
-                        "b0_jump_p99_pp": np.nan,
-                        "b0_jump_max_pp": np.nan,
-                        "fit_seconds": np.nan,
-                    }
-                )
-    summary = pd.DataFrame(rows)
-    summary_csv = report_dir / "curve_fit_summary.csv"
-    summary.to_csv(summary_csv, index=False, encoding="utf-8-sig")
-    log.info("统计表: %s", summary_csv)
+            residuals = pd.read_csv(
+                product_paths[f"residuals_{method}_{fit_mode}"],
+                index_col=0,
+                parse_dates=True,
+            )
+            residuals.columns = pd.Index(residuals.columns.astype(float), name="tenor")
+            products[(method, fit_mode)] = (params, residuals)
 
-    # ---- 最差日清单（自由口径的可表达能力诊断；不剔除）----
+    # ---- 统计表 / 最差日清单（同样来自共享库函数）----
+    summary_paths = build_fit_summary(cfg, out_dir=report_dir, methods=_METHODS)
+    log.info("统计表: %s；最差日清单: %s", summary_paths["summary"], summary_paths["bad_dates"])
     free_nss = products[("nss", "free")][0]
-    bad = bad_dates(free_nss)
-    bad.insert(0, "weights_mode", weights_mode)
-    bad_csv = report_dir / "curve_fit_bad_dates.csv"
-    bad.to_csv(bad_csv, encoding="utf-8-sig")
-    log.info(
-        "最差拟合日（自由 NSS rmse > %.0fbp）: %d 天 → %s", RMSE_BAD_THRESHOLD_BP, len(bad), bad_csv
-    )
 
     # ---- 可观测因子（推荐口径，无识别性问题）----
     factors = observable_factors(panel)
@@ -560,7 +501,7 @@ def main() -> int:
                 f"max={s['rmse_max_bp']:.2f} | MAE={s['mae_bp']:.4f} "
                 f"p95|r|={s['p95_abs_bp']:.2f} | unstable={int(s['n_unstable'])} "
                 f"| b0∈[0.5,8]={s['b0_in_range_pct']:.1f}% "
-                f"|Δb0|p99={s['b0_jump_p99_pp']:.3f}pp | {timings[(method, fit_mode)]:.2f}s"
+                f"|Δb0|p99={s['b0_jump_p99_pp']:.3f}pp | {timings[method]:.2f}s(两套)"
             )
     free_median = float(products[("nss", "free")][0]["rmse_bp"].median())
     anchored_median = float(products[("nss", "anchored")][0]["rmse_bp"].median())
@@ -574,7 +515,9 @@ def main() -> int:
         print(f"  {day.date()}  rmse={value:7.2f}bp")
     print("\n可观测因子跳变敏感性（推荐因子口径）:")
     print(sensitivity.round(3).to_string())
-    print(f"\n统计表: {summary_csv}\n最差日清单: {bad_csv}\n图目录: {fig_dir}")
+    print(
+        f"\n统计表: {summary_paths['summary']}\n最差日清单: {summary_paths['bad_dates']}\n图目录: {fig_dir}"
+    )
     return 0
 
 

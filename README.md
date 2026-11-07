@@ -41,7 +41,8 @@
 ```bash
 make install          # 安装依赖（-e .）
 make fetch            # 抓取数据 → data/raw/ + 快照 manifest
-make fit              # 曲线拟合 NS/NSS + PCA
+make fit              # 当前曲线拟合与残差摘要
+make diagnostics      # 自由/锚定双产品，为 bias 提供残差面板
 make backtest         # 基线策略回测（含成本）
 make risk             # 风险报告：DV01/KRD/VaR/压力测试
 make serve            # Streamlit 演示界面
@@ -82,10 +83,10 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（254 项，全部离线）
+make check    # = ruff check + ruff format --check + pytest（366 项离线，exit 0）
 ```
 
-- 所有命令优先使用 `.venv/bin/python`，不依赖 anaconda 或系统 Python。
+- 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -104,11 +105,20 @@ make check    # = ruff check + ruff format --check + pytest（254 项，全部�
 - [x] Phase 0 数据契约 / 抓取管道生产化 / 2Y 回补（772/772 已验证）
 - [x] Phase 1 定价（计息/全价/久期/DV01 + 财政部公告外部对账）
 - [x] Phase 1 即期曲线 bootstrap（合成假设显式声明，往返误差 2.84e-14）
-- [x] Phase 1 KRD（即期曲线单点冲击，sum≈DV01 差 <1%）
-- [x] Phase 1 因子层（PCA 交叉校验 + 正交化 + 可观测因子口径修正）
-- [x] Phase 1 Carry/Roll-down 分解（T−1Y 目标，恒等式 <1bp）
-- [ ] Phase 2 策略与回测（闸门已开：KRD 已解锁、10Y 偏差已定性）
+- [x] Phase 1 KRD 数值算子（即期曲线单点冲击；结算日契约 R17 已修复，sum(KRD) vs DV01 差 0.12%–1.35%）
+- [x] Phase 1 因子接口（level_all/level_long/slope/curvature 固定契约；同口径 winsor PCA；验收映射显式化）
+- [x] Phase 1 Carry/Roll-down（弦长口径 R18 已修 + 原券老化重估；账本级独立 PnL 仍待接入）
+- [ ] Phase 2 组合与回测（**先做固定券账本与独立 PnL 对账**，再做约束与策略；R12–R21 已全部修复，但研究结论边界见方法论 §4.7/§4.8）
 - [ ] Phase 3 风险
 - [ ] Phase 4 机器学习（必做）
 - [ ] Phase 5 强化学习（必做）
 - [ ] Phase 6 展示与报告（中英双语 + Dashboard）
+
+2026-11-07 第二轮评审（R12–R21）已全部修复：
+
+- `make check` → **exit 0（366 项离线测试）**：pytest 配置禁用 `debugging` 插件以规避 readline 段错误。
+- `make pipeline` 六 stage **在空报告目录可端到端跑通**：拟合产品由 `build_fit_products` 当次生成并写 meta 指纹，`bias` 只消费指纹匹配的残差。
+- `--config / --out-dir / --start / --end` 全链路透传，隔离运行不写默认目录。
+- 更正后的数字：260010 的 10Y KRD 桶占 **92.84%**（原 98% 为算术错误）；各 KRD 与 YTM DV01 相对差 **0.12%–1.35%**；可疑清单 **289 条记录 / 229 个唯一点 / 109 个日期**，全部带 `known_at`；carry 横截面 87 个采样日（2019-01-28 → 2025-12-18）。
+- 研究结论边界未放宽：10Y 残差只能称「持续的**模型相对**残差」，经济解释与交易性均标记 untested；2024–2025 已参与方法选择，不再称"未触碰测试集"。
+- 详细证据见 [code.md R12–R21](docs/code.md)、[方法论 §4.7/§4.8/§7.3/§8.3](docs/03_methodology.md)、[计划 §12.6](docs/01_project_plan.md)。

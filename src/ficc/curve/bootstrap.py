@@ -24,9 +24,13 @@
    - 零息曲线本身用**连续复利**表示：``df(t) = exp(-z(t)/100 · t)``，``z`` 为百分数。
 4. **插值**：相邻已知零息点之间对**零息利率做线性插值**（不是远期插值，也不是
    对贴现因子插值）；区间外按端点两点的斜率线性外推。
-5. **结算**：按 ``cfg.pricing.settlement_lag_days``（当前 T+1）从 ``curve.as_of``
-   推算结算日；``times`` 为**自结算日**起的名义年限（直接采用期限标签，不做
-   ACT/ACT 日历分数调整——这是本合成曲线的一处已知简化）。
+5. **结算（R17）**：观察日 ``observation_date = curve.as_of``；结算日
+   ``settlement_date = 观察日 + T+N 个**工作日**``（统一走
+   :mod:`ficc.utils.calendar`，当前 T+1；节假日表尚未接入，见该模块 TODO）。
+   例：2024-06-28（周五）→ 2024-07-01（周一），**不是** 2024-06-29（周六）。
+   ``times`` 为**自结算日**起的名义年限（直接采用期限标签，不做 ACT/ACT 日历
+   分数调整——这是本合成曲线的一处已知简化，不是官方即期曲线的对账口径）。
+   调用方可用 ``bootstrap_spot(..., settlement=...)`` 显式覆盖结算日。
 6. 曲线外的期限靠**线性外推**，仅作定价占位，不应作为交易依据。
 
 核心恒等式（bootstrap 正确性的硬证据）
@@ -47,7 +51,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 import numpy as np
@@ -57,6 +61,8 @@ from scipy.optimize import brentq
 from ficc.config import get_config
 from ficc.curve.curve import Curve
 from ficc.data.schema import TENOR_LABELS
+from ficc.utils.calendar import is_business_day
+from ficc.utils.calendar import settlement_date as _calendar_settlement_date
 
 __all__ = [
     "SpotCurve",
@@ -287,9 +293,15 @@ class SpotCurve:
     Parameters
     ----------
     as_of : date
-        曲线日期（估值曲线的日期）。
+        曲线日期（= 观察日）。保留该字段是为了向后兼容；它与
+        ``observation_date`` 必须一致（见 ``__post_init__``）。
     times : np.ndarray
         零息节点（年，自**结算日**起），严格递增、无 NaN。
+    observation_date : date | None
+        观察日（曲线估值日），默认等于 ``as_of``。
+    settlement_date : date | None
+        结算日（现金流/贴现起点，T+N **工作日**），默认等于 ``observation_date``；
+        必须是工作日且 ≥ ``observation_date``。
     zero_rates_pct : np.ndarray
         连续复利零息利率，**百分数**（``2.35`` 表示 2.35%）；与 ``times`` 等长。
     method : str
@@ -311,6 +323,8 @@ class SpotCurve:
     method: str
     assumptions: Mapping[str, Any] = field(default_factory=dict)
     source_curve_method: str = ""
+    observation_date: date | None = None
+    settlement_date: date | None = None
 
     def __post_init__(self) -> None:
         as_of = self.as_of
@@ -331,8 +345,36 @@ class SpotCurve:
         if np.any(np.diff(times) <= 0):
             raise ValueError("times 必须严格递增且不重复")
         method = str(self.method)
+
+        def _as_date(value: date | datetime | None, name: str) -> date | None:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                value = value.date()
+            if not isinstance(value, date):
+                raise TypeError(f"{name} 必须是 datetime.date，实际 {type(value).__name__}")
+            return value
+
+        observation_date = _as_date(self.observation_date, "observation_date") or as_of
+        if observation_date != as_of:
+            raise ValueError(
+                f"observation_date({observation_date}) 必须等于 as_of({as_of})；"
+                "as_of 是曲线估值日，两者是同一概念"
+            )
+        settlement_date = _as_date(self.settlement_date, "settlement_date") or observation_date
+        if settlement_date < observation_date:
+            raise ValueError(
+                f"settlement_date({settlement_date}) 不能早于 observation_date({observation_date})"
+            )
+        if not is_business_day(settlement_date):
+            raise ValueError(
+                f"settlement_date({settlement_date}) 不是工作日；结算日必须按工作日规则推算"
+                "（见 ficc.utils.calendar）"
+            )
         assumptions = dict(self.assumptions or {})
         object.__setattr__(self, "as_of", as_of)
+        object.__setattr__(self, "observation_date", observation_date)
+        object.__setattr__(self, "settlement_date", settlement_date)
         object.__setattr__(self, "times", times)
         object.__setattr__(self, "zero_rates_pct", zeros)
         object.__setattr__(self, "method", method)
@@ -404,6 +446,7 @@ class SpotCurve:
 def bootstrap_spot(
     curve: Curve,
     *,
+    settlement: date | None = None,
     freq_rule: Mapping[str, int] | None = None,
 ) -> SpotCurve:
     """从 YTM 曲线 bootstrap 合成即期（零息）曲线。
@@ -423,6 +466,11 @@ def bootstrap_spot(
     ----------
     curve : Curve
         源曲线（通常为 ``ficc.curve.fit_curve`` 的产物）；用其 ``tenors``/``rates``。
+    settlement : date | None
+        结算日（现金流/贴现起点）。``None`` 时按
+        ``ficc.utils.calendar.settlement_date(curve.as_of, cfg.pricing.settlement_lag_days)``
+        推算（当前 T+1，**工作日**口径；2024-06-28 周五 → 2024-07-01 周一）。
+        显式传入时必须 ≥ ``curve.as_of`` 且为工作日，否则抛 ``ValueError``。
     freq_rule : Mapping[str, int] | None
         付息频率覆盖（键支持 ``"10Y"/"10.0"/10`` 等）；``None`` 用默认中债规则：
         ``<1Y`` 零息、``1Y–7Y`` 年付、``≥10Y`` 半年付。
@@ -430,12 +478,14 @@ def bootstrap_spot(
     Returns
     -------
     SpotCurve
-        连续复利零息曲线（百分数），``assumptions`` 内含全部合成假设留痕。
+        连续复利零息曲线（百分数）；``observation_date``/``settlement_date`` 记录
+        日期契约，``assumptions`` 内含全部合成假设留痕（含实际结算日与来源）。
 
     Raises
     ------
     ValueError
-        曲线期限非法、频率规则无法解析/期限不匹配、求根失败等。
+        曲线期限非法、频率规则无法解析/期限不匹配、结算日非法（早于观察日或
+        非工作日）、求根失败等。
 
     Examples
     --------
@@ -476,7 +526,27 @@ def bootstrap_spot(
 
     cfg = get_config()
     lag = int(cfg.pricing.settlement_lag_days)
-    settlement = curve.as_of + timedelta(days=lag)
+    observation = curve.as_of
+    if settlement is None:
+        resolved_settlement = _calendar_settlement_date(observation, lag)
+        settlement_source = "config"
+    else:
+        resolved_settlement = settlement
+        if isinstance(resolved_settlement, datetime):
+            resolved_settlement = resolved_settlement.date()
+        if not isinstance(resolved_settlement, date):
+            raise TypeError(f"settlement 必须是 datetime.date，实际 {type(settlement).__name__}")
+        settlement_source = "explicit"
+    if resolved_settlement < observation:
+        raise ValueError(
+            f"settlement({resolved_settlement}) 不能早于 observation date({observation})"
+        )
+    if not is_business_day(resolved_settlement):
+        raise ValueError(
+            f"settlement({resolved_settlement}) 不是工作日；结算日必须按工作日规则推算"
+            "（2024-06-28 周五的 T+1 是 2024-07-01 周一，不是 06-29 周六）"
+        )
+    settlement = resolved_settlement
 
     # 解析频率规则；若用户给了规则，检查键确实对应曲线期限（不静默忽略拼写错误）
     if freq_rule is None:
@@ -549,8 +619,14 @@ def bootstrap_spot(
         "extrapolation": "区间外按端点两点斜率线性外推（仅占位，不作交易依据）",
         "compounding": "零息曲线为连续复利、百分数；df(t) = exp(-z/100 · t)",
         "date_basis": "times 为自结算日起的名义年限（直接采用期限标签，不做 ACT/ACT 日历分数调整）",
-        "settlement_lag_days": lag,
+        "observation_date": observation.isoformat(),
         "settlement_date": settlement.isoformat(),
+        "settlement_lag_days": lag,
+        "settlement_source": settlement_source,
+        "settlement_rule": (
+            "observation + N 个工作日（ficc.utils.calendar；节假日表待接入）；"
+            "times 为自结算日起的名义年限，未做 ACT/ACT 日历分数调整"
+        ),
         "source_curve_as_of": curve.as_of.isoformat(),
         "source_curve_method": curve.method,
         "source_curve_tenors": [float(t) for t in tenors],
@@ -566,6 +642,8 @@ def bootstrap_spot(
         method="par_bootstrap",
         assumptions=assumptions,
         source_curve_method=str(curve.method),
+        observation_date=observation,
+        settlement_date=settlement,
     )
 
 

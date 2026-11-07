@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from ficc.config import get_config
+from ficc.data.clean import find_duplicate_conflicts
 from ficc.data.schema import CANONICAL_TENORS, TENOR_LABELS, DataValidationError
 from ficc.logging import get_logger
 
@@ -49,6 +50,59 @@ def _tenor_label(tenor: float) -> str:
         if abs(float(tenor) - value) <= 1e-9:
             return label
     return f"{tenor:g}Y"
+
+
+# ---------------------------------------------------------------------------
+# 统一重复校验（R20：一致重复可去重，冲突必须报错）
+# ---------------------------------------------------------------------------
+def _normalise_long_frame(long_df: pd.DataFrame, *, context: str = "长表") -> pd.DataFrame:
+    """校验必需列并把 date/tenor/ytm_pct 规范化为正确 dtypes（不去重）。"""
+    if long_df is None or not isinstance(long_df, pd.DataFrame):
+        raise DataValidationError(f"{context}：期望 DataFrame，实际 {type(long_df).__name__}")
+    if long_df.empty:
+        raise DataValidationError(f"{context}：输入为空表")
+    missing = [c for c in ("date", "tenor", "ytm_pct") if c not in long_df.columns]
+    if missing:
+        raise DataValidationError(
+            f"{context}：缺少必需列 {missing}；实际列 {list(long_df.columns)}"
+        )
+
+    work = long_df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="raise")
+    work["tenor"] = pd.to_numeric(work["tenor"], errors="raise")
+    work["ytm_pct"] = pd.to_numeric(work["ytm_pct"], errors="raise")
+    return work
+
+
+def _dedupe_validated(long_df: pd.DataFrame, *, context: str = "长表") -> pd.DataFrame:
+    """统一重复校验 + 去重：返回按 (date, tenor) 排序的唯一长表。
+
+    与 :func:`ficc.data.clean.dedupe_long_frame` 同一纪律：
+
+    * **一致重复**（同 date/tenor 的 ytm_pct 完全相同）→ 去重；
+    * **冲突重复**（取值不同）→ 抛 :class:`DataValidationError`，消息列出
+      ``date/tenor/各取值/行数``，绝不静默 ``keep="last"``；
+    * 校验与排序对输入行序不敏感（正序/倒序结果与报错消息一致）。
+
+    Raises
+    ------
+    DataValidationError
+        空表、缺列、日期无法解析、或存在冲突重复。
+    """
+    work = _normalise_long_frame(long_df, context=context)
+
+    conflicts = find_duplicate_conflicts(work, subset=("date", "tenor"))
+    if not conflicts.empty:
+        conflicts = conflicts.sort_values(["date", "tenor"]).reset_index(drop=True)
+        detail = conflicts.head(20).to_string(index=False)
+        raise DataValidationError(
+            f"{context}：发现 {len(conflicts)} 组 (date, tenor) 收益率冲突，拒绝静默去重；"
+            f"冲突明细（最多 20 组）：\n{detail}"
+        )
+
+    ordered = work.sort_values(["date", "tenor"], kind="mergesort").reset_index(drop=True)
+    unique_mask = ~ordered.duplicated(subset=["date", "tenor"])
+    return ordered.loc[unique_mask].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +133,8 @@ def check_jumps(
     ]
     if long_df is None or long_df.empty:
         return pd.DataFrame(columns=columns)
-    work = long_df.loc[:, ["date", "tenor", "ytm_pct"]].copy()
-    work["date"] = pd.to_datetime(work["date"], errors="raise")
-    work = (
-        work.drop_duplicates(subset=["date", "tenor"], keep="last")
-        .sort_values(["tenor", "date"])
-        .reset_index(drop=True)
-    )
+    work = _dedupe_validated(long_df, context="异常跳变检查")
+    work = work.sort_values(["tenor", "date"]).reset_index(drop=True)
     work["prev_ytm_pct"] = work.groupby("tenor")["ytm_pct"].shift(1)
     work["prev_date"] = work.groupby("tenor")["date"].shift(1)
     work["diff_bp"] = (work["ytm_pct"] - work["prev_ytm_pct"]) * 100.0
@@ -129,8 +178,7 @@ def tenor_missing_report(
                 "last_date",
             ]
         )
-    work = long_df.copy()
-    work["date"] = pd.to_datetime(work["date"], errors="raise")
+    work = _dedupe_validated(long_df, context="期限缺失检查")
     all_dates = pd.DatetimeIndex(sorted(work["date"].unique()))
     n_expected = len(all_dates)
     rows: list[dict[str, Any]] = []
@@ -167,8 +215,7 @@ def coverage_matrix(
     columns = ["n_dates", *[_tenor_label(float(t)) for t in grid]]
     if long_df is None or long_df.empty:
         return pd.DataFrame(columns=columns)
-    work = long_df.copy()
-    work["date"] = pd.to_datetime(work["date"], errors="raise")
+    work = _dedupe_validated(long_df, context="期限覆盖检查")
     work["year"] = work["date"].dt.year
     matched, is_canonical = _match_grid(work["tenor"].to_numpy(), grid)
     work = work.loc[is_canonical].copy()
@@ -199,7 +246,8 @@ def missing_days_report(long_df: pd.DataFrame) -> pd.DataFrame:
     columns = ["date", "weekday", "gap_id", "gap_start", "gap_end", "gap_days"]
     if long_df is None or long_df.empty:
         return pd.DataFrame(columns=columns)
-    dates = pd.DatetimeIndex(sorted(pd.to_datetime(long_df["date"]).unique()))
+    work = _dedupe_validated(long_df, context="缺失交易日检查")
+    dates = pd.DatetimeIndex(sorted(work["date"].unique()))
     if len(dates) == 0:
         return pd.DataFrame(columns=columns)
     all_days = pd.date_range(dates.min(), dates.max(), freq="D")
@@ -318,6 +366,7 @@ SUSPECT_COLUMNS: tuple[str, ...] = (
     "tenor",
     "term_label",
     "kind",
+    "known_at",
     "prev_value",
     "value",
     "next_value",
@@ -335,15 +384,12 @@ _SEVERITY_RANK: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
 
 
 def _panel_from_long(long_df: pd.DataFrame) -> pd.DataFrame:
-    """长表 → 宽表面板（index=交易日，columns=期限，values=收益率%）。"""
-    work = long_df.loc[:, ["date", "tenor", "ytm_pct"]].copy()
-    work["date"] = pd.to_datetime(work["date"], errors="raise")
-    work["tenor"] = pd.to_numeric(work["tenor"], errors="raise")
-    work["ytm_pct"] = pd.to_numeric(work["ytm_pct"], errors="raise")
-    work = work.drop_duplicates(subset=["date", "tenor"], keep="last")
-    panel = work.pivot_table(
-        index="date", columns="tenor", values="ytm_pct", aggfunc="last"
-    ).sort_index()
+    """长表 → 宽表面板（index=交易日，columns=期限，values=收益率%）。
+
+    R20：先走 :func:`_dedupe_validated`（一致重复去重、冲突抛错），再 pivot。
+    """
+    work = _dedupe_validated(long_df, context="可疑点检测")
+    panel = work.pivot(index="date", columns="tenor", values="ytm_pct").sort_index()
     panel.columns = pd.Index([float(t) for t in panel.columns], name="tenor")
     return panel
 
@@ -410,6 +456,12 @@ def detect_suspect_dates(
     **只标记、不剔除**：原始数据与版本目录不改；下游（PCA/因子）自行决定
     按 date 排除或 winsor。
 
+    **因果可用性（R21）**：输出含 ``known_at`` 列——该异常在何时才能被确认：
+    ``reversal`` 用到了 t+1 的数据，因此 ``known_at = 下一交易日``；
+    ``idiosyncratic_spike`` / ``level_outlier`` 只用当日收盘数据，``known_at = date``。
+    下游用于决策时必须满足 ``known_at <= decision_date``（即
+    :func:`filter_causally_usable`），否则就是前视。
+
     Parameters
     ----------
     long_df : pandas.DataFrame
@@ -432,9 +484,9 @@ def detect_suspect_dates(
     Returns
     -------
     pandas.DataFrame
-        列：``date, tenor, term_label, kind, prev_value, value, next_value,
-        delta_bp, median_cross_delta_bp, roundtrip_bp, severity``；按严重度、
-        ``|delta_bp|`` 降序。无异常时返回空表（列齐全）。
+        列：``date, tenor, term_label, kind, known_at, prev_value, value,
+        next_value, delta_bp, median_cross_delta_bp, roundtrip_bp, severity``；
+        按严重度、``|delta_bp|`` 降序。无异常时返回空表（列齐全）。
 
     Raises
     ------
@@ -514,12 +566,18 @@ def detect_suspect_dates(
                 if kind == "reversal" and pd.notna(next_change)
                 else float("nan")
             )
+            # R21：reversal 依赖 t+1，确认日 = 下一交易日；其余当日即可确认
+            if kind == "reversal" and row_idx + 1 < len(dates):
+                known_at = dates[row_idx + 1]
+            else:
+                known_at = dates[row_idx]
             records.append(
                 {
                     "date": dates[row_idx],
                     "tenor": tenors[col_idx],
                     "term_label": _tenor_label(tenors[col_idx]),
                     "kind": kind,
+                    "known_at": known_at,
                     "prev_value": previous,
                     "value": current,
                     "next_value": upcoming,
@@ -538,6 +596,9 @@ def detect_suspect_dates(
     if frame.empty:
         return frame
     frame["date"] = pd.to_datetime(frame["date"])
+    frame["known_at"] = pd.to_datetime(frame["known_at"])
+    if frame["known_at"].isna().any():  # pragma: no cover - 防御性检查
+        frame["known_at"] = frame["known_at"].fillna(frame["date"])
     frame["_severity_rank"] = frame["severity"].map(_SEVERITY_RANK).fillna(9)
     frame["_abs_delta"] = frame["delta_bp"].abs().fillna(0.0)
     frame = frame.sort_values(
@@ -558,6 +619,12 @@ def suspect_summary(suspects: pd.DataFrame) -> dict[str, Any]:
         "by_kind": {},
         "by_year": {},
         "by_tenor": {},
+        "known_at": {
+            "n_missing": 0,
+            "n_same_day": 0,
+            "n_later": 0,
+            "reversal_all_next_day": True,
+        },
     }
     if suspects is None or suspects.empty:
         return empty
@@ -573,6 +640,27 @@ def suspect_summary(suspects: pd.DataFrame) -> dict[str, Any]:
     }
     by_kind = {str(kind): int(count) for kind, count in frame["kind"].value_counts().items()}
     severity = frame["severity"].value_counts()
+    if "known_at" in frame.columns:
+        known = pd.to_datetime(frame["known_at"])
+        same_day = int((known.dt.normalize() == frame["date"].dt.normalize()).sum())
+        later = int((known > frame["date"]).sum())
+        reversal = frame.loc[frame["kind"] == "reversal"]
+        reversal_all_next = bool(
+            len(reversal) == 0 or (pd.to_datetime(reversal["known_at"]) > reversal["date"]).all()
+        )
+        known_summary = {
+            "n_missing": int(known.isna().sum()),
+            "n_same_day": same_day,
+            "n_later": later,
+            "reversal_all_next_day": reversal_all_next,
+        }
+    else:  # pragma: no cover - 兼容旧版 suspects 表
+        known_summary = {
+            "n_missing": len(frame),
+            "n_same_day": 0,
+            "n_later": 0,
+            "reversal_all_next_day": False,
+        }
     return {
         "n_total": len(frame),
         "n_high": int(severity.get("high", 0)),
@@ -581,6 +669,7 @@ def suspect_summary(suspects: pd.DataFrame) -> dict[str, Any]:
         "by_kind": by_kind,
         "by_year": by_year,
         "by_tenor": by_tenor,
+        "known_at": known_summary,
     }
 
 
@@ -641,6 +730,12 @@ def print_suspect_summary(
     emit(f"  按类型     : {summary['by_kind']}")
     emit(f"  按年份     : {summary['by_year']}")
     emit(f"  按期限     : {summary['by_tenor']}")
+    known = summary.get("known_at", {})
+    emit(
+        f"  known_at   : 缺失={known.get('n_missing', 0)} / 当日={known.get('n_same_day', 0)}"
+        f" / 次日={known.get('n_later', 0)} / reversal 全部次日确认="
+        f"{known.get('reversal_all_next_day', False)}"
+    )
     if suspects is None or suspects.empty:
         emit("  （无）")
         emit("=" * 78)
@@ -653,6 +748,7 @@ def print_suspect_summary(
             "date",
             "term_label",
             "kind",
+            "known_at",
             "prev_value",
             "value",
             "delta_bp",
@@ -667,6 +763,44 @@ def print_suspect_summary(
     emit("说明：2002–2005 的孤立跳变多为官方文件异常；下游 PCA/因子分析可")
     emit("      按 date 排除这些交易日，或对收益率做 winsor/稳健标准化。")
     emit("=" * 78)
+
+
+def filter_causally_usable(
+    suspects: pd.DataFrame,
+    decision_date: date,
+) -> pd.DataFrame:
+    """返回在 ``decision_date`` 决策时可用的可疑点（``known_at <= decision_date``）。
+
+    R21 的因果纪律：``reversal`` 依赖下一交易日数据，只有等到次日收盘后才能确认；
+    用 ``date`` 直接过滤会引入前视。本函数按 ``known_at`` 过滤：
+
+    >>> suspects = detect_suspect_dates(curve_long)
+    >>> usable = filter_causally_usable(suspects, decision_date=date(2013, 6, 28))
+
+    Parameters
+    ----------
+    suspects : pandas.DataFrame
+        :func:`detect_suspect_dates` 的输出（或已读入的 CSV）。
+    decision_date : date
+        决策日（含当天收盘后已知的信息）。
+
+    Returns
+    -------
+    pandas.DataFrame
+        仅含 ``known_at <= decision_date`` 的行，按原顺序返回；无 ``known_at``
+        列时抛 ``DataValidationError``（防止旧版清单误用）。
+    """
+    if suspects is None or suspects.empty:
+        return pd.DataFrame(columns=list(SUSPECT_COLUMNS))
+    if "known_at" not in suspects.columns:
+        raise DataValidationError(
+            "可疑点清单缺少 known_at 列（旧版报告？）；请重新生成 reports/data_quality_suspect.csv"
+        )
+    frame = suspects.copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="raise")
+    frame["known_at"] = pd.to_datetime(frame["known_at"], errors="raise")
+    mask = frame["known_at"].dt.date <= decision_date
+    return frame.loc[mask].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -763,8 +897,9 @@ def run_quality_checks(
     Parameters
     ----------
     long_df : pandas.DataFrame
-        长表（``date / tenor / ytm_pct``）。允许包含重复行——重复会先被
-        单独统计进 ``duplicates``，再在后续检查中按最后一条去重。
+        长表（``date / tenor / ytm_pct``）。允许包含**一致重复**（数值相同：
+        先统计进 ``duplicates`` 再统一去重）；若同一 (date, tenor) 数值冲突，
+        抛 :class:`DataValidationError` 并列明细（R20，绝不静默覆盖）。
     jump_threshold_bp : float
         跳变阈值（bp）。
     start, end : date | None
@@ -775,27 +910,17 @@ def run_quality_checks(
     DataValidationError
         输入为空表或缺少必需列。
     """
-    if long_df is None or not isinstance(long_df, pd.DataFrame):
-        raise DataValidationError(f"质量检查：期望 DataFrame，实际 {type(long_df).__name__}")
-    if long_df.empty:
-        raise DataValidationError("质量检查：输入为空表，无法评估")
-    missing = [c for c in ("date", "tenor", "ytm_pct") if c not in long_df.columns]
-    if missing:
-        raise DataValidationError(f"质量检查：缺少必需列 {missing}；实际列 {list(long_df.columns)}")
-
-    work = long_df.copy()
-    work["date"] = pd.to_datetime(work["date"], errors="raise")
-    work["tenor"] = pd.to_numeric(work["tenor"], errors="raise")
-    work["ytm_pct"] = pd.to_numeric(work["ytm_pct"], errors="raise")
+    raw = _normalise_long_frame(long_df, context="质量报告")
     if start is not None:
-        work = work.loc[work["date"].dt.date >= start]
+        raw = raw.loc[raw["date"].dt.date >= start]
     if end is not None:
-        work = work.loc[work["date"].dt.date <= end]
-    if work.empty:
+        raw = raw.loc[raw["date"].dt.date <= end]
+    if raw.empty:
         raise DataValidationError(f"质量检查：区间 [{start}, {end}] 内无数据")
 
-    duplicate_detail, duplicate_summary = duplicate_report(work)
-    clean_work = work.drop_duplicates(subset=["date", "tenor"], keep="last").reset_index(drop=True)
+    # 先在原始（含重复）数据上统计年度文件重叠；再走统一校验去重（冲突抛错）
+    duplicate_detail, duplicate_summary = duplicate_report(raw)
+    clean_work = _dedupe_validated(raw, context="质量报告")
 
     jumps = check_jumps(clean_work, threshold_bp=jump_threshold_bp)
     missing_by_tenor = tenor_missing_report(clean_work, grid=grid)

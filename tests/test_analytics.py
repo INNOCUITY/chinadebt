@@ -267,21 +267,31 @@ def test_discount_analytics_match_finite_diff() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 即期曲线 KRD
+# 即期曲线 KRD（含 R17 日期契约）
 # ---------------------------------------------------------------------------
 class SyntheticSpotCurve:
     """合成即期（零息）曲线：节点间线性插值、首尾平推。
 
-    只实现 KRD 依赖的鸭子类型接口 ``times`` / ``zero_rate(t)`` / ``discount(t)``；
-    刻意**不** import ``ficc.curve.bootstrap``（曲线层并行开发，避免循环依赖）。
-    零息利率为连续复利、单位百分数，故 ``discount(t) = exp(-z(t)/100·t)``。
+    只实现 KRD 依赖的鸭子类型接口 ``times`` / ``zero_rate(t)`` / ``discount(t)``，
+    并可选暴露 ``observation_date`` / ``settlement_date`` / ``as_of`` 供 R17
+    日期契约校验；刻意**不** import ``ficc.curve.bootstrap``（曲线层并行开发，
+    避免循环依赖）。零息利率为连续复利、单位百分数。
     """
 
-    def __init__(self, times: list[float], zero_rates_pct: list[float]) -> None:
+    def __init__(
+        self,
+        times: list[float],
+        zero_rates_pct: list[float],
+        *,
+        observation_date: date | None = None,
+        settlement_date: date | None = None,
+    ) -> None:
         self.times = np.asarray(times, dtype=float)
         self._rates = np.asarray(zero_rates_pct, dtype=float)
         if self.times.size != self._rates.size or np.any(np.diff(self.times) <= 0):
             raise ValueError("times/rates 必须等长且 times 严格递增")
+        self.observation_date = observation_date
+        self.settlement_date = settlement_date
 
     def zero_rate(self, t: float | np.ndarray) -> float | np.ndarray:
         scalar = np.ndim(t) == 0
@@ -293,10 +303,24 @@ class SyntheticSpotCurve:
         return np.exp(-self.zero_rate(t_arr) / 100.0 * t_arr)
 
 
-def make_spot() -> SyntheticSpotCurve:
-    """默认即期曲线 z(t) = 1.8 + 0.05·t（百分数，连续复利），节点取 KRD 关键期限。"""
+def make_spot_curve(
+    *,
+    observation_date: date | None = None,
+    settlement_date: date | None = None,
+) -> SyntheticSpotCurve:
+    """z(t) = 1.8 + 0.05·t（连续复利，百分数），节点取 KRD 关键期限。"""
     keys = [float(t) for t in get_config().risk.key_tenors_krd]
-    return SyntheticSpotCurve(keys, [1.8 + 0.05 * t for t in keys])
+    return SyntheticSpotCurve(
+        keys,
+        [1.8 + 0.05 * t for t in keys],
+        observation_date=observation_date,
+        settlement_date=settlement_date,
+    )
+
+
+def make_spot(settlement: date | None = None) -> SyntheticSpotCurve:
+    """观察日 = 结算日 = ``settlement`` 的合成即期曲线（None 时不带日期字段）。"""
+    return make_spot_curve(observation_date=settlement, settlement_date=settlement)
 
 
 def spot_implied_ytm(bond: BondStatic, settlement: date, spot: SyntheticSpotCurve) -> float:
@@ -309,11 +333,12 @@ def spot_implied_ytm(bond: BondStatic, settlement: date, spot: SyntheticSpotCurv
     return ytm_from_dirty_price(bond, settlement, pv)
 
 
+# ---- 基本数值与一致性 ------------------------------------------------
 def test_key_rate_durations_10y_vector_and_sum() -> None:
     """10Y 国债的 KRD：关键期限齐全、多头为负、sum ≈ 即期 DV01（相对误差 <1e-3）。"""
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
+    bond = make_bond()
     krd = key_rate_durations(bond, settle, spot)
 
     expected_keys = {float(t) for t in get_config().risk.key_tenors_krd}
@@ -334,8 +359,8 @@ def test_key_rate_durations_10y_vector_and_sum() -> None:
 
 def test_krd_sum_consistency_for_30y_bond() -> None:
     """30Y 长券：sum(KRD) 与即期 DV01 相对差仍 <1e-3，与 YTM DV01 差 <2%。"""
-    spot = make_spot()
     settle = date(2026, 11, 4)
+    spot = make_spot(settle)
     krd = key_rate_durations(BOND_30Y, settle, spot)
     assert sum(krd.values()) == pytest.approx(spot_dv01(BOND_30Y, settle, spot), rel=1e-3)
     ytm = spot_implied_ytm(BOND_30Y, settle, spot)
@@ -344,9 +369,9 @@ def test_krd_sum_consistency_for_30y_bond() -> None:
 
 def test_krd_sum_vs_ytm_dv01_within_2pct() -> None:
     """即期口径 sum(KRD) 与 YTM 口径 dv01() 相差 <2%，差异来源见 docstring。"""
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
+    bond = make_bond()
     krd_total = abs(sum(key_rate_durations(bond, settle, spot).values()))
     ytm = spot_implied_ytm(bond, settle, spot)
     assert krd_total == pytest.approx(dv01(bond, settle, ytm), rel=0.02)
@@ -355,9 +380,11 @@ def test_krd_sum_vs_ytm_dv01_within_2pct() -> None:
 def test_key_rate_durations_flat_spot_curve() -> None:
     """平坦即期曲线：KRD 全部为负、sum 闭合，长端敞口大于短端。"""
     keys = [float(t) for t in get_config().risk.key_tenors_krd]
-    spot = SyntheticSpotCurve(keys, [2.0] * len(keys))
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = SyntheticSpotCurve(
+        keys, [2.0] * len(keys), observation_date=settle, settlement_date=settle
+    )
+    bond = make_bond()
     krd = key_rate_durations(bond, settle, spot)
 
     assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, spot), rel=1e-4)
@@ -367,8 +394,8 @@ def test_key_rate_durations_flat_spot_curve() -> None:
 
 def test_key_rate_durations_zero_coupon_single_point() -> None:
     """零息债：KRD 全部落在到期期限那一个关键点上，且等于即期 DV01。"""
-    spot = make_spot()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
     # 存续期恰为 10.0 年（3650 天），对应 10Y 关键期限
     zero = make_bond(
         code="SYN-Z10.IB",
@@ -405,9 +432,9 @@ def test_key_rate_weights_linear_between_keys_and_flat_extrapolation() -> None:
 
 def test_key_rate_durations_cashflow_before_first_key() -> None:
     """现金流早于首个关键期限（如 26 天后到期的票息）按平推归到首节点。"""
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 10, 20)  # 下一付息日 2026-11-15，t≈0.071 年 < 首个关键点 1Y
+    spot = make_spot(settle)
+    bond = make_bond()
     krd = key_rate_durations(bond, settle, spot)
     assert krd[1.0] < 0.0
     assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, spot), rel=1e-3)
@@ -415,8 +442,8 @@ def test_key_rate_durations_cashflow_before_first_key() -> None:
 
 def test_key_rate_durations_cashflow_beyond_last_key() -> None:
     """现金流晚于最后一个关键期限（55Y 零息债）按平推归到末节点。"""
-    spot = make_spot()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
     long_zero = make_bond(
         code="SYN-Z55.IB",
         issue_date=settle,
@@ -435,16 +462,16 @@ def test_key_rate_durations_uses_internal_fixed_1bp() -> None:
     """KRD 内部固定 1bp 步长：没有 bp 参数，重复调用结果一致（不做外部步长差分）。"""
     params = inspect.signature(key_rate_durations).parameters
     assert "bp" not in params and "bump_bp" not in params
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
+    bond = make_bond()
     assert key_rate_durations(bond, settle, spot) == key_rate_durations(bond, settle, spot)
 
 
 def test_key_rate_durations_validates_inputs() -> None:
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
+    bond = make_bond()
     with pytest.raises(TypeError, match="spot 缺少必需成员"):
         key_rate_durations(bond, settle, object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="严格递增"):
@@ -460,6 +487,8 @@ def test_key_rate_durations_accepts_scalar_only_spot_discount() -> None:
 
     class ScalarOnlySpot:
         times = knots
+        observation_date = date(2026, 5, 28)
+        settlement_date = date(2026, 5, 28)
 
         def zero_rate(self, t: float) -> float:
             return float(np.interp(float(t), knots, levels))
@@ -472,17 +501,104 @@ def test_key_rate_durations_accepts_scalar_only_spot_discount() -> None:
     bond = make_bond()
     settle = date(2026, 5, 28)
     krd = key_rate_durations(bond, settle, ScalarOnlySpot())
-    assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, make_spot()), rel=1e-3)
+    assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, make_spot(settle)), rel=1e-3)
 
 
 def test_spot_dv01_matches_parallel_bump() -> None:
     """spot_dv01 与「所有现金流时间的折算因子乘以 exp(-1e-4·t)」一致。"""
-    spot = make_spot()
-    bond = make_bond()
     settle = date(2026, 5, 28)
+    spot = make_spot(settle)
+    bond = make_bond()
     frame = cashflows(bond, settle)
     times = np.asarray([day_count(settle, d) / 365.0 for d in frame["date"]])
     amounts = np.asarray(frame["amount"], dtype=float)
     disc = np.asarray(spot.discount(times), dtype=float)
     expected = float(np.dot(amounts, disc * (np.exp(-1e-4 * times) - 1.0)))
     assert spot_dv01(bond, settle, spot) == pytest.approx(expected, rel=1e-12)
+
+
+# ---- R17 日期/日历契约 ------------------------------------------------
+def test_krd_contract_requires_business_day_settlement() -> None:
+    """结算日必须是工作日：周六/周日结算直接报错。"""
+    keys = [float(t) for t in get_config().risk.key_tenors_krd]
+    for weekend in (date(2026, 5, 30), date(2026, 5, 31)):  # 周六 / 周日
+        spot = SyntheticSpotCurve(
+            keys, [1.8 + 0.05 * t for t in keys], observation_date=weekend, settlement_date=weekend
+        )
+        with pytest.raises(ValueError, match="不是工作日"):
+            key_rate_durations(make_bond(), weekend, spot)
+
+
+def test_krd_contract_settlement_mismatch_raises_or_allows_with_warning() -> None:
+    """结算日与 spot.settlement_date 不一致：默认报错；allow_mismatch=True 降级 warning。"""
+    bond = make_bond()
+    curve_settle, settle = date(2026, 5, 28), date(2026, 5, 29)  # 5/29 周五，晚于参考日
+    spot = make_spot(curve_settle)
+    with pytest.raises(ValueError, match="不一致"):
+        key_rate_durations(bond, settle, spot)
+    with pytest.warns(UserWarning, match="allow_mismatch"):
+        krd = key_rate_durations(bond, settle, spot, allow_mismatch=True)
+    assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, spot), rel=1e-3)
+
+
+def test_krd_contract_settlement_before_observation_raises() -> None:
+    """结算日不能早于曲线参考日（observation_date）。"""
+    bond = make_bond()
+    reference = date(2026, 5, 29)
+    spot = SyntheticSpotCurve(
+        [float(t) for t in get_config().risk.key_tenors_krd],
+        [1.8 + 0.05 * float(t) for t in get_config().risk.key_tenors_krd],
+        observation_date=reference,
+        settlement_date=reference,
+    )
+    with pytest.raises(ValueError, match="早于曲线参考日"):
+        key_rate_durations(bond, date(2026, 5, 28), spot)
+
+
+def test_krd_contract_fallback_to_as_of_warns() -> None:
+    """spot 缺少 settlement_date：回退 observation_date/as_of 校验并 warning（不静默）。"""
+    settle = date(2026, 5, 28)
+    spot = SyntheticSpotCurve(
+        [float(t) for t in get_config().risk.key_tenors_krd],
+        [1.8 + 0.05 * float(t) for t in get_config().risk.key_tenors_krd],
+    )
+    spot.as_of = settle
+    with pytest.warns(UserWarning, match="settlement_date"):
+        krd = key_rate_durations(make_bond(), settle, spot)
+    assert sum(krd.values()) == pytest.approx(spot_dv01(make_bond(), settle, spot), rel=1e-3)
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [date(2026, 11, 6), date(2026, 11, 7), date(2026, 11, 8)],  # 周五 / 周六 / 周日
+)
+def test_krd_contract_weekend_observation_monday_settlement(observation: date) -> None:
+    """周五/周六/周日观察日 + 周一结算：结算日工作日且 ≥ 参考日 → 契约通过。"""
+    settle = date(2026, 11, 9)  # 周一
+    keys = [float(t) for t in get_config().risk.key_tenors_krd]
+    spot = SyntheticSpotCurve(
+        keys,
+        [1.8 + 0.05 * t for t in keys],
+        observation_date=observation,
+        settlement_date=settle,
+    )
+    bond = make_bond()
+    krd = key_rate_durations(bond, settle, spot)
+    assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, spot), rel=1e-3)
+
+
+def test_krd_contract_coupon_boundary_and_leap_day() -> None:
+    """付息日前后（2026-05-15 周五、2026-11-16 周一）与闰年 2024-02-29 均可定价。"""
+    bond = make_bond()
+    for settle in (date(2026, 5, 15), date(2026, 11, 16)):
+        spot = make_spot(settle)
+        krd = key_rate_durations(bond, settle, spot)
+        assert sum(krd.values()) == pytest.approx(spot_dv01(bond, settle, spot), rel=1e-3)
+
+    leap_day = date(2024, 2, 29)  # 周四，工作日
+    leap_bond = make_bond(
+        code="SYN-LEAP.IB", issue_date=date(2023, 11, 15), maturity_date=date(2025, 11, 15)
+    )
+    leap_spot = make_spot(leap_day)
+    krd = key_rate_durations(leap_bond, leap_day, leap_spot)
+    assert sum(krd.values()) == pytest.approx(spot_dv01(leap_bond, leap_day, leap_spot), rel=1e-3)

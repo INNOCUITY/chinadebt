@@ -1,0 +1,6 @@
+﻿factor,definition,weights,unit,target_pc,target_threshold,deprecated,panel_start,panel_end
+level_all,固定 11 个标准期限的等权均值；任一缺失→NaN，不重归一化,每个标准期限 1/11,%,PC1,0.95,False,2002-01-04,2026-11-05
+level_long,10/15/20/30Y 等权均值（长端水平）,10Y/15Y/20Y/30Y 各 1/4,%,PC1,0.95,False,2002-01-04,2026-11-05
+slope,10Y − 2Y 期限利差,10Y +1；2Y −1,%,PC2,0.5,False,2002-01-04,2026-11-05
+curvature,2×5Y − 2Y − 10Y（蝶式/曲度）,5Y +2；2Y −1；10Y −1,%,PC3,0.5,False,2002-01-04,2026-11-05
+level,DEPRECATED：level_long 的别名（旧接口）,同 level_long,%,,,True,2002-01-04,2026-11-05

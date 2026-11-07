@@ -30,11 +30,12 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from ficc.config import Config, PricingConfig, get_config
 from ficc.data.schema import BondStatic
+from ficc.utils.calendar import settlement_date as _calendar_settlement_date
 
 __all__ = [
     "Basis",
@@ -241,7 +242,7 @@ def validate_settlement(
 def settlement_date(
     trade_date: date, lag_days: int | None = None, *, cfg: Config | None = None
 ) -> date:
-    """按 T+``lag_days`` 推算现券结算日，按**工作日**逐个计数。
+    """按 T+``lag_days`` 推算现券结算日（**唯一的日历实现在** :mod:`ficc.utils.calendar`）。
 
     规则
     ----
@@ -251,25 +252,17 @@ def settlement_date(
     3. ``lag_days=None`` 时取 ``config.pricing.settlement_lag_days``（默认 T+1），
        自定义配置请显式传 ``cfg``。
 
-    注意：这里用的是「周一至周五」工作日近似，**不是**真实交易日历。
+    ``pricing`` 层不重复实现日历：本函数只解析配置里的默认滞后，然后委托给
+    :func:`ficc.utils.calendar.settlement_date`（R17：bootstrap / KRD / 结算
+    三处必须共用同一套工作日规则）。
+
     TODO: 尚未接入银行间节假日表（``config.data.trading_calendar = "CN_IB"``），
-    法定节假日目前会被当作工作日；接入交易日历后改为按日历滚动，
-    届时节假日跨期的 T+N 会与当前实现不同。
+    法定节假日目前会被当作工作日；接入点在 ``ficc.utils.calendar``。
     """
     effective_lag = pricing_config(cfg).settlement_lag_days if lag_days is None else lag_days
     if effective_lag < 0:
         raise ConventionError(f"lag_days 不能为负，实际 {effective_lag}")
-
-    result = trade_date
-    while result.weekday() >= 5:  # 5=周六，6=周日：先顺延到下一工作日
-        result += timedelta(days=1)
-
-    remaining = effective_lag
-    while remaining > 0:  # 逐个有效工作日计数
-        result += timedelta(days=1)
-        if result.weekday() < 5:
-            remaining -= 1
-    return result
+    return _calendar_settlement_date(trade_date, effective_lag)
 
 
 # ---------------------------------------------------------------------------

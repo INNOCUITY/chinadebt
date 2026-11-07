@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ from ficc.curve.bootstrap import (
 )
 from ficc.curve.curve import Curve
 from ficc.data.schema import TENOR_LABELS
+from ficc.utils.calendar import settlement_date as calendar_settlement_date
 
 TENORS = np.asarray([0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0])
 # 2024-06-28 实测中债国债到期收益率（百分数）
@@ -247,8 +248,11 @@ def test_assumptions_are_explicit() -> None:
         assert assumptions["coupon_pct_by_tenor"][label] == pytest.approx(float(rate))
     # T+1 结算
     assert assumptions["settlement_lag_days"] == int(get_config().pricing.settlement_lag_days)
-    expected_settlement = AS_OF + timedelta(days=int(get_config().pricing.settlement_lag_days))
+    lag = int(get_config().pricing.settlement_lag_days)
+    expected_settlement = calendar_settlement_date(AS_OF, lag)
     assert assumptions["settlement_date"] == expected_settlement.isoformat()
+    assert assumptions["observation_date"] == AS_OF.isoformat()
+    assert assumptions["settlement_source"] == "config"
     assert assumptions["source_curve_method"] == "linear"
     assert "线性插值" in assumptions["interpolation"]
 
@@ -327,3 +331,71 @@ def test_spotcurve_to_frame_columns() -> None:
     np.testing.assert_allclose(
         frame["discount"].to_numpy(), np.exp(-spot.zero_rates_pct / 100.0 * spot.times)
     )
+
+
+# ---------------------------------------------------------------------------
+# R17：结算日必须走工作日日历（票息/闰年/周末）
+# ---------------------------------------------------------------------------
+def test_settlement_is_next_business_day() -> None:
+    """2024-06-28 周五的 T+1 必须是 2024-07-01 周一（不是 06-29 周六）。"""
+    spot = bootstrap_spot(_curve(RATES_UP))
+    assert spot.observation_date == date(2024, 6, 28)
+    assert spot.settlement_date == date(2024, 7, 1)
+    assert spot.assumptions["settlement_date"] == "2024-07-01"
+    assert spot.assumptions["settlement_source"] == "config"
+    # 周六/周日的观察日：先顺延到下一工作日再 +N
+    saturday = bootstrap_spot(_curve(RATES_UP, as_of=date(2024, 6, 29)))
+    sunday = bootstrap_spot(_curve(RATES_UP, as_of=date(2024, 6, 30)))
+    assert saturday.settlement_date == date(2024, 7, 2)
+    assert sunday.settlement_date == date(2024, 7, 2)
+    # 闰年 2/29（周四）→ 3/1（周五）
+    leap = bootstrap_spot(_curve(RATES_UP, as_of=date(2024, 2, 29)))
+    assert leap.settlement_date == date(2024, 3, 1)
+
+
+def test_settlement_explicit_override_and_validation() -> None:
+    """显式 settlement 可覆盖；早于观察日/非工作日必须报错。"""
+    explicit = bootstrap_spot(_curve(RATES_UP), settlement=date(2024, 7, 2))
+    assert explicit.settlement_date == date(2024, 7, 2)
+    assert explicit.assumptions["settlement_source"] == "explicit"
+    with pytest.raises(ValueError, match=r"不能早于观察日|不能早于"):
+        bootstrap_spot(_curve(RATES_UP), settlement=date(2024, 6, 27))
+    with pytest.raises(ValueError, match="不是工作日"):
+        bootstrap_spot(_curve(RATES_UP), settlement=date(2024, 6, 29))
+    # SpotCurve 字段自身也做同样校验
+    with pytest.raises(ValueError, match="不能早于"):
+        SpotCurve(
+            as_of=AS_OF,
+            times=np.array([1.0, 2.0]),
+            zero_rates_pct=np.array([1.5, 1.6]),
+            method="x",
+            observation_date=AS_OF,
+            settlement_date=date(2024, 6, 27),
+        )
+    with pytest.raises(ValueError, match="不是工作日"):
+        SpotCurve(
+            as_of=AS_OF,
+            times=np.array([1.0, 2.0]),
+            zero_rates_pct=np.array([1.5, 1.6]),
+            method="x",
+            observation_date=AS_OF,
+            settlement_date=date(2024, 6, 29),
+        )
+
+
+def test_roundtrip_uses_real_settlement_date() -> None:
+    """结算日改为真实工作日后，往返一致性仍然精确（名义期限近似不变）。"""
+    spot = bootstrap_spot(_curve(RATES_UP))
+    assert spot.settlement_date == date(2024, 7, 1)
+    errors = [abs(price_synthetic_par_bond(spot, float(t)) - 100.0) for t in TENORS]
+    assert max(errors) < 1e-8
+
+
+def test_settlement_near_coupon_dates() -> None:
+    """付息日（6/15、12/31）前后：结算日与工作日日历一致，往返仍精确。"""
+    lag = int(get_config().pricing.settlement_lag_days)
+    for trade in (date(2024, 6, 14), date(2024, 6, 17), date(2024, 12, 31), date(2025, 1, 2)):
+        spot = bootstrap_spot(_curve(RATES_UP, as_of=trade))
+        assert spot.settlement_date == calendar_settlement_date(trade, lag)
+        errors = [abs(price_synthetic_par_bond(spot, float(t)) - 100.0) for t in TENORS]
+        assert max(errors) < 1e-8

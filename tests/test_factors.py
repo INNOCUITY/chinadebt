@@ -1,9 +1,11 @@
-"""可观测曲线因子（推荐口径）的单元测试。
+"""可观测因子契约与 winsor 预处理（R14/R15/R16）的单元测试。
 
-R02 的结论：NS/NSS 模型参数存在识别性问题（b1/τ 会换解），不能直接当因子；
-:func:`ficc.curve.factors.observable_factors` 用观测收益率构造 level/slope/curvature，
-无识别性问题。本文件验证：① 定义数值正确；② 缺失期限不臆造；③ 跳变敏感性
-统计能定位最大跳变日；④ 真实数据上 2023-10-12 这类"参数换解日"因子本身是平稳的。
+覆盖：
+1. `observable_factors` 固定 4 列（level_all/level_long/slope/curvature）、数值定义；
+2. `level_all` 用固定 11 期限，**缺一即 NaN、不按可用列重新归一化**；
+3. `level` 是 level_long 的弃用别名（显式开关 + DeprecationWarning）；
+4. 定义表/权重矩阵/验收映射（FACTOR_TARGETS）；
+5. 跳变敏感性；6. `preprocess_changes` 逐期限截尾 + 固定权重聚合（R16）。
 """
 
 from __future__ import annotations
@@ -12,109 +14,166 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ficc.curve.factors import factor_jump_sensitivity, observable_factors
+from ficc.curve.factors import (
+    DEPRECATED_FACTOR_ALIASES,
+    FACTOR_COLUMNS,
+    FACTOR_TARGETS,
+    evaluate_factor_target,
+    factor_changes_from_processed,
+    factor_definition_table,
+    factor_jump_sensitivity,
+    factor_weight_matrix,
+    observable_factors,
+    preprocess_changes,
+)
 
 TENORS = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
 
 
-def _panel(rows: list[dict[float, float]], dates: list[str]) -> pd.DataFrame:
-    frame = pd.DataFrame(rows, index=pd.to_datetime(dates))
+def _panel(rows: list[list[float]], dates: list[str]) -> pd.DataFrame:
+    frame = pd.DataFrame(rows, index=pd.to_datetime(dates), columns=TENORS)
     frame.columns = pd.Index([float(c) for c in frame.columns], name="tenor")
-    return frame.sort_index(axis=1)
+    return frame
 
 
-def _flat_row(**overrides: float) -> dict[float, float]:
-    """构造一条给定 level 的平坦曲线（默认所有期限同一收益率）。"""
-    base = overrides.pop("base", 2.50)
-    row = {float(t): float(base) for t in TENORS}
-    row.update({float(k.replace("y", "")): v for k, v in overrides.items()})
-    return row
+def _row(**overrides: float) -> list[float]:
+    base = 2.5
+    values = {float(t): base for t in TENORS}
+    values.update({float(k.replace("y", "")): v for k, v in overrides.items() if k.startswith("y")})
+    return [values[float(t)] for t in TENORS]
 
 
-def test_observable_factors_known_values() -> None:
-    """已知曲线的 level/slope/curvature 数值必须可手算复现。"""
-    row = _flat_row(base=2.0)
-    row.update({10.0: 3.0, 15.0: 3.2, 20.0: 3.4, 30.0: 3.6, 2.0: 2.2, 5.0: 2.6})
-    panel = _panel([row], ["2024-06-28"])
-    factors = observable_factors(panel)
-    assert list(factors.columns) == ["level", "slope", "curvature"]
-    assert factors.index.equals(panel.index)
-    # level = mean(3.0, 3.2, 3.4, 3.6) = 3.3
-    assert factors.loc["2024-06-28", "level"] == pytest.approx(3.3, abs=1e-12)
-    # slope = 10Y - 2Y = 3.0 - 2.2 = 0.8
-    assert factors.loc["2024-06-28", "slope"] == pytest.approx(0.8, abs=1e-12)
-    # curvature = 2*5Y - 2Y - 10Y = 2*2.6 - 2.2 - 3.0 = 0.0
-    assert factors.loc["2024-06-28", "curvature"] == pytest.approx(0.0, abs=1e-12)
+def test_factor_columns_are_fixed() -> None:
+    frame = observable_factors(_panel([_row()], ["2024-06-28"]))
+    assert tuple(frame.columns) == FACTOR_COLUMNS
+    assert FACTOR_COLUMNS == ("level_all", "level_long", "slope", "curvature")
+    assert frame.attrs["unit"] == "percentage points"
 
 
-def test_observable_factors_missing_tenor_is_nan() -> None:
-    """缺 2Y 时 slope/curvature 必须是 NaN（不插值、不臆造）；level 不受影响。"""
-    row = _flat_row(base=2.5)
-    row.pop(2.0)
-    panel = _panel([row], ["2017-06-01"])
-    factors = observable_factors(panel)
+def test_observable_factor_values() -> None:
+    row = _row(y10=3.0, y15=3.2, y20=3.4, y30=3.6, y2=2.2, y5=2.6)
+    factors = observable_factors(_panel([row], ["2024-06-28"]))
+    at = factors.loc["2024-06-28"]
+    assert at["level_long"] == pytest.approx((3.0 + 3.2 + 3.4 + 3.6) / 4.0, abs=1e-12)
+    assert at["level_all"] == pytest.approx(np.mean(row), abs=1e-12)
+    assert at["slope"] == pytest.approx(3.0 - 2.2, abs=1e-12)
+    assert at["curvature"] == pytest.approx(2 * 2.6 - 2.2 - 3.0, abs=1e-12)
+
+
+def test_level_all_requires_all_eleven_tenors_no_renormalization() -> None:
+    """缺任一标准期限 → level_all 必须 NaN，而不是按可用列重新归一化。"""
+    frame = _panel([_row()], ["2017-06-01"])
+    frame[2.0] = np.nan  # 缺 2Y
+    factors = observable_factors(frame)
+    assert np.isnan(factors.loc["2017-06-01", "level_all"])
     assert np.isnan(factors.loc["2017-06-01", "slope"])
     assert np.isnan(factors.loc["2017-06-01", "curvature"])
-    assert factors.loc["2017-06-01", "level"] == pytest.approx(2.5, abs=1e-12)
+    # 长端仍完整 → level_long 可计算
+    assert np.isfinite(factors.loc["2017-06-01", "level_long"])
+    # 缺 30Y（在长端集合里）→ level_long 也 NaN
+    frame2 = _panel([_row()], ["2017-06-01"])
+    frame2[30.0] = np.nan
+    factors2 = observable_factors(frame2)
+    assert np.isnan(factors2.loc["2017-06-01", "level_all"])
+    assert np.isnan(factors2.loc["2017-06-01", "level_long"])
+
+
+def test_level_is_deprecated_alias() -> None:
+    assert DEPRECATED_FACTOR_ALIASES == {"level": "level_long"}
+    with pytest.warns(DeprecationWarning):
+        frame = observable_factors(_panel([_row()], ["2024-06-28"]), include_deprecated_level=True)
+    assert "level" in frame.columns
+    np.testing.assert_allclose(
+        frame["level"].to_numpy(), frame["level_long"].to_numpy(), atol=1e-12
+    )
+
+
+def test_definition_table_and_targets() -> None:
+    table = factor_definition_table()
+    assert set(FACTOR_COLUMNS).issubset(set(table["factor"]))
+    assert bool(table.loc[table["factor"] == "level", "deprecated"].iloc[0]) is True
+    for name in FACTOR_COLUMNS:
+        assert name in FACTOR_TARGETS
+    assert FACTOR_TARGETS["level_all"] == ("PC1", 0.95)
+    assert FACTOR_TARGETS["slope"] == ("PC2", 0.50)
+    weights = factor_weight_matrix()
+    assert tuple(weights.index) == FACTOR_COLUMNS
+    # level_all 权重和 = 1；slope/curvature 权重和 = 0
+    assert weights.loc["level_all"].sum() == pytest.approx(1.0)
+    assert weights.loc["slope"].sum() == pytest.approx(0.0)
+    assert weights.loc["curvature"].sum() == pytest.approx(0.0)
+
+
+def test_evaluate_factor_target_thresholds() -> None:
+    assert evaluate_factor_target("level_all", 0.94)[2] is False
+    assert evaluate_factor_target("level_all", 0.96)[2] is True
+    assert evaluate_factor_target("slope", 0.49)[2] is False
+    assert evaluate_factor_target("slope", 0.51)[2] is True
+    assert evaluate_factor_target("some_unknown", 0.99) == (None, None, None)
+    assert evaluate_factor_target("level_all", float("nan"))[2] is None
 
 
 def test_factor_jump_sensitivity_locates_jump() -> None:
-    """跳变敏感性：构造一天 level +100bp 的跳变，必须被统计定位。"""
-    rows = [_flat_row(base=2.5) for _ in range(4)]
-    rows[2][10.0] = 3.5  # 第 3 天 10Y 跳 100bp
-    panel = _panel(rows, ["2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06"])
-    factors = observable_factors(panel)
+    rows = [_row() for _ in range(4)]
+    rows[2][TENORS.index(10.0)] = 3.5  # 第 3 天 10Y 跳 100bp
+    factors = observable_factors(
+        _panel(rows, ["2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06"])
+    )
     sensitivity = factor_jump_sensitivity(factors, threshold_bp=25.0)
-    assert set(sensitivity.index) == {"level", "slope", "curvature"}
-    for col in (
-        "n",
-        "mean_abs_bp",
-        "std_bp",
-        "p95_abs_bp",
-        "p99_abs_bp",
-        "max_abs_bp",
-        "max_date",
-        "n_above_threshold",
-    ):
-        assert col in sensitivity.columns
-    level = sensitivity.loc["level"]
-    assert level["max_abs_bp"] == pytest.approx(25.0, abs=1e-9)  # 100bp 的 1/4
-    assert pd.Timestamp(level["max_date"]) == pd.Timestamp("2024-06-05")
-    assert level["n_above_threshold"] == 0
-    slope = sensitivity.loc["slope"]
-    assert slope["max_abs_bp"] == pytest.approx(100.0, abs=1e-9)
-    # 第 3 天跳上去、第 4 天又跳回来，故有 2 次 100bp 的日变动
-    assert slope["n_above_threshold"] == 2
-
-
-def test_factor_jump_sensitivity_errors() -> None:
-    with pytest.raises(TypeError, match="DataFrame"):
+    assert set(FACTOR_COLUMNS).issubset(set(sensitivity.index))
+    assert sensitivity.loc["slope", "max_abs_bp"] == pytest.approx(100.0, abs=1e-9)
+    assert pd.Timestamp(sensitivity.loc["slope", "max_date"]) == pd.Timestamp("2024-06-05")
+    assert sensitivity.loc["slope", "n_above_threshold"] == 2
+    with pytest.raises(TypeError):
         factor_jump_sensitivity([1, 2, 3])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="为空"):
         factor_jump_sensitivity(pd.DataFrame())
 
 
-def test_observable_factors_real_data_immune_to_parameter_switching(real_spike_csv) -> None:
-    """真实数据：2023-10-11→12 参数换解（评审：b1 跳 147bp）时，可观测因子平稳。
+def test_preprocess_changes_clips_per_tenor_before_aggregation() -> None:
+    """R16 反例：clip(mean) != mean(clip)；聚合必须走同一截尾矩阵。"""
+    rng = np.random.default_rng(7)
+    rows = [(_row())]
+    for _ in range(120):
+        step = rng.normal(0.0, 0.05, len(TENORS))
+        step[TENORS.index(30.0)] = 0.9  # 30Y 单日 +90bp（异常）
+        rows.append([rows[-1][i] + step[i] for i in range(len(TENORS))])
+    dates = pd.bdate_range("2020-01-01", periods=len(rows)).strftime("%Y-%m-%d").tolist()
+    panel = _panel(rows, dates)
+    processed = preprocess_changes(panel, winsor_bp=10.0)
+    raw = preprocess_changes(panel, winsor_bp=None)
+    # 逐期限截尾：单期异常被压到 10bp
+    assert processed[30.0].abs().max() == pytest.approx(10.0)
+    # clip(mean) != mean(clip)：用 level_all 做反例
+    raw_level_all = raw.mean(axis=1)
+    clipped_mean = raw_level_all.clip(-10.0, 10.0)
+    mean_after_clip = processed.mean(axis=1)
+    differ = (clipped_mean - mean_after_clip).abs().max()
+    assert differ > 1e-9, "构造的样本应满足 clip(mean) != mean(clip)"
+    # 固定权重聚合
+    factor_changes = factor_changes_from_processed(processed)
+    manual = processed.to_numpy() @ factor_weight_matrix().to_numpy().T
+    np.testing.assert_allclose(factor_changes.to_numpy(), manual, atol=1e-12)
+    with pytest.raises(ValueError, match="缺少标准期限"):
+        factor_changes_from_processed(processed.drop(columns=[10.0]))
+    with pytest.raises(ValueError, match="winsor_bp"):
+        preprocess_changes(panel, winsor_bp=-1.0)
+    with pytest.raises(ValueError, match="样本不足"):
+        preprocess_changes(panel.iloc[:5])
 
-    这两天各节点收益率最大变动仅约 0.04 个百分点，因此 level/slope/curvature 的
-    日变动都应很小（< 5bp）——这正是推荐"可观测因子"而不是"模型参数"的原因。
-    """
+
+def test_real_data_factor_definitions_and_immunity(real_spike_csv) -> None:
+    """真实数据：2023-10-12（参数换解日）可观测因子日变动应很小（<5bp）。"""
     raw = pd.read_csv(real_spike_csv)
-    want = np.asarray(TENORS)
-    frame = raw[raw["term_years"].isin(want)][["date", "term_years", "yield_pct"]]
+    frame = raw[raw["term_years"].isin(TENORS)][["date", "term_years", "yield_pct"]]
     frame = frame.drop_duplicates(subset=["date", "term_years"])
     panel = frame.pivot(index="date", columns="term_years", values="yield_pct").sort_index()
     panel.index = pd.to_datetime(panel.index)
     panel.columns = pd.Index(panel.columns.to_numpy(dtype=float), name="tenor")
-    panel = panel.reindex(columns=list(want)).sort_index()
-
     factors = observable_factors(panel)
-    before = factors.loc[pd.Timestamp("2023-10-11")]
-    after = factors.loc[pd.Timestamp("2023-10-12")]
-    changes = (after - before).abs() * 100.0  # bp
+    changes = (
+        factors.loc[pd.Timestamp("2023-10-12")] - factors.loc[pd.Timestamp("2023-10-11")]
+    ).abs() * 100.0
     assert changes.max() < 5.0, f"可观测因子日变动应很小，实际 {changes.to_dict()}"
-
     sensitivity = factor_jump_sensitivity(factors)
-    # 可观测因子的 p99 日变动在个位数到几十 bp 量级（远小于参数跳变的百 bp）
     assert sensitivity["p99_abs_bp"].max() < 120.0

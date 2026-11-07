@@ -379,6 +379,21 @@ def test_settlement_date_r11_regression() -> None:
         settlement_date(friday, -1)
 
 
+def test_settlement_date_delegates_to_shared_calendar() -> None:
+    """R17 前置：``pricing.conventions.settlement_date`` 委托 utils.calendar（唯一实现）。"""
+    from ficc.utils.calendar import settlement_date as shared_settlement_date
+
+    for trade_date in (
+        date(2026, 5, 21),  # 周四
+        date(2026, 5, 22),  # 周五
+        date(2026, 5, 23),  # 周六
+        date(2026, 5, 24),  # 周日
+        date(2024, 2, 29),  # 闰日（周四）
+    ):
+        for lag in (0, 1, 2, 3):
+            assert settlement_date(trade_date, lag) == shared_settlement_date(trade_date, lag)
+
+
 def test_settlement_lag_from_config_and_cfg_override() -> None:
     """``lag_days=None`` 时从 ``config.pricing.settlement_lag_days`` 取默认值；
     显式 ``cfg`` 优先，不回落硬编码默认（R07 定价侧）。"""
