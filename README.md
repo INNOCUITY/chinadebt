@@ -59,7 +59,7 @@ src/ficc/
   curve/         曲线拟合、插值、因子、情景冲击
   pricing/       定价、应计利息、久期、DV01、KRD、Carry & 滚降
   strategy/      策略：陡平 / 相对价值 / Carry & Roll-down
-  portfolio/     账本、仓位、约束
+  portfolio/     固定券账本（ledger）+ 独立对账（reconcile）+ 仓位/约束
   backtest/      回测引擎、成交与成本、绩效、归因
   risk/          敞口、VaR/ES、压力测试、限额
   ml/            机器学习：标签/特征/模型/Purged Walk-Forward/可解释性
@@ -83,7 +83,7 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（366 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（406 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
@@ -108,7 +108,11 @@ make check    # = ruff check + ruff format --check + pytest（366 项离线，ex
 - [x] Phase 1 KRD 数值算子（即期曲线单点冲击；结算日契约 R17 已修复，sum(KRD) vs DV01 差 0.12%–1.35%）
 - [x] Phase 1 因子接口（level_all/level_long/slope/curvature 固定契约；同口径 winsor PCA；验收映射显式化）
 - [x] Phase 1 Carry/Roll-down（弦长口径 R18 已修 + 原券老化重估；账本级独立 PnL 仍待接入）
-- [ ] Phase 2 组合与回测（**先做固定券账本与独立 PnL 对账**，再做约束与策略；R12–R21 已全部修复，但研究结论边界见方法论 §4.7/§4.8）
+- [x] Phase 2 第 1 步 固定券账本（条款锁定/原券老化/三层日期/真实 CN_IB 日历）
+- [x] Phase 2 第 2 步 独立 PnL 对账（六项检查 + 篡改检测；`make recon` exit 0）
+- [ ] Phase 2 第 3 步 组合约束（相对基准 DV01 中性、现金预算、杠杆、单券权重、KRD 限额）
+- [ ] Phase 2 第 4 步 三个基线策略（陡平 / Carry-Roll / 相对价值）
+- [ ] Phase 2 第 5 步 归因接入账本持仓
 - [ ] Phase 3 风险
 - [ ] Phase 4 机器学习（必做）
 - [ ] Phase 5 强化学习（必做）
@@ -122,3 +126,11 @@ make check    # = ruff check + ruff format --check + pytest（366 项离线，ex
 - 更正后的数字：260010 的 10Y KRD 桶占 **92.84%**（原 98% 为算术错误）；各 KRD 与 YTM DV01 相对差 **0.12%–1.35%**；可疑清单 **289 条记录 / 229 个唯一点 / 109 个日期**，全部带 `known_at`；carry 横截面 87 个采样日（2019-01-28 → 2025-12-18）。
 - 研究结论边界未放宽：10Y 残差只能称「持续的**模型相对**残差」，经济解释与交易性均标记 untested；2024–2025 已参与方法选择，不再称"未触碰测试集"。
 - 详细证据见 [code.md R12–R21](docs/code.md)、[方法论 §4.7/§4.8/§7.3/§8.3](docs/03_methodology.md)、[计划 §12.6](docs/01_project_plan.md)。
+
+**Phase 2 第 1–2 步（2026-11-07）**：固定券账本 + 独立对账已落地并通过端到端验证（`make recon` exit 0）。
+
+- 账本：建仓锁定条款、按原券老化、三层日期、票息/本金/融资/费用全落成现金流事件、换券 = 显式成交；
+- 日历：由 6204 个实测中债估值日构造的 `TradingCalendar`（国庆/调休自动生效）；
+- 对账：现金/持仓/NAV/PnL 双路径/全价/归因闭合六项检查，全部走独立实现路径，并用**篡改检测**证明不是恒等式自证；
+- 实测（2019-01-28→2020-12-31，含负现金融资）：PnL 两条独立路径差 **1.7e-8 元**；零成本对照成本合计 1,204,869.03 元与两账净值差**完全一致**；
+- 详见 [方法论 §10](docs/03_methodology.md) 与 [计划 §12.5](docs/01_project_plan.md)。

@@ -1,4 +1,4 @@
-.PHONY: help setup install data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
+.PHONY: help setup install recon data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
 
 # 优先使用项目本地 .venv（含 pandas/scipy/pytest/ruff），保证在任何 shell 下 `make check` 都能复现；
 # 没有 .venv 时回退系统 python3（此时请先 `make setup`）。
@@ -30,6 +30,10 @@ quality:  ## 数据质量报告（缺日/跳变/重叠/期限覆盖 + 可疑跳�
 
 backfill:  ## 回补 2Y 期限点（2016-01-04~2019-01-25，可选）
 	$(PY) scripts/backfill_2y.py --throttle 0.3
+
+# ------------------------- 账本与对账（Phase 2）-------------------------
+recon:  ## 固定券账本 + 独立对账（真实曲线/融资/CN_IB 日历；失败 exit 1）
+	$(PY) scripts/run_ledger_recon.py
 
 # ------------------------- 研究 -------------------------
 fit:  ## 曲线拟合 + 残差诊断（最小链路：热力图 + NSS 残差）

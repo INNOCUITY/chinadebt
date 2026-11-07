@@ -1,0 +1,4 @@
+﻿trade_id,bond_code,side,face_value,clean_price,signal_date,trade_date,settlement_date,fee,coupon_pct,freq,issue_date,maturity_date,accrual,market
+T1-buy-10Y,SYN-10Y-2019,buy,80000000.0,100.643878,2019-01-28,2019-01-29,2019-01-30,0.0,3.2,2,2019-01-28,2029-01-28,coupon,IB
+T2-sell-10Y,SYN-10Y-2019,sell,30000000.0,105.14849,2020-03-31,2020-04-01,2020-04-02,0.0,3.2,2,2019-01-28,2029-01-28,coupon,IB
+T3-buy-7Y,SYN-7Y-2020,buy,50000000.0,101.720538,2020-03-31,2020-04-01,2020-04-02,0.0,2.8,1,2020-04-01,2027-04-01,coupon,IB
