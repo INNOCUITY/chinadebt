@@ -76,8 +76,10 @@ class ActionSpec:
     """策略提出的**原始动作**（尚未过闸门）。
 
     ``target_krd`` 为目标 KRD 向量（元/bp，按关键期限）；``None``（或空映射）表示
-    **零动作**：保持当前组合 KRD 不变（不主动调仓）。它只是"意图"，实际能否成交由
-    引擎闸门决定，差异记录在 :class:`StepRecord`。
+    **零动作 = 持仓不动（hold）**：不生成 pending、不提交主动订单；滚动政策/结算等
+    外生事件仍按引擎规则发生。注意"保持 KRD"是另一动作（``target_krd=当前KRD``），
+    在整手/约束下仍可能重新求解并交易，不能与 hold 混用。
+    它只是"意图"，实际能否成交由引擎闸门决定，差异记录在 :class:`StepRecord`。
     """
 
     target_krd: Mapping[float, float] | None = None
@@ -138,6 +140,7 @@ class StepRecord:
     date: date
     original_action: ActionSpec
     projected_target: TargetKRD | None
+    projected_faces: tuple[tuple[str, float], ...]
     executed_trades: tuple[dict[str, Any], ...]
     rejected: bool
     reject_reason: str
@@ -147,6 +150,9 @@ class StepRecord:
     nav_after: float
     reward: float
     executed_face: float = 0.0
+    gate_attempts: int = 0
+    policy_source: str = "none"
+    pending_status: str = "none"
     notes: str = ""
 
 
@@ -220,18 +226,19 @@ class _ScriptedStrategy:
         self._schedule = schedule
         self._calendar = calendar
         self._cfg = cfg
-        self.emitted: dict[date, TargetKRD] = {}
+        self.emitted: dict[date, TargetKRD | None] = {}
 
-    def target_krd(self, ctx: MarketContext) -> TargetKRD:
+    def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         action = self._schedule.get(ctx.as_of)
         if action is None or action.target_krd is None:
-            target = hold_target_krd(ctx, calendar=self._calendar, cfg=self._cfg)
-        else:
-            target = TargetKRD(
-                as_of=ctx.as_of,
-                krd=dict(action.target_krd),
-                notes=action.notes or "RL 环境动作",
-            )
+            # hold：返回 None，引擎不生成 pending（不主动交易）；不是"保持 KRD"求解。
+            self.emitted[ctx.as_of] = None
+            return None
+        target = TargetKRD(
+            as_of=ctx.as_of,
+            krd=dict(action.target_krd),
+            notes=action.notes or "RL 环境动作",
+        )
         self.emitted[ctx.as_of] = target
         return target
 
@@ -387,16 +394,23 @@ class RebalanceEnv:
                 f"重放状态漂移：{signal_date} NAV={nav_at_signal}，"
                 f"上一步记录={self._last_nav}（逐日重放必须确定性）"
             )
-        projected = strategy.emitted.get(signal_date)
-        if projected is None:
-            # 风控熔断时引擎不会调用策略，而是用基准中性目标替代；这里补记真实提交值
-            bench_krd = _bench_krd_from_result(result, signal_date)
-            if bench_krd:
-                projected = TargetKRD(
-                    as_of=signal_date,
-                    krd=bench_krd,
-                    notes="引擎风控熔断：基准中性目标",
-                )
+        decision = None
+        for item in getattr(result, "gate_decisions", []):
+            if item.get("date") == trade_date:
+                decision = item
+                break
+        if decision is not None:
+            projected = decision.get("projected_target")
+            projected_faces = tuple(decision.get("projected_faces") or ())
+            decision_pending = str(decision.get("pending_status", "none"))
+            gate_attempts = int(decision.get("gate_attempts", 0))
+            policy_source = str(decision.get("source", "none"))
+        else:  # 兼容旧结果（无决策日志）
+            projected = strategy.emitted.get(signal_date)
+            projected_faces = ()
+            decision_pending = "none"
+            gate_attempts = 0
+            policy_source = "none"
 
         trades = result.trades
         trades_on = (
@@ -432,20 +446,23 @@ class RebalanceEnv:
 
         roll_on_day = self._roll_rows(result, trade_date)
         note_parts: list[str] = []
-        if not roll_on_day.empty:
-            note_parts.append(
-                f"滚动日：{len(roll_on_day)} 个期限换券（引擎政策优先，pending 可能顺延）"
-            )
+        if decision_pending == "cancelled_by_roll":
+            note_parts.append("滚动日：旧 pending 被取消（无延期队列），机械换券优先执行")
+        elif not roll_on_day.empty:
+            note_parts.append(f"滚动日：{len(roll_on_day)} 个期限换券")
         if risk_off:
             note_parts.append("风控熔断：引擎以基准中性目标替代原动作")
-        if action.target_krd is not None and not executed_trades and not rejected:
-            note_parts.append("原始动作未产生成交（低于调仓死区或被滚动政策顺延）")
+        if action.target_krd is None and not executed_trades:
+            note_parts.append("零动作（hold）：持仓不动，无主动成交")
+        elif action.target_krd is not None and not executed_trades and not rejected:
+            note_parts.append("原始动作未产生成交（低于死区/约束或滚动政策替代）")
         notes = "；".join(note_parts)
 
         record = StepRecord(
             date=trade_date,
             original_action=action,
             projected_target=projected,
+            projected_faces=projected_faces,
             executed_trades=executed_trades,
             rejected=rejected,
             reject_reason=reject_reason,
@@ -455,6 +472,9 @@ class RebalanceEnv:
             nav_after=replay_nav,
             reward=replay_nav - self._last_nav,
             executed_face=executed_face,
+            gate_attempts=gate_attempts,
+            policy_source=policy_source,
+            pending_status=decision_pending,
             notes=notes,
         )
 
@@ -546,12 +566,15 @@ def _build_events(result: BacktestResult) -> tuple[Event, ...]:
 
     signals = result.signals
     for _, row in signals.iterrows():
+        signal_date = row.get("signal_date")
+        if signal_date is None or (isinstance(signal_date, float) and np.isnan(signal_date)):
+            continue
         events.append(
             Event(
                 date=_to_date(row["date"]),
                 kind="signal",
                 detail={
-                    "signal_date": _to_date(row.get("signal_date", row["date"])),
+                    "signal_date": _to_date(signal_date),
                     "target_total_dv01": float(row.get("target_total_dv01", 0.0)),
                     "notes": str(row.get("notes", "")),
                     "risk_off": bool(row.get("risk_off", False)),
@@ -559,23 +582,45 @@ def _build_events(result: BacktestResult) -> tuple[Event, ...]:
             )
         )
 
-    constraints = result.constraints
-    for _, row in constraints.iterrows():
-        if int(row.get("n_trades", 0)) > 0 or bool(row.get("rejected", False)):
+    # 真实闸门决策（R45）：每行是当日实际 project 结果（含 policy_roll/取消/拒单）
+    decisions = getattr(result, "gate_decisions", [])
+    if decisions:
+        for item in decisions:
             events.append(
                 Event(
-                    date=_to_date(row["date"]),
+                    date=_to_date(item["date"]),
                     kind="project",
                     detail={
-                        "gate_level": float(row.get("gate_level", 1.0)),
-                        "gate_mode": str(row.get("gate_mode", "normal")),
-                        "n_trades": int(row.get("n_trades", 0)),
-                        "rejected": bool(row.get("rejected", False)),
-                        "risk_off": bool(row.get("risk_off", False)),
-                        "reject_reason": str(row.get("reject_reason", "")),
+                        "source": str(item.get("source", "none")),
+                        "status": str(item.get("status", "")),
+                        "pending_status": str(item.get("pending_status", "none")),
+                        "gate_level": float(item.get("gate_level", 1.0)),
+                        "gate_attempts": int(item.get("gate_attempts", 0)),
+                        "n_trades": len(item.get("executed_trade_ids") or ()),
+                        "rejected": bool(item.get("rejected", False)),
+                        "risk_off": bool(item.get("risk_off", False)),
+                        "reject_reason": str(item.get("reject_reason", "")),
                     },
                 )
             )
+    else:  # 兼容旧结果
+        constraints = result.constraints
+        for _, row in constraints.iterrows():
+            if int(row.get("n_trades", 0)) > 0 or bool(row.get("rejected", False)):
+                events.append(
+                    Event(
+                        date=_to_date(row["date"]),
+                        kind="project",
+                        detail={
+                            "gate_level": float(row.get("gate_level", 1.0)),
+                            "gate_mode": str(row.get("gate_mode", "normal")),
+                            "n_trades": int(row.get("n_trades", 0)),
+                            "rejected": bool(row.get("rejected", False)),
+                            "risk_off": bool(row.get("risk_off", False)),
+                            "reject_reason": str(row.get("reject_reason", "")),
+                        },
+                    )
+                )
 
     trades = result.trades
     for _, row in trades.iterrows():
@@ -622,6 +667,7 @@ def _build_events(result: BacktestResult) -> tuple[Event, ...]:
                     "retired_code": str(row["retired_code"]),
                     "issued_code": str(row["issued_code"]),
                     "status": str(row.get("status", "")),
+                    "pending_status": str(row.get("pending_status", "")),
                     "reason": str(row.get("reason", "")),
                     "strategy_trade_ids": str(row.get("strategy_trade_ids", "")),
                 },

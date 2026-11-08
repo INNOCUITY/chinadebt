@@ -5,7 +5,11 @@
 导出
 ----
 - :class:`AsOfView` / :func:`build_asof_view`：只暴露 ``≤ as_of - lag`` 的观测；
-- :class:`FeatureSpec` / :func:`build_features`：变换只作用于历史切片；
+- :class:`FeatureSpec` / :func:`build_current_features`：**当前决策时点**的单行特征
+  （旧名 :func:`build_features` 兼容保留，但只返回当前行并告警）；
+- :func:`build_training_matrix`：**逐决策时点**构造训练矩阵（每个 t 单独 as-of 视图，
+  禁止整段历史算完再截断）；
+- :func:`assert_per_row_causality`：逐样本因果性校验（修改未来数据后 t 行必须不变）；
 - :class:`ForwardLabelSpec` / :class:`LabelRecord` / :func:`forward_returns`：
   带 ``available_after`` 的离线标签生成器；
 - :class:`WalkForwardSpec` / :class:`Split` / :func:`generate_splits` /
@@ -16,7 +20,15 @@
 
 from __future__ import annotations
 
-from ficc.ml.asof import AsOfView, FeatureSpec, build_asof_view, build_features
+from ficc.ml.asof import (
+    AsOfView,
+    FeatureSpec,
+    assert_per_row_causality,
+    build_asof_view,
+    build_current_features,
+    build_features,
+    build_training_matrix,
+)
 from ficc.ml.labels import (
     EntryConvention,
     ForwardLabelSpec,
@@ -42,8 +54,11 @@ __all__ = [
     "ReturnType",
     "Split",
     "WalkForwardSpec",
+    "assert_per_row_causality",
     "build_asof_view",
+    "build_current_features",
     "build_features",
+    "build_training_matrix",
     "forward_returns",
     "generate_splits",
     "validate_no_leakage",

@@ -1092,6 +1092,8 @@ PnL 分布"保留为 `historical_aging` 对照。默认 price-only；`include_ca
   历史 2013 钱荒/2020 疫情 **1.07% / 0.94%**（不是旧报告的 16.4% 蝶式）；
 - 单点极值：2Y-only +100bp 1.0%、30Y-only 13.3%（曲率/外推），风险报告须并列全重估。
 
+**多日契约（R42）**：h>1 时**先取 h 日累计即期 Δz=z_{t+h}−z_t，对冻结组合一次全重估**；`include_carry=True` 每样本只加一次 `forward_carry(h)`，price-only 不加；参数法/CF 直接用 h 日累计 PnL 分布（不乘 sqrt(h)、不二次聚合）；样本数 = lookback−h+1（重叠样本，仅描述）。平 3% 曲线 h=5 的 carry 为 **58,967.64 元/样本**（旧 5× 294,838.19 已消除）；3%→4%→3% 两日净冲击 price-only PnL=**0.00 元**（旧逐日相加 +1,463,856.96）；h=2 累计重估与直接 t+h 重估逐位一致；默认 h=1 95% VaR/ES 仍为 **324,181 / 445,807 元**。h=5 全样本（lookback=250, n_obs=246）95% 历史 VaR/ES=**874,145 / 1,135,178 元**，KRD 近似 885,711 / 1,147,677 元（差约 1–1.9bp NAV）。
+
 **契约（显式）**：`VaR = f(analysis_as_of, frozen_positions, historical_shocks, horizon_days, include_carry)`——分析日组合/条款/结算/剩余期限**冻结**；历史样本只提供风险因素变化；`horizon_days=1` 默认瞬时价格风险（price-only，BIS 历史模拟口径），`include_carry=True` 时叠加分析日曲线下时间前进的 carry/roll + 区间票息现金（total-return 近似，非路径一致持有期回测）；现金流事件（票息/本金/费用/融资）只在账本口径出现，不进入 price-only 分布。统一验收里新增 `risk_small_shock_convergence`（蝶式 0.001bp 误差 <1e-4）。
 
 **结论**：KRD 近似与全重估同一价格函数后可作小幅冲击的风险近似（一阶收敛验证通过），
@@ -1128,7 +1130,7 @@ ML/RL 的数据契约设计可以推进，绩效比较与策略优化等待以�
 | 编号 | 修复 | 复验证据 |
 |------|------|----------|
 | **R37** | `Ledger.simulate(return_path=True)` 返回投影窗口**逐日快照**；闸门删除显式 `horizon=下一交易日`，改用默认 `max(as_of, 最大结算日的下一交易日)`；对路径上每个快照跑 9 项约束，成交日当天状态（含单券权重）也检查；拒单原因记录最后违规码 | 新增 `test_r37_*`：T+2 + `cash_floor=0` 时 4 笔建仓在成交前被拒；执行日权重越界被拦；长样本 rv 2023-07-04 违规消失（0 天违规）。R32 长假场景改为如实区分"成交引入的违规"与"融资被动消耗导致的 4 天 cash_floor" |
-| **R38** | 滚动与信号调度解耦：滚动日基准换券后，策略执行**机械换券订单**（卖光旧券 + 该腿滚动到**基准的新券面值**，双方共用同一政策；主动偏离由后续信号重建，不再依赖 pending）；daily 的旧 pending 顺延并在事件表记录；`roll_events` 记录事件→成交映射、状态与原因；新增 `TargetFaces` 精确基准回放控制组 | 新增同日换券/事件映射/滚动因果性/精确回放测试；`make acceptance-rolling` **79/79 PASS**；长样本控制组超额 **0.0000bp**；四组均 7/7 同日、0 缺失、0 约束拒绝；`roll_events` 含 `pending_deferred`/`gate_attempts` |
+| **R38** | 滚动与信号调度解耦：滚动日基准换券后，策略执行**机械换券订单**（卖光旧券 + 该腿滚动到**基准的新券面值**，双方共用同一政策；主动偏离由后续信号重建，不再依赖 pending）；daily 的旧 pending 被**取消**（无延期队列，由当日收盘新信号替代），`roll_events` 记录 `pending_status=cancelled_by_roll`；`gate_decisions` 记录真实闸门决策（source/status/attempts/成交）；新增 `TargetFaces` 精确基准回放控制组 | 新增同日换券/事件映射/滚动因果性/精确回放测试；`make acceptance-rolling` **91/91 PASS**；长样本控制组超额 **0.0000bp**；四组均 7/7 同日、0 缺失、0 约束拒绝；`roll_events` 含 `pending_status`/`gate_attempts`，`gate_decisions` 含真实 policy/signal 决策 |
 | **R39** | VaR 历史模拟改为 `analysis_as_of + frozen_positions + historical_shocks`（冻结分析日组合/条款/结算/剩余期限，只搬运历史即期关键点 Δz）；旧"逐日老化"保留为对照；明确 price-only 与 `include_carry` 边界 | `test_risk.py` 21 项：主口径 95% VaR/ES **32.42 / 44.58 万**；审查的 YTM 冻结空间逐位复现 **31.82 / 43.33 万**；旧 aging 并列 **35.67 / 49.67 万** |
 | **R40** | 全重估与 KRD 统一到 `price_from_spot` + `spot_shock`（关键点线性、两端平推）；KRD 用同源解析一阶导（与 1bp `key_rate_durations` 单点差分差 <0.2%，冲击基不变） | 小冲击收敛：平行 1bp **8.3e-4**、陡/平 0.01bp **4.3e-6**、蝶式 0.001bp **4.3e-7**（旧蝶式 9.38% 基差消除）；大幅：平行 ±100bp 8.2%/8.3%、陡/平/蝶 25bp ≈1.08%、历史 ~1% |
 | **R41** | 窗口导出契约：`window_structure`（3×~2y + 229 日尾窗）、continuous 收益基期=**前收 NAV**、`pooled_cumulative_excess_bp`（连续复利全段）+ `pooled_ann_excess_bp` + `mean_window_excess_bp`（明确命名）、`rolling_version` 填值、note 按模式生成；脚本内置与 `long_sample_summary.csv` 的 ann/MDD/全段超额自动核对 | carry 年化 **3.7358%**、MDD **−4.9915%**；全段超额 **−120.58bp**、年化 **−13.37bp**、窗口均值 **−25.01bp**；2s10s 3.8380%/−4.8260%/年化 −3.64bp；rv 3.8638%/−4.7929%/年化 −1.13bp；精确回放控制 3.8756%/−4.8230%/0.0000bp |
@@ -1137,11 +1139,13 @@ ML/RL 的数据契约设计可以推进，绩效比较与策略优化等待以�
 YTM 冻结空间存在 YTM→即期定价映射差（+1.9%/+2.9%），两者并列；price-only VaR 未含持有期
 carry/现金事件（`include_carry` 可打开，单独约定）；滚动基准按**面值保持**（替代的 DV01 保持
 政策未做稳健性版本）；重叠窗口未做推断、pooled 只对连续路径有意义；当前 acceptance 的
-buyhold 33 项与 rolling 43 项分别报告，不能互相替代。
+buyhold 两年 62 项与 rolling 2019-01-28→2021-12-31 的 79 项分别报告，不能互相替代；
+默认 rolling 验收经历 2 次换券，不能以其代替 1730 日、7 次换券的完整验收。
 
-**验收结论**：R37–R41 的实现契约已关闭；可以按计划 §12.15 进入 C（先监督学习、再 RL）的
-**数据/接口与零信号基线设计**，但"绩效比较"仍须等 rolling 验收与风险口径在报告中固定后，
-且不得把 2019–2025 已研究样本重新命名为未触碰测试集。
+**验收结论（第十二轮复核限定）**：R37 的既有反例、默认同日滚动、冻结快照一日 price-only
+和默认关键点小冲击收敛已通过复核，修复构成实质进展。多日风险与新 ML/RL 接口另有 R42–R46
+边界，不能概括为全部契约已关闭；具体见 §10.21。可以继续 C 阶段数据/接口设计，
+不得把 2019–2025 已研究样本重新命名为未触碰测试集。
 
 
 ### 10.20 ML/RL 接口（仅接口与无未来约束，不含绩效比较）
@@ -1150,7 +1154,7 @@ buyhold 33 项与 rolling 43 项分别报告，不能互相替代。
 
 - `build_asof_view(panel, funding, calendar, as_of, availability_lag_days=1)`：只暴露
   `≤ as_of − lag` 的观测（中债曲线收盘后才可用），构造时断言无未来行；`AsOfView.history(n)` 只回看。
-- `FeatureSpec`/`build_features`：变换只接收 `AsOfView` 的历史切片，输出索引越界即断言失败。
+- **当前决策与训练矩阵分离（R43）**：`FeatureSpec`/`build_current_features(view, specs)` 只返回当前决策时点**单行**；`build_training_matrix(panel, funding, calendar, decision_dates, specs, lag=1)` 对每个决策日 t **单独**构造 as-of 视图再取该行，禁止整段历史一次算完再截断；`assert_per_row_causality` 验证"修改 t 之后数据，t 行特征逐位不变"。旧 `build_features` 保留但只返回单行并 FutureWarning（仅迁移用）。
 - `ForwardLabelSpec`/`forward_returns`：持有期标签带 `available_after = as_of + holding_days`（交易日），
   明确"只允许离线/训练调用"，避免把标签误当作 as-of 特征。
 - `WalkForwardSpec`/`generate_splits`/`validate_no_leakage`：purge 由标签持有期决定、embargo 分隔
@@ -1158,11 +1162,71 @@ buyhold 33 项与 rolling 43 项分别报告，不能互相替代。
   2019–2025 已研究，绩效比较前不得重新命名测试集。
 
 **RL 接口**（`src/ficc/rl/`）：`RebalanceEnv` 每步调用**同一个** `run_backtest`（账本/闸门/滚动/成本
-不重写），`StepRecord` 记录 `original_action`（策略原始目标）、`projected_target`（闸门实际提交）、
+不重写），`ActionSpec()`（`target_krd=None`）是 **hold=持仓不动**：引擎不生成 pending、不主动成交（滚动/结算等外生事件仍发生）；"保持当前 KRD"是另一动作，整手/约束下仍可能交易，不能当零动作。`StepRecord` 记录 `original_action`（策略原始目标）、`projected_target`（引擎 `gate_decisions` 的真实提交目标，含 policy roll）、`projected_faces`、
 `executed_trades`、`rejected/reject_reason`、`gate_level/risk_off`、`nav_before/after` 与
 `reward = nav_after − nav_before`（同一账本净收益，价差不重复扣）；`events` 按
-signal→project→execute→reject/roll→settle 排序，换券事件来自 `roll_events`。
+signal→project→execute→reject/roll→settle 排序（**展示顺序**，真实决策以 `gate_decisions` 为准），换券事件来自 `roll_events`。
 
 **已知限制（不掩盖）**：env 每次 step 从 episode 起点重跑引擎，O(n²)，是接口原型而非性能实现；
 闸门内部缩放重试档位未暴露给 env（只记录提交目标与 gate_level）；ML 标签当前是曲线平价券一阶代理，
 正式标签应复用账本/定价层。绩效比较与训练等 rolling/风险验收固定后再做。
+
+### 10.21 第十二轮独立审查：一日研究路径与新接口边界（2026-11-08）
+
+基线 `b263840`。本轮只维护文档，未修业务代码或改写报告 CSV。默认 `make check` 实跑 exit 0
+（624 项）；buyhold 验收 **62/62 PASS**、默认 rolling **79/79 PASS**；风险两份 CSV 隔离重跑
+数值一致。默认关键期限逐桶 0.001bp 冲击误差约 5e-8～1.3e-6，支持 R40 的一阶收敛修复。
+将同一验收入口扩展到 **2025-12-31** 实跑得到 **78/79 PASS、exit 1**：唯一 FAIL 为 carry_roll
+的 `constraints_held_days`（1729 个持仓日中 1 天违规）；现有逐日报告对应 **2022-03-21**，
+当日 0 成交、rejected=True、single_bond_weight 超限。其余逐项对账、全部 7 次换券的归因/映射、
+独立估值、因果性与风险收敛均通过。不得把默认三年 79/79 写成完整七年全绿，也不应隐藏这一 FAIL。
+长样本年化/回撤、pooled 年化均值与 HAC/bootstrap 已从保存的 NAV 复算一致。
+以下问题须按其实际影响范围解读，不能反推默认一日报告和全部历史 NAV 都错误。
+
+1. **R42 / 多日风险**：`portfolio_pnl_current_portfolio_factors` 给每个一日冲击样本加入完整
+   h 日 carry，报告再将 h 个样本求和。平 3% 曲线、默认组合、h=5，carry **58,967.64 元**
+   被聚合成 **294,838.19 元**。price-only 也存在非线性聚合问题：3%→4%→3% 的历史路径
+   净即期冲击为 0，冻结组合对累计冲击重估应为 0，现有两日相加却为 **+1,463,856.96 元**。
+   多日历史模拟应先构造 h 日累计冲击再重估，carry 只加一次；若支持路径收益则必须逐步推进同一状态。
+   当前 h=1、include_carry=False 的 32.42/44.58 万结果不受这些反例影响。
+2. **R43 / 训练特征因果性**：AsOfView 截断的是整张表的最终可得时点；`build_features`
+   返回的历史行未逐行证明因果性。transform=`shift(-1)` 仍可通过索引检查：as_of=2019-02-15
+   时，仅修改 02-12 的 2Y 利率，返回的 **02-11 特征由 2.5543 变为 12.5543**。
+   该表不能直接作为“逐日无未来”的训练样本。应逐决策时点构造视图并只保留该决策的特征行，
+   或明确函数只提供当前时点的历史工作表，并另建有前缀不变验收的样本构造器。
+3. **R44 / 零动作**：ActionSpec() 当前表达的是上一日绝对 KRD 目标，执行日仍会反解面值。
+   默认整手/约束，平曲线 3% 建仓后次日变 3.3%，零动作触发 **30Y 买入 2M 面值**。
+   因此不能称“不主动调仓”。应区分 HoldPositions、TargetKRD、机械滚动及风险强制动作，
+   用独立的固定面值/无订单控制验证零动作，而非只比较两次调用同一 helper 的结果。
+4. **R45 / 滚动动作审计**：滚动日旧 pending 实际被清空，之后由新信号替换，不是原动作排队顺延。
+   env 又以 `strategy.emitted[signal_date]` 填 projected_target：可出现记录为“全零目标”，实际
+   送入闸门并成交的却是机械卖旧买新。需显式记录取消/替代/真正延期状态与 action_id、policy_id、
+   实际候选目标和成交映射；不能只增加一个重试档位字段。现有事件排序是展示顺序，不是账本执行日志。
+5. **R46 / 成本审计**：forced_orders 缩放后面值取整，但 spread_cost 仅乘 scale。
+   默认精确回放、现金下限 0，25M×0.9 取整为 22M，仍按 22.5M 计算报告价差。
+   2019-01-29 的 30Y 报告 **60,925.58 元**，执行价/中间价与实际面值给出 **59,571.68 元**。
+   应从最终面值重算报告价差；该错误污染缩放场景成本表，不是重复扣减 NAV，也不证明默认 scale=1 结果错误。
+
+**进入下一步的验收门槛**：先统一决策/发布时间（ML 默认 lag=1 与 RL 收盘观察同日曲线须明确区分）、
+正式标签的次日成交与持有期、逐样本因果性；再验证 RL 零动作、机械事件替代与终止时未结算义务。
+多日风险修复可与 ML 数据集工作并行；正式训练前需关闭相关接口契约。h=1 的研究复核可以继续，
+无需因多日分支错误否定已通过的一日验收。完整证据见 `docs/code.md` R42–R46。
+
+
+### 10.21 第十二轮修复结果（R42–R46，2026-11-08）
+
+| 编号 | 修复 | 证据 |
+|------|------|------|
+| **R42** | 多日 VaR 先聚合 h 日累计冲击再一次全重估；carry 每样本只加一次；参数/CF 直接用 h 日 PnL 分布 | 平 3% h=5 carry 58,967.64/样本（旧 294,838.19）；3%→4%→3% 两日净冲击 0.00（旧 +1,463,856.96）；h=2 累计重估==直接 t+h 重估；h=1 回归 324,181/445,807 不变 |
+| **R43** | ML 区分当前决策工作表与逐决策时点训练矩阵；`assert_per_row_causality` 校验逐行无未来 | `shift(-1)` 反例：改 2019-02-12 后 2019-02-11 行逐位不变；旧式整段截断矩阵被拒；ML 测试 8→18 |
+| **R44** | RL 零动作 = hold（不生成 pending/不主动成交），不是"保持 KRD"重求解；`projected_target` 来自真实 `gate_decisions` | 平 3% 建仓后 hold：`executed_face=0`、无成交；旧实现会买 30Y 200 万 |
+| **R45** | 引擎返回 `gate_decisions`（source/status/attempts/projected_faces/成交/拒单）；`roll_events.pending_status=cancelled_by_roll`（无延期队列，由当日新信号替代）；env 投影用真实决策，事件排序标注为展示顺序 | rolling 验收新增 `policy_pending_semantics`；91/91 含该项 |
+| **R46** | forced 缩放后按**取整最终面值**重算 `spread_cost` | 验收新增 `spread_cost_from_final_face`：逐笔价差==成本表价差（1e-6） |
+
+**验收口径修正**：持仓日违规拆成 `constraints_executed_days`（成交日违规→FAIL）与
+`constraints_passive_days`（无成交被动违规→单独披露、不阻塞）；carry 2022-03-21 被动单券边界
+不再被误报成执行失败。`make acceptance` **70/70 PASS**；`make acceptance-rolling`（2019–2021）
+**91/91 PASS**；延到 2025-12-31 同口径 **91/91 PASS**（`acceptance_summary_rolling_extended.csv`）。
+
+**仍保留**：h>1 样本重叠、只作描述；ML 标签一阶代理；RL env 逐日重放 O(n²) 且闸门内部缩放档位
+仍未暴露（仅 `gate_attempts`）；h=5 风险数字是 2020-12-31 固定组合，不是全历史滚动 VaR。

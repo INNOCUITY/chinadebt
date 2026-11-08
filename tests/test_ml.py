@@ -26,8 +26,11 @@ from ficc.ml import (
     LeakageError,
     Split,
     WalkForwardSpec,
+    assert_per_row_causality,
     build_asof_view,
+    build_current_features,
     build_features,
+    build_training_matrix,
     forward_returns,
     generate_splits,
     validate_no_leakage,
@@ -405,8 +408,11 @@ def test_ml_package_surface_is_stable() -> None:
         "ReturnType",
         "Split",
         "WalkForwardSpec",
+        "assert_per_row_causality",
         "build_asof_view",
+        "build_current_features",
         "build_features",
+        "build_training_matrix",
         "forward_returns",
         "generate_splits",
         "validate_no_leakage",
@@ -418,3 +424,295 @@ def test_ml_package_surface_is_stable() -> None:
     package_dir = Path(ml.__file__).resolve().parent
     files = {path.name for path in package_dir.glob("*.py")}
     assert files == {"__init__.py", "asof.py", "labels.py", "walkforward.py"}
+
+
+# ===========================================================================
+# R43：逐决策时点训练矩阵 + 逐样本因果性（禁止整段历史一次算完再截断）
+# ===========================================================================
+def _level_spread_specs() -> list[FeatureSpec]:
+    return [
+        FeatureSpec(name="level_2y", transform=lambda f: f["2.0"], inputs=("2.0",)),
+        FeatureSpec(
+            name="spread_2s10s",
+            transform=lambda f: f["10.0"] - f["2.0"],
+            inputs=("2.0", "10.0"),
+        ),
+        FeatureSpec(
+            name="mean5_10y",
+            transform=lambda f: f["10.0"].rolling(5).mean(),
+            inputs=("10.0",),
+        ),
+    ]
+
+
+def _decision_dates(calendar: TradingCalendar, start: int = 40, stop: int = 90, step: int = 5):
+    return calendar.dates()[start:stop:step]
+
+
+def test_r43_build_features_is_current_row_only(market) -> None:
+    """旧多行 API 必须收窄为"当前决策单行"，否则会跨行泄漏。"""
+    panel, funding, calendar = market
+    as_of = calendar.dates()[40]
+    view = build_asof_view(panel, funding, calendar, as_of, availability_lag_days=1)
+    specs = _level_spread_specs()
+
+    with pytest.warns(FutureWarning, match="当前决策"):
+        legacy = build_features(view, specs)
+    current = build_current_features(view, specs)
+
+    assert len(legacy) == 1
+    assert len(current) == 1
+    assert legacy.index.equals(current.index)
+    available = pd.Timestamp(view.available_through)
+    assert current.index[0] == available
+    assert current.index.max() <= pd.Timestamp(view.available_through)
+    assert list(current.columns) == ["level_2y", "spread_2s10s", "mean5_10y"]
+    assert current["level_2y"].iloc[0] == pytest.approx(panel.loc[available, 2.0])
+    # 旧实现会在历史每一行都返回特征；现在只剩当前可得日这一行
+    assert not current.index.duplicated().any()
+
+
+def test_r43_training_matrix_rows_are_decision_dates_and_use_per_t_view(
+    market, monkeypatch
+) -> None:
+    import ficc.ml.asof as asof_module
+
+    panel, funding, calendar = market
+    decisions = sorted(_decision_dates(calendar, 40, 75, 5))
+    calls: list[object] = []
+    original = asof_module.build_asof_view
+
+    def counting_build(*args, **kwargs):
+        calls.append(kwargs.get("as_of", args[3] if len(args) > 3 else None))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(asof_module, "build_asof_view", counting_build)
+    matrix = build_training_matrix(
+        panel, funding, calendar, decisions, _level_spread_specs(), availability_lag_days=1
+    )
+
+    # 每个决策时点单独建视图（次数 == 决策日数），而不是一次性历史切片
+    assert len(calls) == len(decisions)
+    expected_index = pd.DatetimeIndex([pd.Timestamp(d) for d in decisions], name="date")
+    assert matrix.index.equals(expected_index)
+    assert matrix.attrs["builder"] == "per_decision_asof"
+    assert matrix.attrs["availability_lag_days"] == 1
+    for decision in decisions:
+        expected_cutoff = calendar.prev_trading_day(decision, 1)
+        assert (
+            matrix.attrs["available_through"][decision.isoformat()] == expected_cutoff.isoformat()
+        )
+
+
+def test_r43_future_perturbation_does_not_change_t_row(market) -> None:
+    panel, funding, calendar = market
+    decisions = _decision_dates(calendar)
+    specs = _level_spread_specs()
+    matrix = build_training_matrix(panel, funding, calendar, decisions, specs)
+
+    target = decisions[2]
+    cutoff = calendar.prev_trading_day(target, 1)
+    perturbed_panel = panel.copy()
+    future = perturbed_panel.index > pd.Timestamp(cutoff)
+    assert future.any()
+    perturbed_panel.loc[future] = perturbed_panel.loc[future] * 3.0 + 7.0
+    perturbed_funding = funding.copy()
+    future_funding = perturbed_funding.index > pd.Timestamp(cutoff)
+    perturbed_funding.loc[future_funding] = perturbed_funding.loc[future_funding] * 3.0 + 7.0
+
+    rebuilt = build_training_matrix(perturbed_panel, perturbed_funding, calendar, decisions, specs)
+    pd.testing.assert_frame_equal(
+        rebuilt.loc[[pd.Timestamp(target)]],
+        matrix.loc[[pd.Timestamp(target)]],
+        rtol=0.0,
+        atol=1e-12,
+    )
+    # 之后决策日可以看到被修改的数据 → 行变化，证明扰动确实生效
+    later = decisions[-1]
+    assert not np.allclose(
+        rebuilt.loc[pd.Timestamp(later)].to_numpy(dtype=float),
+        matrix.loc[pd.Timestamp(later)].to_numpy(dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+        equal_nan=True,
+    )
+
+
+def test_r43_past_data_change_is_visible(market) -> None:
+    panel, funding, calendar = market
+    target = _decision_dates(calendar)[2]
+    specs = _level_spread_specs()
+    matrix = build_training_matrix(panel, funding, calendar, [target], specs)
+    cutoff = calendar.prev_trading_day(target, 1)
+
+    changed = panel.copy()
+    changed.loc[pd.Timestamp(cutoff), 2.0] = changed.loc[pd.Timestamp(cutoff), 2.0] + 1.0
+    rebuilt = build_training_matrix(changed, funding, calendar, [target], specs)
+    assert not np.allclose(
+        rebuilt.loc[pd.Timestamp(target)].to_numpy(dtype=float),
+        matrix.loc[pd.Timestamp(target)].to_numpy(dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+        equal_nan=True,
+    )
+
+
+def test_r43_lag_boundary(market) -> None:
+    panel, funding, calendar = market
+    target = _decision_dates(calendar)[2]
+    specs = _level_spread_specs()
+    lag1 = build_training_matrix(panel, funding, calendar, [target], specs)
+    cutoff = calendar.prev_trading_day(target, 1)
+
+    # 修改 cutoff 当日（可见）→ 行变化
+    visible = panel.copy()
+    visible.loc[pd.Timestamp(cutoff), 2.0] += 1.0
+    assert not np.allclose(
+        build_training_matrix(visible, funding, calendar, [target], specs)
+        .loc[pd.Timestamp(target)]
+        .to_numpy(dtype=float),
+        lag1.loc[pd.Timestamp(target)].to_numpy(dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+        equal_nan=True,
+    )
+
+    # 修改 target 当日（lag=1 下不可见）→ 行不变
+    invisible = panel.copy()
+    invisible.loc[pd.Timestamp(target), 2.0] += 999.0
+    pd.testing.assert_frame_equal(
+        build_training_matrix(invisible, funding, calendar, [target], specs).loc[
+            [pd.Timestamp(target)]
+        ],
+        lag1.loc[[pd.Timestamp(target)]],
+        rtol=0.0,
+        atol=1e-12,
+    )
+
+    # lag=0 时 target 当日可见 → 行变化
+    lag0 = build_training_matrix(panel, funding, calendar, [target], specs, availability_lag_days=0)
+    changed0 = panel.copy()
+    changed0.loc[pd.Timestamp(target), 2.0] += 1.0
+    rebuilt0 = build_training_matrix(
+        changed0, funding, calendar, [target], specs, availability_lag_days=0
+    )
+    assert not np.allclose(
+        rebuilt0.loc[pd.Timestamp(target)].to_numpy(dtype=float),
+        lag0.loc[pd.Timestamp(target)].to_numpy(dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+        equal_nan=True,
+    )
+
+
+def test_r43_shift_minus_one_is_contained(market) -> None:
+    """当前决策 API 中 shift(-1) 只能得到 NaN，不会伪造未来值。"""
+    panel, funding, calendar = market
+    decisions = _decision_dates(calendar, 40, 80, 5)
+    shift_spec = FeatureSpec(
+        name="next_2y", transform=lambda f: f["2.0"].shift(-1), inputs=("2.0",)
+    )
+    matrix = build_training_matrix(panel, funding, calendar, decisions, [shift_spec])
+    assert matrix["next_2y"].isna().all(), "shift(-1) 在当前决策行不应取到未来值"
+    # 修改 t+1 的未来数据：t 行必须逐位不变（这里全 NaN 也一致）
+    assert (
+        assert_per_row_causality(
+            matrix, panel, calendar, [shift_spec], funding=funding, sample_rows=3
+        )
+        is True
+    )
+
+
+def test_r43_historical_table_built_once_is_detected(market) -> None:
+    """历史表"一次性算完再截断"必须被 assert_per_row_causality 识破。"""
+    panel, funding, calendar = market
+    decisions = _decision_dates(calendar, 40, 80, 5)
+    shift_spec = FeatureSpec(
+        name="next_2y", transform=lambda f: f["2.0"].shift(-1), inputs=("2.0",)
+    )
+    # 旧实现：对整段历史做一次 shift(-1)，再按决策日截取 → 行 t 用到了 t 当日值
+    leaky_series = panel[2.0].shift(-1)
+    legacy_rows = []
+    for decision in decisions:
+        cutoff = calendar.prev_trading_day(decision, 1)
+        legacy_rows.append(leaky_series.loc[pd.Timestamp(cutoff)])
+    legacy_matrix = pd.DataFrame(
+        {"next_2y": legacy_rows},
+        index=pd.DatetimeIndex([pd.Timestamp(d) for d in decisions], name="date"),
+    )
+    legacy_matrix.attrs["availability_lag_days"] = 1
+
+    # 逐决策重建得到 NaN；与旧表不一致 → 明确报错，而不是静默训练
+    with pytest.raises(AssertionError, match="逐决策时点重建"):
+        assert_per_row_causality(legacy_matrix, panel, calendar, [shift_spec], funding=funding)
+
+
+def test_r43_assert_per_row_causality_passes_normal_features(market) -> None:
+    panel, funding, calendar = market
+    decisions = _decision_dates(calendar)
+    specs = _level_spread_specs()
+    matrix = build_training_matrix(panel, funding, calendar, decisions, specs)
+    assert (
+        assert_per_row_causality(
+            matrix, panel, calendar, specs, funding=funding, availability_lag_days=1
+        )
+        is True
+    )
+    # 显式声明 lag 与矩阵不一致 → 拒绝
+    with pytest.raises(AssertionError, match="availability_lag_days"):
+        assert_per_row_causality(
+            matrix, panel, calendar, specs, funding=funding, availability_lag_days=2
+        )
+
+
+def test_r43_training_matrix_input_validation(market) -> None:
+    panel, funding, calendar = market
+    decisions = _decision_dates(calendar)
+    specs = _level_spread_specs()
+    with pytest.raises(ValueError, match="不能为空"):
+        build_training_matrix(panel, funding, calendar, [], specs)
+    with pytest.raises(ValueError, match="重复"):
+        build_training_matrix(panel, funding, calendar, [decisions[0], decisions[0]], specs)
+    with pytest.raises(TypeError, match="日期序列"):
+        build_training_matrix(panel, funding, calendar, decisions[0], specs)  # type: ignore[arg-type]
+
+
+def test_r43_review_counterexample_2019_02_11_shift_next() -> None:
+    """复现审查反例（2019-02-11/12）：逐决策构造后 t 行不受 t+1 修改影响。"""
+    days = pd.bdate_range("2019-02-04", "2019-02-15", name="date")
+    panel = pd.DataFrame(
+        {2.0: np.linspace(2.50, 2.61, len(days)), 10.0: np.linspace(3.00, 3.11, len(days))},
+        index=days,
+    )
+    calendar = TradingCalendar.from_dates(days)
+    t = date(2019, 2, 11)
+    t_next = date(2019, 2, 12)
+    shift_spec = FeatureSpec(
+        name="next_2y", transform=lambda f: f["2.0"].shift(-1), inputs=("2.0",)
+    )
+
+    baseline = build_training_matrix(panel, None, calendar, [t], [shift_spec])
+    assert baseline.loc[pd.Timestamp(t), "next_2y"] != pytest.approx(12.5543)
+    assert np.isnan(baseline.loc[pd.Timestamp(t), "next_2y"])
+
+    # 旧式"整段历史一次 shift(-1) 再截断"会把 t+1 的值带进 t 行（审查现象）
+    legacy_value = panel[2.0].shift(-1).loc[pd.Timestamp(t)]
+    assert legacy_value == pytest.approx(panel.loc[pd.Timestamp(t_next), 2.0])
+
+    corrupted = panel.copy()
+    corrupted.loc[pd.Timestamp(t_next), 2.0] = 12.5543
+    rebuilt = build_training_matrix(corrupted, None, calendar, [t], [shift_spec])
+    pd.testing.assert_frame_equal(
+        rebuilt.loc[[pd.Timestamp(t)]],
+        baseline.loc[[pd.Timestamp(t)]],
+        rtol=0.0,
+        atol=1e-12,
+    )
+    # 修改的 t+1 数据没有进入 t 行（否则会看到 12.5543）
+    assert rebuilt.loc[pd.Timestamp(t), "next_2y"] != pytest.approx(12.5543)
+    assert (
+        assert_per_row_causality(
+            baseline, panel, calendar, [shift_spec], availability_lag_days=1, sample_rows=1
+        )
+        is True
+    )

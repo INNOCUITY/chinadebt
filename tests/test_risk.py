@@ -786,3 +786,226 @@ def test_stress_real_panel_config_scenarios(calendar: _WeekdayCalendar) -> None:
         if result.executed:
             assert np.isfinite(result.pnl_full) and np.isfinite(result.pnl_krd)
             assert result.nav > 0.0
+
+
+# ---------------------------------------------------------------------------
+# 6. R42：多日 VaR 先聚合冲击、carry 只计一次
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def real_default_setup():
+    """默认 2020-12-31 组合/面值（发行 2019-12-30，真实 CN_IB 日历）。"""
+    market = _load_real_market()
+    if market is None:
+        pytest.skip("缺少中债实测面板，跳过 R42 审查反例复现")
+    panel, calendar = market
+    cfg = get_config()
+    as_of = date(2020, 12, 31)
+    trading_days = [day for day in calendar.dates() if day <= as_of]
+    issue_day = trading_days[-251]
+    bonds = build_universe_bonds(_curve_at(panel, issue_day), issue_day, cfg=cfg)
+    benchmark = build_benchmark(
+        _curve_at(panel, as_of), as_of, bonds=bonds, calendar=calendar, cfg=cfg
+    )
+    faces = {code: float(face) for code, face in benchmark.faces.items()}
+    return panel, calendar, bonds, faces, benchmark, trading_days
+
+
+def _flat_panel_like(panel: pd.DataFrame, level: float = 3.0) -> pd.DataFrame:
+    return pd.DataFrame(level, index=panel.index, columns=list(TENORS))
+
+
+def test_r42_carry_once_flat_curve_h5(real_default_setup) -> None:
+    """平 3% 曲线、默认组合、lookback=20、h=5：carry 每样本只加一次。"""
+    panel, calendar, bonds, faces, benchmark, _tdays = real_default_setup
+    cfg = get_config()
+    as_of = date(2020, 12, 31)
+    flat3 = _flat_panel_like(panel)
+    no_carry = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        flat3,
+        as_of,
+        lookback=20,
+        horizon_days=5,
+        include_carry=False,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    with_carry = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        flat3,
+        as_of,
+        lookback=20,
+        horizon_days=5,
+        include_carry=True,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    assert len(no_carry) == 20 - 5 + 1  # n_obs = lookback − h + 1
+    assert np.allclose(no_carry.to_numpy(), 0.0)  # 平曲线、累计 Δz=0
+    increment = (with_carry - no_carry).to_numpy()
+    assert np.allclose(increment, increment[0])  # 同一常数，逐样本只加一次
+    carry_once = float(increment[0])
+    assert carry_once == pytest.approx(58_967.63878, rel=1e-9)
+    assert carry_once != pytest.approx(294_838.19390, rel=1e-6)  # 不是旧的 5×
+    # VaR/ES 相对 price-only 只平移一次 carry（常数正 PnL → 负损失值）
+    nav = benchmark.market_value
+    var_no, es_no = _var_es_cny(no_carry, nav)
+    var_with, es_with = _var_es_cny(with_carry, nav)
+    assert var_no == pytest.approx(0.0, abs=1e-9)
+    assert es_no == pytest.approx(0.0, abs=1e-9)
+    assert var_with == pytest.approx(-carry_once, rel=1e-9)
+    assert es_with == pytest.approx(-carry_once, rel=1e-9)
+    # 旧 bug 的聚合值（5 个重叠样本各加一次 h 日 carry）是 5×carry_once
+    assert 5.0 * carry_once == pytest.approx(294_838.19390, rel=1e-9)
+
+
+def test_r42_two_day_net_shock_zero(real_default_setup) -> None:
+    """3%→4%→3% 两日净冲击为零：先聚合再重估的 h=2 PnL 应为 0。"""
+    panel, calendar, bonds, faces, _benchmark, trading_days = real_default_setup
+    cfg = get_config()
+    as_of = date(2020, 12, 31)
+    path_panel = _flat_panel_like(panel)
+    path_panel.loc[pd.Timestamp(trading_days[-2])] = 4.0  # 12-30 置 4%，12-31 回 3%
+    one_day = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        path_panel,
+        as_of,
+        lookback=20,
+        horizon_days=1,
+        include_carry=False,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    last_two = one_day.iloc[-2:].to_numpy()
+    assert last_two[0] == pytest.approx(-7_680_370.65631, rel=1e-9)
+    assert last_two[1] == pytest.approx(9_144_227.62110, rel=1e-9)
+    # 旧错误做法：把两个一日重估 PnL 相加（先各自施加在同一基准价上）
+    assert float(last_two.sum()) == pytest.approx(1_463_856.96480, rel=1e-9)
+
+    two_day = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        path_panel,
+        as_of,
+        lookback=20,
+        horizon_days=2,
+        include_carry=False,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    assert len(two_day) == 20 - 2 + 1
+    # 末日窗口 12-29(3%) → 12-31(3%)：累计 Δz=0，一次重估 PnL=0
+    assert two_day.iloc[-1] == pytest.approx(0.0, abs=1e-6)
+    assert not np.allclose(two_day.to_numpy(), 0.0)  # 其它窗口仍有冲击
+
+
+def test_r42_h2_cumulative_equals_direct_revaluation(calendar: _WeekdayCalendar) -> None:
+    """h=2 累计冲击重估 == 对累计 Δz 直接做一次逐券重估。"""
+    dates = business_dates(date(2021, 1, 4), 30)
+    panel = varying_panel(dates)
+    as_of = dates[-1]
+    cfg = get_config()
+    bond = make_bond("H2", date(2018, 6, 30), date(2031, 6, 30), coupon_pct=3.0, freq=2)
+    faces = {bond.code: 10_000_000.0}
+    two_day = portfolio_pnl_current_portfolio_factors(
+        faces,
+        [bond],
+        panel,
+        as_of,
+        lookback=10,
+        horizon_days=2,
+        include_carry=False,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    assert len(two_day) == 10 - 2 + 1
+    keys = np.asarray(sorted(float(t) for t in cfg.risk.key_tenors_krd), dtype=float)
+    levels = dates[-(10 + 1) :]
+    start_day, end_day = levels[-3], levels[-1]
+
+    def spot_for(day: date):
+        settlement = settlement_for(calendar, day, cfg=cfg)
+        return bootstrap_spot(_curve_at(panel, day), settlement=settlement, calendar=calendar)
+
+    spot_start = spot_for(start_day)
+    spot_end = spot_for(end_day)
+    shifts = np.asarray(
+        [
+            (float(spot_end.zero_rate(tenor)) - float(spot_start.zero_rate(tenor))) * 100.0
+            for tenor in keys
+        ],
+        dtype=float,
+    )
+    settlement = settlement_for(calendar, as_of, cfg=cfg)
+    base_spot = bootstrap_spot(_curve_at(panel, as_of), settlement=settlement, calendar=calendar)
+    shocked = spot_shock(base_spot, keys, shifts)
+    direct = (
+        10_000_000.0
+        / 100.0
+        * (
+            price_from_spot(bond, settlement, shocked, cfg=cfg)
+            - price_from_spot(bond, settlement, base_spot, cfg=cfg)
+        )
+    )
+    assert float(two_day.iloc[-1]) == pytest.approx(direct, rel=1e-12)
+
+
+def test_r42_horizon_fields_and_pre_aggregated(calendar: _WeekdayCalendar) -> None:
+    """h>1：样本数=lookback−h+1；参数法/CF 直接用 h 日分布，不乘 sqrt(h)。"""
+    dates = business_dates(date(2021, 1, 4), 40)
+    panel = varying_panel(dates)
+    as_of = dates[-1]
+    cfg = get_config()
+    bond = make_bond("AGG", date(2018, 6, 30), date(2031, 6, 30), coupon_pct=3.0, freq=2)
+    faces = {bond.code: 10_000_000.0}
+    one_day = portfolio_pnl_current_portfolio_factors(
+        faces, [bond], panel, as_of, lookback=20, horizon_days=1, cfg=cfg, calendar=calendar
+    )
+    three_day = portfolio_pnl_current_portfolio_factors(
+        faces, [bond], panel, as_of, lookback=20, horizon_days=3, cfg=cfg, calendar=calendar
+    )
+    assert len(one_day) == 20 and len(three_day) == 20 - 3 + 1
+    nav = portfolio_market_value(faces, [bond], _curve_at(panel, as_of), calendar=calendar, cfg=cfg)
+    pct = pnl_pct_from_cny(three_day, nav)
+    hist = historical_var_es(pct, confidences=(0.95,), horizon_days=3, pre_aggregated=True)[0]
+    normal = parametric_var_es(
+        pct, confidences=(0.95,), horizon_days=3, dist="normal", pre_aggregated=True
+    )[0]
+    cf = parametric_var_es(
+        pct, confidences=(0.95,), horizon_days=3, dist="cornish_fisher", pre_aggregated=True
+    )[0]
+    for result in (hist, normal, cf):
+        assert result.horizon_days == 3
+        assert result.n_obs == 20 - 3 + 1
+    # 正态参数法直接由 h 日累计样本矩给出（不乘 sqrt(3)、不二次聚合）
+    mean = float(pct.mean())
+    std = float(pct.std(ddof=0))
+    z = float(stats.norm.ppf(0.05))
+    assert normal.var_pct == pytest.approx(-(mean + std * z), rel=1e-12)
+    # 与“1 日分布 × sqrt(3)”明显不同
+    one_day_pct = pnl_pct_from_cny(one_day, nav)
+    one_day_var = parametric_var_es(one_day_pct, confidences=(0.95,), dist="normal")[0].var_pct
+    assert not np.isclose(normal.var_pct, one_day_var * np.sqrt(3.0), rtol=1e-6)
+
+
+def test_r42_h1_regression_matches_pre_r42(real_default_setup) -> None:
+    """默认 h=1、price-only 结果与修复前一致（324,181.45 / 445,806.66 元）。"""
+    panel, calendar, bonds, faces, benchmark, _tdays = real_default_setup
+    cfg = get_config()
+    frozen = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        panel,
+        date(2020, 12, 31),
+        lookback=250,
+        horizon_days=1,
+        include_carry=False,
+        cfg=cfg,
+        calendar=calendar,
+    )
+    var, es = _var_es_cny(frozen, benchmark.market_value)
+    assert var == pytest.approx(324_181.45365517546, rel=1e-9)
+    assert es == pytest.approx(445_806.6647392585, rel=1e-9)

@@ -214,7 +214,7 @@ def test_roll_events_map_to_same_day_strategy_trades(market) -> None:
     assert (events["bench_sell_trade_id"] != "").all()
     assert (events["bench_buy_trade_id"] != "").all()
     # R38 计划：记录延期/重试次数（机械换券的缩放尝试）
-    assert events["pending_deferred"].any()  # daily pending 在滚动日被顺延
+    assert (events["pending_status"] == "cancelled_by_roll").any()  # 无延期队列：旧 pending 被取消
     assert (events["gate_attempts"] >= 1).all()
 
 

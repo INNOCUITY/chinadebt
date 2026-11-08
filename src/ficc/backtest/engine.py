@@ -16,7 +16,7 @@ mark-to-market（老化后剩余期限、CN_IB 结算日），并跑一个同成
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
@@ -77,6 +77,8 @@ class BacktestResult:
     benchmark_positions: pd.DataFrame
     benchmark_trades: pd.DataFrame
     benchmark_cashflows: pd.DataFrame
+    # 每日真实闸门决策日志（含 policy roll / 无动作 / 被滚动取消的 pending 语义）
+    gate_decisions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_frames(self) -> dict[str, pd.DataFrame | pd.Series]:
         return {
@@ -242,6 +244,7 @@ def run_backtest(
     bench_trade_rows: list[dict[str, Any]] = []
     trade_spread_rows: list[dict[str, Any]] = []
     roll_rows: list[dict[str, Any]] = []
+    gate_decisions: list[dict[str, Any]] = []
 
     band_face = float(cfg.constraints.min_trade_lot) * float(cfg.constraints.rebalance_band_lots)
     last_rebalance_week: tuple[int, int] | None = None
@@ -452,22 +455,30 @@ def run_backtest(
             lot = float(cfg.constraints.min_trade_lot)
             for scale in (1.0, 0.9, 0.8, 0.6, 0.4, 0.2, 0.0):
                 attempted.append(target)
-                scaled = tuple(
-                    order
-                    if order.side == "sell"
-                    else order.__class__(
-                        bond=order.bond,
-                        side=order.side,
-                        face_value=round(order.face_value * scale / lot) * lot,
-                        clean_price=order.clean_price,
-                        target_face=round(order.face_value * scale / lot) * lot,
-                        current_face=0.0,
-                        mid_clean_price=order.mid_clean_price,
-                        spread_bp=order.spread_bp,
-                        spread_cost=order.spread_cost * scale,
+                scaled_list = []
+                for order in forced_orders:
+                    if order.side == "sell":
+                        scaled_list.append(order)
+                        continue
+                    new_face = round(order.face_value * scale / lot) * lot
+                    # R46：价差成本必须按**取整后的最终面值**重算，不能只乘缩放比例
+                    unit_cost = (
+                        order.spread_cost / order.face_value if order.face_value > 0.0 else 0.0
                     )
-                    for order in forced_orders
-                )
+                    scaled_list.append(
+                        order.__class__(
+                            bond=order.bond,
+                            side=order.side,
+                            face_value=new_face,
+                            clean_price=order.clean_price,
+                            target_face=new_face,
+                            current_face=0.0,
+                            mid_clean_price=order.mid_clean_price,
+                            spread_bp=order.spread_bp,
+                            spread_cost=unit_cost * new_face,
+                        )
+                    )
+                scaled = tuple(o for o in scaled_list if o.face_value > 0)
                 scaled = tuple(order for order in scaled if order.face_value > 0)
                 trades = _candidate_trades(scaled, signal_date=target.as_of, trade_date=d)
                 try:
@@ -577,7 +588,7 @@ def run_backtest(
                         "strategy_trade_ids": "",
                         "status": "pending",
                         "reason": "",
-                        "pending_deferred": False,
+                        "pending_status": "",
                         "gate_attempts": 0,
                     }
                     roll_rows.append(roll_row)
@@ -732,6 +743,7 @@ def run_backtest(
         # 不变、只换券"生成当日 policy 目标并**同日**执行，保证触发日双方显式换券。
         policy_roll_target: TargetKRD | None = None
         policy_orders: tuple[Any, ...] | None = None
+        pending_cancelled_by_roll = False
         if roll_events and last_snapshot is not None:
             prev_day = calendar.prev_trading_day(d, 1)
             prev_curve = _curve_at(panel, curve_tenors, prev_day)
@@ -741,7 +753,7 @@ def run_backtest(
                 as_of=pending.as_of if pending is not None else prev_day,
                 krd=dict(current_risk.krd),
                 notes=(
-                    "滚动政策：触发日同日机械换券（原 pending 顺延）"
+                    "滚动政策：触发日同日机械换券（原 pending 取消）"
                     if deferred
                     else "滚动政策：触发日同日机械换券"
                 ),
@@ -749,10 +761,12 @@ def run_backtest(
             policy_orders = _policy_roll_orders(roll_events, last_snapshot, curve_d, d, bench_faces)
             if deferred:
                 # 滚动日机械换券优先：旧宇宙上生成的 pending 信号已过期，顺延到
-                # 下一交易日/下一调仓日由信号重新生成；事件表记录 pending_deferred=True。
+                # 下一交易日/下一调仓日由信号重新生成；事件表记录 pending_status=cancelled_by_roll。
                 for roll_row in roll_rows:
                     if roll_row["date"] == d:
-                        roll_row["pending_deferred"] = True
+                        # 没有延期队列：旧 pending 被**取消**，由当日收盘新信号替代。
+                        roll_row["pending_status"] = "cancelled_by_roll"
+                pending_cancelled_by_roll = True
                 pending = None
 
         # ---- 2) 策略成交：先做完整成交前校验，再提交 ----
@@ -833,6 +847,54 @@ def run_backtest(
                         }
                     )
             pending = None
+
+        # ---- 2.5) 真实闸门决策日志（R45：区分取消/替代/真正执行）----
+        gate_decision: dict[str, Any] = {
+            "date": d,
+            "source": "none",
+            "signal_date": None,
+            "projected_target": None,
+            "projected_faces": None,
+            "status": "no_action",
+            "pending_status": "cancelled_by_roll" if pending_cancelled_by_roll else "none",
+            "gate_attempts": len(attempted),
+            "executed_trade_ids": tuple(submitted_ids),
+            "rejected": bool(rejected_reason),
+            "reject_reason": rejected_reason,
+            "gate_level": gate_level,
+            "risk_off": risk_off,
+        }
+        if policy_roll_target is not None:
+            gate_decision.update(
+                source="policy_roll",
+                signal_date=policy_roll_target.as_of,
+                projected_target=policy_roll_target,
+                projected_faces=tuple(
+                    (order.bond.code, float(order.face_value)) for order in (policy_orders or ())
+                ),
+                status=(
+                    "executed"
+                    if submitted_ids
+                    else ("rejected" if rejected_reason else "no_action")
+                ),
+            )
+        elif active_target is not None:
+            gate_decision.update(
+                source="signal",
+                signal_date=active_target.as_of,
+                projected_target=attempted[-1] if attempted else active_target,
+                status=(
+                    "partial_de_risk"
+                    if partial_de_risk
+                    else (
+                        "executed"
+                        if submitted_ids
+                        else ("rejected" if rejected_reason else "no_action")
+                    )
+                ),
+                pending_status="executed" if submitted_ids else "none",
+            )
+        gate_decisions.append(gate_decision)
 
         # ---- 3) 记账与记录 ----
         snapshot = ledger.process_day(d, curve_d)
@@ -962,15 +1024,27 @@ def run_backtest(
         else:
             target = strategy.target_krd(ctx)
         pending = target
-        signal_rows.append(
-            {
-                "date": d,
-                "signal_date": target.as_of,
-                "target_total_dv01": target.total_dv01,
-                "notes": target.notes,
-                "risk_off": risk_off,
-            }
-        )
+        if target is None:
+            # 零动作（RL hold）：不产生 pending，也不触发主动交易；滚动政策仍照常执行。
+            signal_rows.append(
+                {
+                    "date": d,
+                    "signal_date": None,
+                    "target_total_dv01": 0.0,
+                    "notes": "no_action（策略返回 None：持仓不动）",
+                    "risk_off": risk_off,
+                }
+            )
+        else:
+            signal_rows.append(
+                {
+                    "date": d,
+                    "signal_date": target.as_of,
+                    "target_total_dv01": target.total_dv01,
+                    "notes": target.notes,
+                    "risk_off": risk_off,
+                }
+            )
 
     positions_df = ledger.snapshots_frame()
     bench_positions_df = bench_ledger.snapshots_frame()
@@ -987,6 +1061,7 @@ def run_backtest(
         benchmark_version=benchmark_version,
         rolling_version=roll_policy.version if roll_policy.enabled else "",
         roll_events=pd.DataFrame(roll_rows),
+        gate_decisions=gate_decisions,
         nav=pd.Series(nav_rows, name="nav").sort_index(),
         benchmark_nav=pd.Series(bench_nav_rows, name="benchmark_nav").sort_index(),
         exposure=pd.DataFrame(exposure_rows),

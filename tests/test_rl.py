@@ -16,7 +16,7 @@ from ficc.config import Config, get_config
 from ficc.data.loader import load_curve_long, load_funding_series
 from ficc.data.schema import CANONICAL_TENORS
 from ficc.portfolio.types import MarketContext, TargetKRD
-from ficc.rl import ActionSpec, Observation, RebalanceEnv, StepRecord, hold_target_krd
+from ficc.rl import ActionSpec, Observation, RebalanceEnv, StepRecord
 from ficc.utils.calendar import TradingCalendar
 
 START = date(2019, 1, 28)
@@ -38,7 +38,7 @@ def market() -> tuple[Config, pd.DataFrame, pd.Series, TradingCalendar]:
 
 
 class _ScheduledStrategy:
-    """测试用独立策略：按 signal_date 查表；无动作时保持当前 KRD（零动作）。"""
+    """测试用独立策略：按 signal_date 查表；无动作时返回 None（hold：不产生 pending）。"""
 
     name = "rl_env"
 
@@ -53,10 +53,10 @@ class _ScheduledStrategy:
         self._calendar = calendar
         self._cfg = cfg
 
-    def target_krd(self, ctx: MarketContext) -> TargetKRD:
+    def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         action = self._schedule.get(ctx.as_of)
         if action is None or action.target_krd is None:
-            return hold_target_krd(ctx, calendar=self._calendar, cfg=self._cfg)
+            return None  # hold：零动作不交易（不是"保持 KRD"重求解）
         return TargetKRD(
             as_of=ctx.as_of, krd=dict(action.target_krd), notes=action.notes or "RL 环境动作"
         )
@@ -80,8 +80,10 @@ def test_zero_action_equivalence(market) -> None:
     for trade in rec1.executed_trades:
         assert trade["signal_date"] < trade["trade_date"] == rec1.date
 
-    obs2, rec2 = env.step(ActionSpec())  # 零动作
+    obs2, rec2 = env.step(ActionSpec())  # 零动作 = hold
     assert rec2.original_action.target_krd is None
+    assert rec2.executed_face == 0.0  # 零动作不得产生主动交易
+    assert rec2.projected_target is None
     assert rec2.reward == pytest.approx(rec2.nav_after - rec2.nav_before, abs=0.0)
     assert obs2.nav == pytest.approx(rec2.nav_after, abs=1e-12)
     assert isinstance(obs1, Observation) and isinstance(rec2, StepRecord)
@@ -145,8 +147,9 @@ def test_rejected_action_records_difference(market) -> None:
     obs1, record = env.step(ActionSpec(target_krd=huge, notes="1000x 基准（必被闸门拒绝）"))
 
     assert record.original_action.target_krd is not None
+    # 闸门内部会缩放重试；projected_target 记录**实际提交的最后尝试**，不是原始动作
     assert record.projected_target is not None
-    assert record.projected_target.total_dv01 == pytest.approx(float(sum(huge.values())))
+    assert record.projected_target.total_dv01 <= float(sum(huge.values())) + 1e-6
     assert record.rejected is True
     assert record.reject_reason
     assert record.executed_trades == ()
@@ -171,7 +174,7 @@ def test_scaled_action_executes_less_than_original(market) -> None:
     _obs1, record = env.step(ActionSpec(target_krd=five_x, notes="5x 基准"))
 
     assert record.projected_target is not None
-    assert record.projected_target.total_dv01 == pytest.approx(float(sum(five_x.values())))
+    assert record.projected_target.total_dv01 <= float(sum(five_x.values())) + 1e-6
     if record.rejected:
         assert record.executed_trades == ()
     else:
@@ -205,6 +208,9 @@ def test_reward_matches_ledger_nav_and_roll_events(market) -> None:
         assert obs.history.index.max() <= pd.Timestamp(obs.as_of)
         if any(event.kind == "roll" for event in env.events):
             saw_roll = True
+            # R45：滚动日应记录真实 policy_roll 决策，而不是把原动作当 projected_target
+            assert record.policy_source in {"policy_roll", "signal"}
+            assert record.gate_attempts >= 1
             break
 
     assert saw_roll, "短窗口内应出现滚动事件（roll_trigger_years=1.99）"
@@ -240,9 +246,9 @@ def test_env_forces_daily_decisions(market) -> None:
     )
     env = RebalanceEnv(panel, calendar, funding, weekly)
     assert env.cfg.backtest.rebalance == "daily"
-    env.reset(START, END)
-    _obs, record = env.step(ActionSpec())
-    assert record.projected_target is not None  # 每个 step 都能生成信号
+    obs0 = env.reset(START, END)
+    _obs, record = env.step(ActionSpec(target_krd=dict(obs0.benchmark_krd)))
+    assert record.projected_target is not None  # daily 下每个 step 都能生成信号
 
 
 def test_step_requires_reset_and_respects_end(market) -> None:
@@ -258,3 +264,27 @@ def test_step_requires_reset_and_respects_end(market) -> None:
     with pytest.raises(RuntimeError):
         env.step(ActionSpec())
     assert env.records[-1].date == days[-1]
+
+
+def test_hold_action_does_not_trade_on_flat_curve() -> None:
+    """R44：平曲线建仓后提交 hold，不得因"保持 KRD"重求解而产生主动交易。"""
+    from ficc.config import get_config as _get
+
+    cfg = _get()
+    days = pd.bdate_range("2019-01-28", "2019-02-15")
+    idx = pd.DatetimeIndex([d for d in days if d not in pd.bdate_range("2019-02-04", "2019-02-08")])
+    panel = pd.DataFrame(3.0, index=idx, columns=sorted(CANONICAL_TENORS))
+    calendar = TradingCalendar.from_dates(panel.index)
+    funding = pd.Series(2.0, index=idx)
+    env = RebalanceEnv(panel, calendar, funding, cfg)
+    obs0 = env.reset(idx[0].date(), idx[-1].date())
+    # 1) 建仓到基准 KRD（平曲线 3%）
+    env.step(ActionSpec(target_krd=dict(obs0.benchmark_krd)))
+    # 2) hold：持仓不动，不得有主动成交
+    _obs, record = env.step(ActionSpec())
+    assert record.executed_face == 0.0
+    assert record.executed_trades == ()
+    assert record.projected_target is None
+    assert record.gate_attempts == 0
+    assert record.policy_source == "none"
+    assert "零动作" in record.notes

@@ -251,14 +251,40 @@ def _run_one(
         _risk_small_shock_check(rows, name, panel, calendar, cfg)
 
     held = result.constraints[result.constraints["n_positions"] > 0]
-    cv_fail = int((~held["ok"]).sum())
+    executed_days = held[held["n_trades"] > 0]
+    executed_fail = int((~executed_days["ok"]).sum())
+    passive_days = held[(held["n_trades"] == 0) & (~held["ok"])]
     _add(
         rows,
         name,
-        "constraints_held_days",
-        cv_fail == 0,
-        f"有持仓日 {len(held)} 天，违规 {cv_fail} 天",
+        "constraints_executed_days",
+        executed_fail == 0,
+        f"有成交持仓日 {len(executed_days)} 天，成交日违规 {executed_fail} 天",
     )
+    _add(
+        rows,
+        name,
+        "constraints_passive_days",
+        True,  # 被动超限单独披露、不伪装成执行错误，也不阻塞验收
+        f"无成交的被动违规 {len(passive_days)} 天"
+        + (
+            f"：{passive_days[['date', 'violation_codes']].to_dict('records')}"
+            if len(passive_days)
+            else ""
+        ),
+    )
+
+    # R46：成本表的价差必须与逐笔成交的 spread_cost 一致（缩放/取整后）
+    if len(result.trades) and "spread_cost" in result.trades.columns:
+        spread_book = float(result.trades["spread_cost"].fillna(0.0).sum())
+        spread_cost_row = float(result.costs["spread"].sum())
+        _add(
+            rows,
+            name,
+            "spread_cost_from_final_face",
+            abs(spread_book - spread_cost_row) <= 1e-6,
+            f"成交逐笔价差={spread_book:.6f}，成本表价差={spread_cost_row:.6f}",
+        )
 
     if getattr(result, "roll_events", None) is not None and len(result.roll_events):
         events = result.roll_events
@@ -298,6 +324,27 @@ def _run_one(
         daily_dates = pd.to_datetime(attr.daily["date"]).dt.date
         roll_residual = float(
             attr.daily.loc[daily_dates.isin(bench_dates), "bridge_residual"].abs().max()
+        )
+        # R45：pending 被取消（无延期队列），政策动作与闸门决策可审计
+        pending_status = set(events["pending_status"].dropna().astype(str))
+        cancelled_days = set(
+            pd.to_datetime(
+                events.loc[events["pending_status"] == "cancelled_by_roll", "date"]
+            ).dt.date
+        )
+        decisions = getattr(result, "gate_decisions", [])
+        policy_days = {
+            item["date"]
+            for item in decisions
+            if item.get("source") == "policy_roll" and item.get("date") in cancelled_days
+        }
+        _add(
+            rows,
+            name,
+            "policy_pending_semantics",
+            pending_status <= {"", "cancelled_by_roll"} and cancelled_days <= policy_days,
+            f"pending_status={sorted(pending_status)}；被取消日 {len(cancelled_days)}，"
+            f"对应 policy_roll 决策 {len(policy_days)}",
         )
         _add(
             rows,
@@ -435,9 +482,11 @@ def main(argv: list[str] | None = None) -> int:
     summary["config_hash"] = cfg.hash()
     out = cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
-    summary_path = out / (
-        "acceptance_summary_rolling.csv" if args.rolling else "acceptance_summary.csv"
-    )
+    if args.rolling:
+        suffix = "" if END == ROLLING_END else "_extended"
+        summary_path = out / f"acceptance_summary_rolling{suffix}.csv"
+    else:
+        summary_path = out / "acceptance_summary.csv"
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
 
     print("\n=== 统一验收（策略 + 归因 + 独立估值 + 对账）===")

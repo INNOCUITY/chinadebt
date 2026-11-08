@@ -211,6 +211,8 @@ _VAR_COLUMNS = [
     "window_end",
     "nav",
     "include_carry",
+    "shock_aggregation",
+    "carry_treatment",
     "var_full_pct",
     "var_full_cny",
     "var_krd_pct",
@@ -243,6 +245,9 @@ def _var_rows(
     include_carry: bool,
     price_function: str,
     shock_basis: str,
+    pre_aggregated: bool,
+    shock_aggregation: str,
+    carry_treatment: str,
 ) -> list[dict[str, object]]:
     pct_full = pnl_pct_from_cny(pnl_full, nav)
     pct_krd = pnl_pct_from_cny(pnl_krd, nav)
@@ -257,17 +262,31 @@ def _var_rows(
         try:
             if dist is None:
                 full_results = historical_var_es(
-                    pct_full, confidences=confidences, horizon_days=horizon_days
+                    pct_full,
+                    confidences=confidences,
+                    horizon_days=horizon_days,
+                    pre_aggregated=pre_aggregated,
                 )
                 krd_results = historical_var_es(
-                    pct_krd, confidences=confidences, horizon_days=horizon_days
+                    pct_krd,
+                    confidences=confidences,
+                    horizon_days=horizon_days,
+                    pre_aggregated=pre_aggregated,
                 )
             else:
                 full_results = parametric_var_es(
-                    pct_full, confidences=confidences, horizon_days=horizon_days, dist=dist
+                    pct_full,
+                    confidences=confidences,
+                    horizon_days=horizon_days,
+                    dist=dist,
+                    pre_aggregated=pre_aggregated,
                 )
                 krd_results = parametric_var_es(
-                    pct_krd, confidences=confidences, horizon_days=horizon_days, dist=dist
+                    pct_krd,
+                    confidences=confidences,
+                    horizon_days=horizon_days,
+                    dist=dist,
+                    pre_aggregated=pre_aggregated,
                 )
         except ValueError as exc:
             log.warning("跳过 %s/%s：%s", portfolio_basis, label, exc)
@@ -292,6 +311,8 @@ def _var_rows(
                     "window_end": window_end,
                     "nav": nav,
                     "include_carry": include_carry,
+                    "shock_aggregation": shock_aggregation,
+                    "carry_treatment": carry_treatment,
                     "var_full_pct": full_result.var_pct,
                     "var_full_cny": var_full_cny,
                     "var_krd_pct": krd_result.var_pct,
@@ -414,6 +435,9 @@ def main(argv: list[str] | None = None) -> int:
         include_carry=bool(args.include_carry),
         price_function=_PRICE_FUNCTION,
         shock_basis=_SHOCK_BASIS,
+        pre_aggregated=True,
+        shock_aggregation="h_day_cumulative",
+        carry_treatment="once_per_path" if args.include_carry else "none",
     )
 
     # legacy：固定面值历史逐日老化（含票息现金），仅作并列披露。
@@ -449,6 +473,9 @@ def main(argv: list[str] | None = None) -> int:
             include_carry=True,
             price_function="dirty_price_from_ytm",
             shock_basis="ytm_curve(aging)+spot_key_daily",
+            pre_aggregated=False,
+            shock_aggregation="overlapping_h_day_sum",
+            carry_treatment="per_day_cash_included(legacy)",
         )
     except ValueError as exc:
         log.warning("historical_aging 旧口径不可用（%s），仅报告 current_frozen", exc)
@@ -497,14 +524,17 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n=== 固定组合 VaR / ES（金额元；current_frozen 为 R39 默认口径）===")
     print(f"组合：{description}")
+    frozen_n_obs = len(frozen_full)
     print(
-        f"分析日：{analysis_day}；NAV（current_frozen 即期全价）={nav_spot:,.2f} 元；lookback={lookback}"
+        f"分析日：{analysis_day}；NAV（current_frozen 即期全价）={nav_spot:,.2f} 元；"
+        f"lookback={lookback}，horizon={horizon_days}，h 日样本 n_obs={frozen_n_obs}"
     )
     view = var_table[
         [
             "portfolio_basis",
             "method",
             "confidence",
+            "horizon_days",
             "n_obs",
             "var_full_cny",
             "var_krd_cny",
@@ -556,8 +586,10 @@ def main(argv: list[str] | None = None) -> int:
         print(stress_view.to_string(index=False, float_format=lambda value: f"{value:,.6g}"))
 
     print("\n披露：")
-    print("- current_frozen：冻结分析日曲线/结算日/剩余期限/面值，只搬历史即期关键点 Δz；")
-    print("  默认 price-only（瞬时价格风险，BIS 历史模拟口径）；--include-carry 为总收益近似。")
+    print("- current_frozen：冻结分析日曲线/结算日/剩余期限/面值，先构造 h 日**累计**即期关键点")
+    print("  Δz=z_{t+h}−z_t，一次性冲击重估一次；carry 每样本只加一次（price-only 不加）。")
+    print("  h>1 时 n_obs=lookback−h+1（重叠样本，不作独立样本推断）；参数法/CF 直接用 h 日")
+    print("  累计 PnL 分布，不再乘 sqrt(h) 或二次聚合。")
     print("- historical_aging：旧固定面值逐日老化回看（含票息现金），随 lookback 改变组合，")
     print("  仅并列披露，不能作为当前快照风险；两者差异见 var_es.csv 的 portfolio_basis 列。")
     print("- 压力测试：平行=即期关键点同向；陡平/蝶式=Curve.shock 期限形状作用于即期关键点；")

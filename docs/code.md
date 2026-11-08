@@ -134,7 +134,14 @@
 | C-094 | 2026-11-08 | [feat] | ML | as-of/标签/walk-forward 接口（无未来、purge/embargo、泄漏检测） |
 | C-095 | 2026-11-08 | [feat] | RL | RebalanceEnv 接口（复用引擎/账本/闸门，记录原动作与实际执行） |
 | C-096 | 2026-11-08 | [feat] | 验收 | rolling 验收扩展：对账逐项/跨换券归因/未来扰动/风险小冲击/元数据 |
-| C-097 | 2026-11-08 | [test] | 测试 | 测试基线 608 → **624 项全绿** |
+| C-097 | 2026-11-08 | [test] | 测试 | 测试基线 608 → 624 项全绿 |
+| C-099 | 2026-11-08 | [fix] | 风险 | R42：多日 VaR 先聚合 h 日冲击、carry 只计一次 |
+| C-100 | 2026-11-08 | [fix] | ML | R43：逐决策时点训练矩阵 + 逐行因果性校验 |
+| C-101 | 2026-11-08 | [fix] | RL | R44：零动作=hold，不主动成交 |
+| C-102 | 2026-11-08 | [fix] | 执行 | R45：gate_decisions 真实决策日志 + pending 取消语义 |
+| C-103 | 2026-11-08 | [fix] | 成本 | R46：缩放/取整后按最终面值重算价差成本 |
+| C-104 | 2026-11-08 | [test] | 测试 | 测试基线 624 → **640 项全绿** |
+| C-098 | 2026-11-08 | [docs] | 独立审查 | 复核 R37–R41 修复与 ML/RL 原型；登记 R42–R46，多日风险/逐行因果性/动作语义/成本边界 |
 | C-087 | 2026-11-08 | [docs] | 独立审查 | 登记 R37–R41；复核执行/滚动/风险与报告，修订 B 包验收和 ML/RL 推进条件 |
 | C-070 | 2026-11-08 | [docs] | 独立审查 | 复核执行边界、归因与成本对照，登记 R31–R36 并调整下一轮验收顺序 |
 | C-062 | 2026-11-07 | [docs] | 阶段评估 | 明确 Phase 2 收尾与下一轮验收；补查 R23 现金预算，收紧策略统计结论 |
@@ -149,7 +156,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：624 passed / 0 failed / 1 deselected（network）/ 约 8 分钟（含真实数据回归与回测）
+基线：640 passed / 0 failed / 1 deselected（network）/ 约 9 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1802,7 +1809,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_strategies.py --config /tmp/debt_rou
 | 编号 | 级别 | 修复 | 证据 |
 |------|------|------|------|
 | R37 | P1 | `simulate(return_path=True)` + 路径逐时点约束；默认 horizon 覆盖最晚结算；成交日权重也检查；拒单原因含最后违规码 | C-087；`test_r37_*`；T+2+floor0 建仓被拒；rv 2023-07-04 违规消失 |
-| R38 | P1 | 滚动日机械同日换券（卖旧 + 该腿滚动到基准新券面值）；pending 顺延；`roll_events` 记录成交映射/status/reason/pending_deferred/gate_attempts；精确回放控制组 | C-088；`test_r38_weekly...`、`test_roll_events...`、滚动因果性、精确回放；acceptance-rolling 79/79 |
+| R38 | P1 | 滚动日机械同日换券（卖旧 + 该腿滚动到基准新券面值）；旧 pending 取消（无延期队列）；`roll_events` 记录成交映射/status/reason/pending_status/gate_attempts；`gate_decisions` 记录真实决策；精确回放控制组 | C-088；`test_r38_weekly...`、`test_roll_events...`、滚动因果性、精确回放；acceptance-rolling 91/91 |
 | R39 | P1 | VaR 冻结分析日组合 + 历史 Δz 冲击；老化口径保留对照；price-only/include_carry 显式 | C-089；95% VaR/ES 32.42/44.58 万；YTM 冻结反例 31.82/43.33 万逐位复现 |
 | R40 | P1 | `price_from_spot` + `spot_shock` 统一；解析 KRD；小冲击收敛验收 | C-090；平行 1bp 8.3e-4、蝶式 0.001bp 4.3e-7；压力 8.2%/1.08%/0.94% |
 | R41 | P2 | 窗口结构/基期/pooled 三列/版本字段；数字与 CSV 自动核对 | C-091；carry 年化 3.7358%、MDD −4.9915%、全段 −120.58bp、年化 −13.37bp |
@@ -1824,9 +1831,9 @@ YTM 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现�
 
 - **日期**：2026-11-08
 - **文件**：`src/ficc/backtest/engine.py`、`src/ficc/portfolio/rolling.py`、`tests/test_rolling.py`、`tests/test_engine.py`、`tests/test_causality.py`
-- **变更内容**：滚动日基准换券后，策略执行机械订单（卖光旧券 + 该腿滚动到基准的新券面值（双方共用政策），最小整手）；旧宇宙 pending 顺延并记录 `pending_deferred`；`roll_events` 记录事件→基准/策略成交、status（same_day/rejected_constraint）、reason；新增滚动因果性测试与 `TargetFaces` 精确基准回放控制组（超额 0.0000bp，证明执行/政策一致）。
+- **变更内容**：滚动日基准换券后，策略执行机械订单（卖光旧券 + 该腿滚动到基准的新券面值（双方共用政策），最小整手）；旧宇宙 pending 被取消（无延期队列）并记录 `pending_status=cancelled_by_roll`；`roll_events` 记录事件→基准/策略成交、status（same_day/rejected_constraint）、reason、gate_attempts；新增 `gate_decisions`（source/status/attempts/成交/拒单）；新增滚动因果性测试与 `TargetFaces` 精确基准回放控制组（超额 0.0000bp，证明执行/政策一致）。
 - **原因**：R38：weekly 零 tilt 基准 2020-02-03 换券、策略 02-04 才换；daily 拒单后也会延迟。
-- **验证方式**：weekly 同日测试、roll_events 映射测试、rolling 因果性、`make acceptance-rolling` 79/79。
+- **验证方式**：weekly 同日测试、roll_events 映射测试、rolling 因果性、`make acceptance-rolling` 91/91。
 - **风险/遗留**：rv 有 1 次滚动因既有单券权重边界被约束拒绝（已记录原因，次日信号处理）；旧券面值极小时按最小整手处理，可能略增成本。
 
 ### C-089 [fix] R39：VaR 冻结分析日组合
@@ -1861,14 +1868,14 @@ YTM 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现�
 - **日期**：2026-11-08
 - **文件**：`scripts/run_acceptance.py`、`Makefile`
 - **变更内容**：`--rolling` 模式（2019–2021，roll_v1 + rolling 基准）；新增 `roll_event_same_day`、`roll_event_rejection_audited`、`roll_event_dates` 检查；输出 `acceptance_summary_rolling.csv`；零 tilt 阈值 2bp。
-- **验证方式**：`make acceptance-rolling` 79/79 PASS；`--quick` 9 项 PASS。
+- **验证方式**：`make acceptance-rolling` 91/91 PASS；`--quick` 9 项 PASS。
 - **风险/遗留**：rolling 验收是 2019–2021 子样本，不覆盖 2019–2025 全段；与 buyhold 33 项不能互相替代。
 
 ### C-093 [test] 测试基线 593 → 608
 
 - **日期**：2026-11-08
 - **变更内容**：新增 15 项：R37 2、R38 2 + 精确回放 1、滚动因果性 1、风险 6（R39/R40）、窗口 3（R41）等。
-- **验证方式**：`make check`（624 passed / 1 deselected）。
+- **验证方式**：`make check`（640 passed / 1 deselected）。
 - **风险/遗留**：默认测试约 6 分钟；rolling/long-sample 由 make 目标单独执行。
 
 ---
@@ -1896,15 +1903,182 @@ YTM 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现�
 - **日期**：2026-11-08
 - **文件**：`scripts/run_acceptance.py`、`Makefile`
 - **变更内容**：rolling 验收新增 `recon_*` 逐项对账（现金/持仓/NAV/PnL/全价/票息权益/归因闭合）、`attribution_across_rolls`（换券日覆盖与残差）、`future_perturbation_prefix`（未来曲线/融资扰动后 NAV/成交前缀不变）、`risk_small_shock_convergence`（蝶式 0.001bp 误差 <1e-4）；CSV 增 start/end/benchmark_version/rolling_version/config_hash 元数据。
-- **验证方式**：`make acceptance-rolling` **79/79 PASS**；`make acceptance` **62/62 PASS**。
+- **验证方式**：`make acceptance-rolling` **91/91 PASS**；`make acceptance` **70/70 PASS**。
 - **风险/遗留**：未来扰动只在 rolling 首个控制组执行一次（控制运行时长）；对账逐项行让 CSV 变长但更可审计。
 
 ### C-097 [test] 测试基线 608 → 624
 
 - **日期**：2026-11-08
 - **变更内容**：新增 ML 8 + RL 8 项；rolling 审计字段/验收检查由既有测试覆盖。
-- **验证方式**：`make check`（624 passed / 1 deselected）。
+- **验证方式**：`make check`（640 passed / 1 deselected）。
 - **风险/遗留**：默认测试约 8 分钟；rolling/long-sample 由 make 目标单独执行。
+
+---
+
+### C-098 [docs] 第十二轮独立审查（R42–R46）
+
+- **基线**：`b263840`（含 `cdba8dd` 的 R37–R41 修复）；本轮仅维护 README、方法论、计划与本记录。
+- **验证**：默认 `make check` exit 0（624 项）；默认 buyhold 62/62、rolling 79/79 验收隔离重跑通过；
+  风险两份 CSV 数值复现（rtol=1e-10、atol=1e-7）。临时反例未加入业务测试或改写生产报告。
+- **范围**：79 项默认区间为 2019-01-28→2021-12-31，约三年、2 次换券；并非文档旧称的四年，
+  也不是完整 2019–2025。修复的默认一日主路径与新多日/ML/RL 边界分别验收。
+- **完整七年补验收**：`scripts/run_acceptance.py --rolling --end 2025-12-31 --config <隔离输出配置>`
+  实跑 **78/79 PASS、exit 1**，唯一失败为 carry_roll `constraints_held_days`（1 个持仓日违规）。
+  现有逐日报告对应 2022-03-21、0 成交、rejected=True、single_bond_weight；其余逐项对账、
+  7 次换券映射/归因、独立估值、因果性与风险收敛全部通过。保留 FAIL，未重写生产报告为全绿。
+  长样本年化/回撤及 pooled HAC/bootstrap 从保存 NAV 复算一致。
+- **结论**：R37/R40 既有反例及默认滚动修复是真实进展；进入 C 训练前还须验收样本/动作协议，
+  不能仅补“重试档位 + 正式标签”。任务顺序见计划 §12.17。
+
+### 2026-11-08 第十二轮独立审查：R42–R46
+
+**验证原则**：审查的是实现和声明的对应关系；P1 表示相关新功能正式使用前必须关闭，
+不表示已经证明默认一日 VaR、现有三策略全部 NAV 或历史规则结论失效。已知 O(n²) 重放与代理标签
+是明确披露的原型限制，本轮未把这些已披露事项重复计为新缺陷。
+
+**R42 [P1 / 多日风险] h 日 carry 被重复累计，非线性价格冲击也在错误的层级聚合**
+
+- **位置**：`src/ficc/risk/var.py:752–764,858–869`；`scripts/run_risk.py:259–270,382–414`。
+  当前组合函数仍逐个重估一日 Δspot；打开 include_carry 后给每个样本加完整 h 日 carry。
+  脚本再把 horizon_days=h 传入历史/参数 VaR，于是对 h 个已加 carry 的样本求和。
+- **反例 A**：默认 2020-12-31 组合/面值（发行 2019-12-30）、真实 CN_IB 日历，将曲线面板
+  全部置为平 3%，lookback=20、horizon_days=5。`include_carry=True` 相对 False 每样本增加
+  **58,967.63878 元**；报告聚合后增加 **294,838.19390 元**，正好五倍。
+- **反例 B**：同一组合，历史曲线 3%→4%→3%，lookback=20、h=2、price-only。
+  最后两个日样本 PnL 为 **−7,680,370.65631 / +9,144,227.62110 元**；当前报告求和
+  **+1,463,856.96480 元**。独立取历史即期关键点 Δz 两日之和，九个桶均为 **0**；
+  冻结组合搬运累计冲击全重估得到 **0 元**。差异来自把每个冲击都施加在同一基准价后再加总，
+  不是同一持仓路径的逐日损益。
+- **影响边界**：默认 h=1、include_carry=False 的主报告不受这两个反例影响；不能推广到多日 total-return。
+- **修复/验收**：先对风险因素构造 h 日累计冲击，再一次重估冻结组合，carry 只计一次；
+  已构造 h 日样本后不再让统计函数二次聚合。若采用路径收益，则状态、时间和现金流沿同一路径推进。
+  覆盖平曲线、正反冲击抵消、h=1 回归和付息/到期边界，明确不支持情形而非静默给值。
+
+**R43 [P1 / ML 样本] 最终 as-of 截断不能证明返回的历史特征逐行无未来**
+
+- **位置**：`src/ficc/ml/asof.py:369–410`。transform 一次拿到截至 view.available_through 的
+  全部历史，校验只看输出索引是否仍在该历史内，然后返回整张历史特征表。
+- **反例**：默认 lag=1，as_of=2019-02-15，`FeatureSpec('lead', lambda x: x['2.0'].shift(-1), ('2.0',))`。
+  只将 2019-02-12 的 2Y 利率增加 10pp，`build_features` 不报错，返回的 **2019-02-11**
+  特征由 **2.5543 变为 12.5543**。该历史行使用其未来日数据，虽没有任何索引超过整个 view 的末日。
+- **影响边界**：若该函数仅用于最后一个当前决策的历史工作表，不据此给历史行赋予可交易时间，
+  则不能据此断言当前决策已泄漏；问题是该返回值不能直接作为保证逐样本因果性的训练矩阵。
+  split/purge 只检查时间区间和标签可用日，不能修复已泄漏的特征值。
+- **修复/验收**：明确 decision_as_of 与特征索引语义，逐决策时点重建 view 并只抽取该决策行，
+  或另提供经前缀不变验收的样本构造器。测试修改任意历史决策日之后数据，该样本特征不变；
+  覆盖 shift(-1)、centered rolling、全样本变换。训练期拟合的标准化/PCA 与验证期冻结变换另行测试。
+
+**R44 [P1 / RL 零动作] “保持昨日绝对 KRD”会主动调仓，不等于保持面值**
+
+- **位置**：`src/ficc/rl/env.py:194–205,227–237`。ActionSpec(None) 经 hold_target_krd
+  变成当前 KRD 目标，下一交易日用新价格/新敏感度再次解面值，可能交易。
+- **反例**：默认配置（1M lot、2-lot 死区、原 9 项约束）、真实 CN_IB/FDR007，2019-01-28→02-01；
+  曲线先平 3%，01-30 起平 3.3%。01-28 提交基准目标，01-29 成交建仓；01-29 提交
+  `ActionSpec()`，01-30 仍买入 **SYN-30Y-20190128 面值 2M**、净价 **94.58917719**，未拒单。
+- **测试缺口**：test_zero_action_equivalence 的直接引擎对照也调用 hold_target_krd，只证明重放一致，
+  不证明“不主动交易”。成本/收益都是实质交易产生的，不能当作真正无动作对照。
+- **修复/验收**：独立定义 HoldPositions 与 TargetKRD。无强制事件时零动作保持面值、无主动订单；
+  机械滚动/风控动作单独标记。独立固定面值路径对照，覆盖价格变化、老化、粗细 lot、滚动与熔断。
+
+**R45 [P2 / 动作审计] 旧 pending 被作废却标为延期，projected_target 也不一定提交过闸门**
+
+- **位置**：`src/ficc/backtest/engine.py:739–756,963–964`；`src/ficc/rl/env.py:390–399,650`。
+  机械滚动时 pending=None，没有延期队列；日末由新信号覆盖。env 的 projected_target 却来自
+  `strategy.emitted[signal_date]`，未查询引擎实际采用的 policy_roll_target/forced_orders。
+- **隔离反例**：平 3% 曲线、2019-01-28→02-01，将 roll_trigger_years 改为 1.999，
+  仅为把滚动事件提前到 01-30（非新政策收益实验）。初始建仓后，01-29 请求全零 KRD。
+  01-30 StepRecord 的 original_action/projected_target 均为全零，实际却机械卖旧 25M、买新 25M；
+  `pending_deferred=True`。01-30 提交零动作后，01-31 仍持四腿各 25M，原请求未再送闸门。
+  这不是“闸门缩放尚未暴露”的同一个限制，而是记录了未提交的旧目标与另一政策的成交。
+- **事件顺序**：_build_events 按日期和固定种类排序，将当日收盘 signal 排在当天成交之前、roll 排在
+  execute 之后；实际引擎先滚动再交易，日末才生成下一日 signal。这只能称展示排序，不能作为事件执行真值。
+- **修复/验收**：若旧信号过期作废，记录 canceled/superseded_by_roll；若真的延期，保存原 action_id
+  与队列并明确后续完成/取消。引擎直接导出实际 GateDecision、政策动作、候选档位、最终面值及成交 ID；
+  env 消费这些事件，不从不同结果表推断动作身份。rolling 拒单后的重试也须保留原事件状态。
+
+**R46 [P2 / 成本报告] forced_orders 面值取整后仍按未取整比例缩放价差金额**
+
+- **位置**：`src/ficc/backtest/engine.py:453–467`。face_value 用 `round(original_face*scale/lot)*lot`，
+  spread_cost 却直接乘 scale，两者基数不一致；该分支用于机械滚动及 TargetFaces。
+- **反例**：默认真实市场/日期，ExactReplayStrategy，2019-01-28→02-01，仅现金下限改为 0。
+  01-29 四笔 25M 目标在 scale=.9 取整到 **22M**。30Y 报告 spread_cost **60,925.58234 元**，
+  但 `abs(clean_price-mid_clean_price)*face/100` 为 **59,571.68051 元**，高报 **1,353.90183 元**。
+  次日增仓取整后也出现偏差，属于系统性的金额基数错误。
+- **影响边界**：账本按执行价与实际面值成交，未因此重复扣价差；错误在成本/成交审计输出。
+  默认四组滚动事件 scale=1 不由此被证明错误，但约束敏感性和 RL 投影后的成本解释会被污染。
+- **修复/验收**：最终面值确定后重新按 per100 spread 计算，逐笔断言报告价差等于执行价与中间价之差
+  乘实际面值；覆盖不同 scale、整数手取整、缩放至零、卖旧买新及追加 TargetFaces 差额。
+
+**研究结论与推进**：长窗 carry 跑输、2s10s/RV 尚无稳健超额证据的表述可以保留。
+新问题主要约束多日风险和 C 阶段接口，不能只凭接口测试通过就开始训练。先做逐样本因果性与正式标签，
+再定义 Hold/Target/Policy 动作及真实事件审计；多日风险和报告成本并行修复。默认一日研究可继续。
+终止时未结算费用/现金义务、ML 与 RL 的信息可得时钟、监督学习预处理冻结和多 seed 对照，
+也须进入正式训练协议；详见计划 §12.17。
+
+### R42–R46 修复对照（2026-11-08 第十三轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R42 | P1 | h>1 先聚合累计 Δz 再一次全重估；carry 每样本一次；参数/CF 直接用 h 日 PnL 分布 | C-099；平 3% h=5 carry 58,967.64/样本（旧 294,838.19）；3→4→3 净冲击 0；h=2 聚合==直接 t+h；h=1 回归 324,181/445,807 |
+| R43 | P1 | `build_training_matrix` 逐决策时点构造；`assert_per_row_causality` 逐行验证 | C-100；shift(-1) 反例改 02-12 后 02-11 行不变；整段截断矩阵被拒；ML 测试 18 |
+| R44 | P1 | `ActionSpec()`=hold：不生成 pending、不主动成交；projected 来自真实 gate decision | C-101；平 3% 建仓后 hold 成交面值 0；旧实现会买 30Y 200 万 |
+| R45 | P2 | `gate_decisions`（source/status/attempts/projected_faces/成交/拒单）；`pending_status=cancelled_by_roll`；env 投影用真实决策；events 标为展示顺序 | C-102；rolling 验收 `policy_pending_semantics` PASS |
+| R46 | P2 | forced 缩放后按最终整数面值重算 spread_cost | C-103；验收 `spread_cost_from_final_face`：逐笔==成本表（1e-6） |
+
+**验收口径**：持仓日违规拆分为成交日（FAIL）与无成交被动（披露不阻塞）；buyhold **70/70**、
+rolling 2019–2021 **91/91**、延到 2025-12-31 **91/91**。测试 640。
+
+### C-099 [fix] R42：多日 VaR 聚合与 carry 一次性
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/risk/var.py`、`scripts/run_risk.py`、`tests/test_risk.py`
+- **变更内容**：h>1 历史样本取累计即期 Δz（z_{t+h}−z_t），对冻结组合一次全重估；`include_carry=True` 每样本只加一次 `forward_carry(h)`；参数/CF 直接用 h 日累计 PnL 分布（`pre_aggregated`），不乘 sqrt(h)；CSV 增 `horizon_days/shock_aggregation/carry_treatment`。
+- **原因**：R42：旧实现对每样本加完整 h 日 carry 又被累计 5 倍；3→4→3 两日净冲击被逐日相加。
+- **验证方式**：平 3% h=5 carry 58,967.64/样本；两日净冲击 0.00；h=2 聚合==直接 t+h；h=1 回归一致。
+- **风险/遗留**：h>1 样本重叠只作描述；h=5 数字基于 2020-12-31 固定组合；多日付息/到期仅通过 carry/cash 约定覆盖，未做路径一致回测。
+
+### C-100 [fix] R43：逐决策时点训练矩阵与逐行因果性
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/ml/asof.py`、`src/ficc/ml/__init__.py`、`tests/test_ml.py`
+- **变更内容**：新增 `build_current_features`（当前决策单行）、`build_training_matrix`（每个决策日单独建 as-of 视图）、`assert_per_row_causality`（改未来数据后行不变）；旧 `build_features` 收窄为单行 + FutureWarning。
+- **原因**：R43：整张历史表只检查最终 available_through，shift(-1) 会泄漏未来。
+- **验证方式**：shift(-1) 反例 02-11 行在改 02-12 后逐位不变；整段截断矩阵被拒；ML 测试 18。
+- **风险/遗留**：标签仍为曲线一阶代理，正式标签需复用账本/定价层；训练窗拟合预处理器未实现。
+
+### C-101 [fix] R44：RL hold 语义
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl.py`
+- **变更内容**：`ActionSpec(target_krd=None)` 表示 hold——策略返回 None，引擎不生成 pending、不主动交易；"保持当前 KRD"是另一动作；`StepRecord` 记录 gate_attempts/policy_source/pending_status。
+- **原因**：R44：原来零动作转成上一日绝对 KRD 会重新求解面值，平 3% 建仓后 hold 仍买 30Y 200 万。
+- **验证方式**：平 3% 建仓后 hold：executed_face=0、无成交、projected_target=None；全部 RL 测试通过。
+- **风险/遗留**：hold 仍受滚动/结算等外生事件影响（这是账本真实事件，不是主动动作）。
+
+### C-102 [fix] R45：真实 GateDecision 与 pending 取消语义
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/backtest/engine.py`、`src/ficc/rl/env.py`、`scripts/run_acceptance.py`、`tests/test_rolling.py`、`tests/test_rl.py`
+- **变更内容**：`BacktestResult.gate_decisions` 逐日记录 source/status/projected_target/projected_faces/attempts/成交/拒单；`roll_events.pending_status=cancelled_by_roll`（无延期队列，由当日新信号替代）；env 投影取真实 gate decision，events 注明展示顺序；验收新增 `policy_pending_semantics`。
+- **原因**：R45：引擎清空 pending 但称"延期"，env projected_target 可能记录被取消的旧目标。
+- **验证方式**：rolling 验收 91/91 含该项；RL 滚动日记录 policy_roll 来源与 attempts。
+- **风险/遗留**：闸门内部缩放档位仍未暴露为逐档 candidate（只记录次数与最后目标）；真延期队列未实现（当前明确取消）。
+
+### C-103 [fix] R46：取整面值后的价差成本
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/backtest/engine.py`、`scripts/run_acceptance.py`
+- **变更内容**：forced 缩放后按**取整最终面值**重算 `spread_cost`（unit_cost×new_face），不再只乘缩放比例；验收新增 `spread_cost_from_final_face`（逐笔成交价差==成本表价差 ≤1e-6）。
+- **原因**：R46：25M×0.9 取整 22M 仍按 22.5M 报价差（30Y 报告 60,925.58 vs 实际 59,571.68）。
+- **验证方式**：验收该项 PASS（逐笔==成本表 74275.104348）；滚动/买持均覆盖。
+- **风险/遗留**：价差成本只影响报告与成本分解，未重复扣 NAV；其他非 forced 缩放走 build_orders 本身按最终面值计价。
+
+### C-104 [test] 测试基线 624 → 640
+
+- **日期**：2026-11-08
+- **变更内容**：新增 16 项：多日风险 5、ML 逐行因果 10、RL hold/动作审计 1；风险 21→26、ML 8→18。
+- **验证方式**：`make check`（640 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 9 分钟；rolling/long-sample 由 make 目标单独执行。
 
 ---
 
@@ -1915,7 +2089,7 @@ YTM 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **624** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **640** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

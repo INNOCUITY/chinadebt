@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（624 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（640 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（624 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（640 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -132,13 +132,24 @@ make check    # = ruff check + ruff format --check + pytest（624 项离线，ex
 **Phase 2 第十一轮（2026-11-08，R37–R41 修复）**：执行/滚动契约与风险口径已重做，验收范围仍分开报告。
 
 - **R37 闸门**：投影路径逐时点检查（成交日、各结算日、最晚结算后检查点），不再只看最后快照；T+2 + cash_floor=0 的建仓在成交前被拒；rv 长样本 2023-07-04 的主动单券超限消失（0 违规）。
-- **R38 滚动**：滚动日策略机械同日换券（卖光旧券 + 该腿滚动到基准新券面值，双方共用政策），pending 顺延并记录；`roll_events` 记录事件→成交、状态与拒单原因；新增 `TargetFaces` 精确基准回放控制组，长样本超额 **0.0000bp**，四组均 7/7 同日、0 缺失。
+- **R38 滚动**：滚动日策略机械同日换券（卖光旧券 + 该腿滚动到基准新券面值，双方共用政策）；旧 pending 实际被**取消**（无延期队列），由当日收盘新信号替代；`roll_events.pending_status=cancelled_by_roll` 与 `gate_decisions` 记录真实决策（R45）。`roll_events` 记录事件→成交、状态与拒单原因；新增 `TargetFaces` 精确基准回放控制组，长样本超额 **0.0000bp**，四组均 7/7 同日、0 缺失。
 - **R39 VaR**：改为冻结分析日组合 + 历史冲击（`analysis_as_of + frozen_positions + historical_shocks`）；95% VaR/ES **32.42/44.58 万元**（旧 aging 口径 35.67/49.67 万并列；审查的 YTM 冻结反例 31.82/43.33 万在测试中逐位复现）。
 - **R40 风险近似**：全重估与 KRD 统一 `price_from_spot` + `spot_shock`；小冲击收敛 8.3e-4 / 4.3e-6 / 4.3e-7；平行 ±100bp 8.2%/8.3%、陡平蝶 25bp ≈1.08%、历史 ~1%（旧"蝶式 16.4%"是不同源误差，已纠正）。
 - **R41 报告**：窗口契约改为 3×约 2 年 + 229 日尾窗；收益基期=前收 NAV；`pooled_cumulative_excess_bp`（全段 −120.58bp）与 `pooled_ann_excess_bp`（−13.37bp）、`mean_window_excess_bp`（−25.01bp）明确分列；carry 年化 **3.7358%**、MDD **−4.9915%**；`rolling_version` 填值；文档数字与 CSV 自动核对。
-- **验收**：默认 buyhold `make acceptance` **62/62 PASS**；滚动 `make acceptance-rolling` **79/79 PASS**（含对账逐项、跨换券归因、票息权益、现金对账、未来扰动、风险小冲击收敛）；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
+- **验收**：默认 buyhold `make acceptance` **70/70 PASS**；滚动 `make acceptance-rolling` **91/91 PASS**（2019–2021），延到 2025-12-31 同为 **91/91 PASS**（含对账逐项、跨换券归因、票息权益、现金对账、未来扰动、风险小冲击收敛）；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
 - **边界**：主 VaR 用即期空间（与审查 YTM 冻结空间差 +1.9%/+2.9%，已并列）；price-only VaR 不含持有期 carry/现金事件；滚动基准为面值保持政策；重叠窗口不做推断。ML/RL 仅可先做 as-of/split 接口与零信号基线，绩效比较待 rolling/风险验收固定后。
 
-**C 阶段接口（仅接口，未做绩效比较）**：`src/ficc/ml/`（as-of 无未来视图、标签 `available_after`、walk-forward purge/embargo 与泄漏检测、`researched_sample` 标注）；`src/ficc/rl/`（`RebalanceEnv` 复用同一引擎/账本/闸门，记录原动作→提交目标→实际成交/拒单、gate_level、reward=账本 NAV 差）。已知限制：env 每步重放 O(n²)、闸门内部重试档位未暴露、ML 标签为曲线一阶代理；绩效比较等 rolling/风险验收固定后再做。
+**第十二轮（R42–R46）**：多日 VaR 改为"先聚合 h 日冲击、carry 只计一次"（平 3% h=5 carry 58,967.64/样本，旧 5× 已消除；3%→4%→3% 净冲击 PnL=0）；ML 增加逐决策时点训练矩阵与逐行因果性校验（`shift(-1)` 反例 2019-02-11 行不变）；RL 零动作改为 **hold（不主动成交）**，`projected_target` 取引擎 `gate_decisions` 真实决策，pending 取消语义显式化；forced 缩放按最终整数面值重算价差成本。验收：buyhold 70/70、rolling 91/91（2019–2021 与 2025 延长样本同口径），carry 2022-03-21 被动超限单独披露。
+
+**C 阶段接口（仅接口，未做绩效比较）**：`src/ficc/ml/`（`build_current_features` 当前决策工作表；`build_training_matrix` 逐决策时点构造；`assert_per_row_causality` 逐行因果性；`available_after` 标签；walk-forward purge/embargo；`researched_sample` 标注）；`src/ficc/rl/`（`RebalanceEnv` 复用同一引擎/账本/闸门，记录原动作→提交目标→实际成交/拒单、gate_level、reward=账本 NAV 差）。已知限制：env 每步重放 O(n²)、闸门内部重试档位未暴露（仅有 gate_attempts）、ML 标签为曲线一阶代理；绩效比较等 rolling/风险验收固定后再做。
+
+**第十二轮独立审查（2026-11-08）**：默认 check、62 项 buyhold 和 79 项 rolling 验收实跑通过，
+一日风险 CSV 复现；79 项默认范围是 2019-01-28→2021-12-31、2 次换券。
+同一入口延长至 2025-12-31 实跑 **78/79 PASS、exit 1**，唯一失败为 carry 已披露的 1 天被动超限；
+其余全部通过，保留 FAIL，不将七年报告改称全绿。
+新发现多日 VaR 聚合/carry 重计（R42）、历史特征行未保证逐行因果性（R43）、RL 零动作会主动交易（R44）、
+滚动动作替代审计失真（R45）和缩放取整后的价差报告错误（R46）。这些问题不推翻已通过的默认一日结果，
+但训练前置不止“暴露重试档位 + 替换标签”；先验收样本和动作语义。
+详见[方法论 §10.21](docs/03_methodology.md)、[推进计划 §12.17](docs/01_project_plan.md)、[审查记录 R42–R46](docs/code.md)。本轮只更新文档。
 
 **历史轮次（R31–R36）**：执行状态、对偶因子基、独立估值、到期退出与统一验收——见方法论 §10.7–10.13 与 code.md C-071~C-079。

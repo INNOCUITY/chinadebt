@@ -425,6 +425,10 @@ def portfolio_pnl_krd_approx(
 ) -> pd.Series:
     """固定面值组合的逐日 PnL（**KRD 线性近似**，元）。
 
+    .. warning::
+       **legacy / historical-aging（R39/R42）**：逐日历史老化口径，不是分析日
+       冻结组合风险；不得与 current_frozen 的 h 日累计冲击近似混用。
+
     ``PnL_t ≈ −Σ_b KRD_b(t−1) × (z_b(t) − z_b(t−1))``：
     - ``KRD_b``：组合在 ``t−1`` 日关键期限 KRD（元/bp，多头为正），来自
       :func:`ficc.portfolio.constraints.project_risk`（定义在**即期曲线**单点
@@ -629,12 +633,27 @@ def _historical_spot_shifts(
     panel_frame: pd.DataFrame,
     dates: list[date],
     lookback: int,
+    horizon_days: int,
     key_tenors: Sequence[float],
     *,
     cfg: Config,
     calendar: Any,
 ) -> tuple[list[date], list[np.ndarray]]:
-    """历史日的即期关键点变化 ``Δz_t``（bp）；按日期缓存 bootstrap 结果。"""
+    """h 日**累计**即期关键点变化 ``Δz = z_{t+h} − z_t``（bp；按日期缓存 spot）。
+
+    R42：多日历史模拟必须先在**风险因素层**聚合为 h 日累计冲击，再对冻结组合
+    做一次全重估；不能把逐日重估的 PnL 相加（价格对冲击非线性，且净冲击可能
+    为零而逐日 PnL 之和不为零）。
+
+    样本口径：最近 ``lookback`` 个一日变化对应的 ``lookback+h`` 个曲线水平上，
+    取所有长度为 ``h`` 的重叠窗口；样本按**窗口末日**索引，样本数
+    ``n_obs = lookback − h + 1``（h=1 时与原实现逐位一致）。
+    """
+    horizon = int(horizon_days)
+    if horizon < 1:
+        raise ValueError(f"horizon_days 必须 >= 1，实际 {horizon_days!r}")
+    if horizon > lookback:
+        raise ValueError(f"horizon_days={horizon} 不能大于 lookback={lookback}（无可用 h 日样本）")
     cache: dict[date, Any] = {}
 
     def spot_for(day: date) -> Any:
@@ -646,24 +665,24 @@ def _historical_spot_shifts(
             )
         return cache[day]
 
-    history_days = dates[-lookback:]
-    previous_day = dates[-lookback - 1]
-    previous_spot = spot_for(previous_day)
+    levels = dates[-(lookback + 1) :]
+    level_spots = [spot_for(day) for day in levels]
+    end_days: list[date] = []
     shifts: list[np.ndarray] = []
-    for day in history_days:
-        current_spot = spot_for(day)
+    for index in range(horizon, len(levels)):
+        start_spot = level_spots[index - horizon]
+        end_spot = level_spots[index]
+        end_days.append(levels[index])
         shifts.append(
             np.asarray(
                 [
-                    (float(current_spot.zero_rate(tenor)) - float(previous_spot.zero_rate(tenor)))
-                    * 100.0
+                    (float(end_spot.zero_rate(tenor)) - float(start_spot.zero_rate(tenor))) * 100.0
                     for tenor in key_tenors
                 ],
                 dtype=float,
             )
         )
-        previous_spot = current_spot
-    return history_days, shifts
+    return end_days, shifts
 
 
 def portfolio_pnl_current_portfolio_factors(
@@ -678,20 +697,24 @@ def portfolio_pnl_current_portfolio_factors(
     cfg: Config | None = None,
     calendar: Any = None,
 ) -> pd.Series:
-    """**当前组合 + 历史冲击**的历史模拟逐日 PnL（R39；默认 price-only）。
+    """**当前组合 + h 日累计历史冲击**的历史模拟 PnL（R39/R42；默认 price-only）。
 
-    冻结分析日 ``as_of`` 的曲线、T+N 结算日、剩余期限与面值；对 ``lookback``
-    个历史交易日取即期曲线关键期限变化 ``Δz_t = z_t − z_{t−1}``（bp），通过
+    冻结分析日 ``as_of`` 的曲线、T+N 结算日、剩余期限与面值；对每个重叠的
+    ``h = horizon_days`` 日窗口取**累计**即期关键期限变化
+    ``Δz = z_{t+h} − z_t``（bp，一次聚合），通过
     :func:`ficc.risk.spot.spot_shock` 搬到**分析日即期曲线**上，再用
-    :func:`price_from_spot` 重估当前组合：
+    :func:`price_from_spot` **全重估一次**：
 
-    ``PnL_t = Σ face/100 × [price_from_spot(spot_shock(S0, Δz_t)) − price_from_spot(S0)]``
+    ``PnL_{t+h} = Σ face/100 × [price_from_spot(spot_shock(S0, Δz)) − price_from_spot(S0)]``
 
+    - 样本按窗口末日索引，``n_obs = lookback − h + 1``（h=1 时与逐日口径逐位
+      一致；重叠样本不独立，不能据此做独立样本推断）；
     - 默认 ``include_carry=False``：纯**瞬时价格风险**（BIS 历史模拟口径）；
-    - ``include_carry=True``：再叠加分析日曲线下、时间前进 ``horizon_days`` 个
-      交易日的 carry/roll 与区间票息现金（total-return 近似，见
-      :func:`_forward_carry`；不是路径一致的持有期回测）。同一常数加到每个
-      历史冲击样本上，因此不改变分布形状、只平移均值。
+    - ``include_carry=True``：每个样本**只加一次**分析日曲线下、时间前进
+      ``horizon_days`` 个交易日的 carry/roll 与区间票息现金（total-return
+      近似，见 :func:`_forward_carry`；不是路径一致持有期回测）。**R42 修复后
+      不再把多日 carry 逐日重复**；调用方也不得再用 ``historical_var_es``
+      的 ``horizon_days>1`` 二次聚合本函数输出（应传 ``pre_aggregated=True``）。
 
     与 legacy :func:`portfolio_pnl_fixed_revaluation`（历史老化口径）的区别：
     本函数不要求债券在历史窗口内已经存在、不随 lookback 改变组合/发行日，
@@ -730,7 +753,13 @@ def portfolio_pnl_current_portfolio_factors(
         key_tenors,
     ) = _frozen_basis(faces, bonds, panel, as_of, lookback, cfg=resolved, calendar=calendar)
     history_days, shifts = _historical_spot_shifts(
-        panel_frame, dates, int(lookback), key_tenors, cfg=resolved, calendar=calendar
+        panel_frame,
+        dates,
+        int(lookback),
+        int(horizon_days),
+        key_tenors,
+        cfg=resolved,
+        calendar=calendar,
     )
     pnl_values: list[float] = []
     for shift in shifts:
@@ -806,7 +835,13 @@ def portfolio_pnl_current_portfolio_krd(
         key_tenors,
     ) = _frozen_basis(faces, bonds, panel, as_of, lookback, cfg=resolved, calendar=calendar)
     history_days, shifts = _historical_spot_shifts(
-        panel_frame, dates, int(lookback), key_tenors, cfg=resolved, calendar=calendar
+        panel_frame,
+        dates,
+        int(lookback),
+        int(horizon_days),
+        key_tenors,
+        cfg=resolved,
+        calendar=calendar,
     )
     krd = _portfolio_krd_positive(
         cleaned, bond_by_code, settlement, analysis_spot, key_tenors, cfg=resolved
@@ -896,6 +931,7 @@ def historical_var_es(
     *,
     confidences: tuple[float, ...] | list[float] = _DEFAULT_CONFIDENCES,
     horizon_days: int = 1,
+    pre_aggregated: bool = False,
 ) -> list[VarResult]:
     """历史模拟 VaR/ES（经验分位数 + 尾部条件均值）。
 
@@ -906,15 +942,23 @@ def historical_var_es(
     confidences : Sequence[float]
         置信度列表（默认 0.95/0.99）。
     horizon_days : int
-        >1 时用重叠 h 日累计 PnL 计算（同一聚合样本）。
+        持有期（交易日）；``pre_aggregated=False`` 时 >1 会用重叠 h 日累计 PnL
+        重新聚合（适合逐日 PnL 序列）。
+    pre_aggregated : bool, default False
+        **R42**：``True`` 表示 ``pnl`` 已经是 h 日累计冲击的 PnL 分布，直接用其
+        经验分位/尾部均值，**不再二次聚合、也不乘 sqrt(h)**；``n_obs`` 即样本
+        数、``horizon_days`` 仅作元数据。多日历史模拟必须走这条路径。
 
     Returns
     -------
     list[VarResult]
         每个置信度一个结果；``method="historical"``。
     """
+    horizon = int(horizon_days)
+    if horizon < 1:
+        raise ValueError(f"horizon_days 必须 >= 1，实际 {horizon_days!r}")
     values = _coerce_pnl(pnl)
-    aggregated = _aggregate_over_horizon(values, horizon_days)
+    aggregated = values if pre_aggregated else _aggregate_over_horizon(values, horizon)
     results: list[VarResult] = []
     for confidence in _validate_confidences(confidences):
         var, es, n_obs = _historical_tail(aggregated, confidence)
@@ -922,7 +966,7 @@ def historical_var_es(
             VarResult(
                 method="historical",
                 confidence=confidence,
-                horizon_days=int(horizon_days),
+                horizon_days=int(horizon),
                 var_pct=var,
                 es_pct=es,
                 n_obs=n_obs,
@@ -981,12 +1025,17 @@ def parametric_var_es(
     confidences: tuple[float, ...] | list[float] = _DEFAULT_CONFIDENCES,
     horizon_days: int = 1,
     dist: DistKind = "normal",
+    pre_aggregated: bool = False,
 ) -> list[VarResult]:
     """参数法 VaR/ES（正态或 Cornish-Fisher 偏度/峰度修正）。
 
     参数由（按 ``horizon_days`` 聚合后的）样本矩估计：均值/总体标准差；
     Cornish-Fisher 另用无偏偏度与超额峰度（``scipy.stats`` bias=False）。
     正态 ES 有解析式；CF ES 对修正分位函数在尾部做数值积分。
+
+    ``pre_aggregated=True``（R42）：``pnl`` 直接是 **h 日累计冲击的 PnL 分布**，
+    仅做矩估计/分位计算，**不二次聚合、不乘 sqrt(h)**；多日 VaR/ES 应使用该
+    模式，``horizon_days`` 只作元数据。
 
     Raises
     ------
@@ -995,8 +1044,11 @@ def parametric_var_es(
     """
     if dist not in ("normal", "cornish_fisher"):
         raise ValueError(f"dist 必须是 'normal'/'cornish_fisher'，实际 {dist!r}")
+    horizon = int(horizon_days)
+    if horizon < 1:
+        raise ValueError(f"horizon_days 必须 >= 1，实际 {horizon_days!r}")
     values = _coerce_pnl(pnl)
-    aggregated = _aggregate_over_horizon(values, horizon_days)
+    aggregated = values if pre_aggregated else _aggregate_over_horizon(values, horizon)
     if aggregated.size < 2:
         raise ValueError("参数法至少需要 2 个观测")
     mean = float(np.mean(aggregated))
@@ -1026,7 +1078,7 @@ def parametric_var_es(
             VarResult(
                 method=method,
                 confidence=confidence,
-                horizon_days=int(horizon_days),
+                horizon_days=int(horizon),
                 var_pct=var,
                 es_pct=es,
                 n_obs=int(aggregated.size),

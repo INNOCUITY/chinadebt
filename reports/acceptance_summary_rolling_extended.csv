@@ -1,0 +1,92 @@
+﻿strategy,check,status,detail,start,end,benchmark_version,rolling_version,config_hash
+zero_tilt_exact,attribution_bridge,PASS,max|bridge_residual|=3.175e-08 元（容差 1e-05）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,benchmark_bridge,PASS,benchmark max|bridge_residual|=3.333e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-80336394.005464（197 笔）, 重算 cash_end=19663605.994536, 账面 cash_end=19663605.994536, 差额=0.000000；判定：|差额|=7.45058e-09 <= 容差 1e-06；金额最大的 8 笔事件：2022-02-08 trade_sell +25222824.540680; 2019-01-30 trade_buy -25",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_position_identity,PASS,期末面值独立重算（11 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_nav_identity,PASS,NAV 独立重算 1730 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 6916 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_pnl_identity,PASS,NAV 路径合计=30079270.248081；MTM 路径合计=30079270.248081；合计差=3.72529e-09；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=2.98023e-08（2025-05-07）；未解释项=2.98023e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→130079270.248081,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_full_price_identity,PASS,全价=净价+应计校验 6916 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_attribution_closure,PASS,"Σcomponents=30079270.248081（分项：price=+10998613.465795, coupon=+19190625.000000, principal_net=+0.000000, funding=-3713.135243, fees=-11450.619230, trade_settlement=-99511855.250991, pending_delta=+0.000000, slippage=-94804.463241, trade_ent",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：11 只券、38 笔应付票息，cashflows 实际 coupon 事件 38 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,risk_small_shock_convergence,PASS,蝶式0.001bp 相对误差=6.539e-07（阈值 1e-4；全重估与 KRD 同源即期）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,constraints_executed_days,PASS,有成交持仓日 8 天，成交日违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,constraints_passive_days,PASS,无成交的被动违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,spread_cost_from_final_face,PASS,成交逐笔价差=84346.793520，成本表价差=84346.793520,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,roll_event_same_day,PASS,滚动事件 7 个，缺策略同日成交 0 个，约束拒绝 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4), datetime.date(2022, 2, 7), datetime.date(2023, 1, 29), datetime.date(2023, 2, 8), datetime.date(2024, 2, 18), datetime.date(2025, 2, 19)]，策略缺 []",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,policy_pending_semantics,PASS,pending_status=['cancelled_by_roll']；被取消日 7，对应 policy_roll 决策 7,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,attribution_across_rolls,PASS,换券日 7 个，归因缺 []，换券日残差=1.461e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,zero_tilt_control,PASS,excess=0.0000bp（阈值 ±2bp），成交 18 笔,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,future_perturbation_prefix,PASS,cutoff=2022-07-15，nav_prefix_equal=True，trade_prefix_equal=True,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,attribution_bridge,PASS,max|bridge_residual|=3.353e-08 元（容差 1e-05）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,benchmark_bridge,PASS,benchmark max|bridge_residual|=3.333e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-68102645.740416（952 笔）, 重算 cash_end=31897354.259584, 账面 cash_end=31897354.259584, 差额=0.000000；判定：|差额|=1.86265e-08 <= 容差 1e-06；金额最大的 8 笔事件：2023-01-30 trade_sell +34274020.977396; 2019-01-30 trade_buy -28",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_position_identity,PASS,期末面值独立重算（11 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_nav_identity,PASS,NAV 独立重算 1730 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 6915 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-05-28: 重算=99331595.699463 vs 账面=99331595.699463,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_pnl_identity,PASS,NAV 路径合计=28873491.294841；MTM 路径合计=28873491.294841；合计差=4.47035e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=3.32948e-08（2025-08-26）；未解释项=4.47035e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→128873491.294841,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_full_price_identity,PASS,全价=净价+应计校验 6915 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_attribution_closure,PASS,"Σcomponents=28873491.294841（分项：price=+10178863.532494, coupon=+19114357.000000, principal_net=+0.000000, funding=-0.000000, fees=-122128.827527, trade_settlement=-87094873.912889, pending_delta=+0.000000, slippage=-297600.410127, trade_entr",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：11 只券、38 笔应付票息，cashflows 实际 coupon 事件 38 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,constraints_executed_days,PASS,有成交持仓日 268 天，成交日违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,constraints_passive_days,PASS,"无成交的被动违规 1 天：[{'date': datetime.date(2022, 3, 21), 'violation_codes': 'single_bond_weight'}]",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,spread_cost_from_final_face,PASS,成交逐笔价差=321287.807057，成本表价差=321287.807057,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,roll_event_same_day,PASS,滚动事件 7 个，缺策略同日成交 0 个，约束拒绝 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4), datetime.date(2022, 2, 7), datetime.date(2023, 1, 29), datetime.date(2023, 2, 8), datetime.date(2024, 2, 18), datetime.date(2025, 2, 19)]，策略缺 []",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,policy_pending_semantics,PASS,pending_status=['cancelled_by_roll']；被取消日 7，对应 policy_roll 决策 7,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+carry_roll,attribution_across_rolls,PASS,换券日 7 个，归因缺 []，换券日残差=1.374e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,attribution_bridge,PASS,max|bridge_residual|=3.411e-08 元（容差 1e-05）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,benchmark_bridge,PASS,benchmark max|bridge_residual|=3.333e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-67001944.349975（858 笔）, 重算 cash_end=32998055.650025, 账面 cash_end=32998055.650025, 差额=0.000000；判定：|差额|=1.86265e-08 <= 容差 1e-06；金额最大的 8 笔事件：2022-05-27 trade_buy -30200048.769811; 2022-05-18 trade_sell +30",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_position_identity,PASS,期末面值独立重算（11 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_nav_identity,PASS,NAV 独立重算 1730 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 6909 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_pnl_identity,PASS,NAV 路径合计=29754281.487056；MTM 路径合计=29754281.487056；合计差=2.6077e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=2.98023e-08（2025-04-10）；未解释项=2.98023e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→129754281.487056,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_full_price_identity,PASS,全价=净价+应计校验 6909 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_attribution_closure,PASS,"Σcomponents=29754281.487056（分项：price=+11319642.432440, coupon=+18648355.000000, principal_net=+0.000000, funding=-14631.639608, fees=-78930.881504, trade_settlement=-85556736.828863, pending_delta=+0.000000, slippage=-120153.424272, trade_e",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：11 只券、38 笔应付票息，cashflows 实际 coupon 事件 38 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,constraints_executed_days,PASS,有成交持仓日 184 天，成交日违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,constraints_passive_days,PASS,无成交的被动违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,spread_cost_from_final_face,PASS,成交逐笔价差=151845.559925，成本表价差=151845.559925,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,roll_event_same_day,PASS,滚动事件 7 个，缺策略同日成交 0 个，约束拒绝 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4), datetime.date(2022, 2, 7), datetime.date(2023, 1, 29), datetime.date(2023, 2, 8), datetime.date(2024, 2, 18), datetime.date(2025, 2, 19)]，策略缺 []",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,policy_pending_semantics,PASS,pending_status=['cancelled_by_roll']；被取消日 7，对应 policy_roll 决策 7,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+2s10s,attribution_across_rolls,PASS,换券日 7 个，归因缺 []，换券日残差=1.292e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,attribution_bridge,PASS,max|bridge_residual|=3.353e-08 元（容差 1e-05）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,benchmark_bridge,PASS,benchmark max|bridge_residual|=3.333e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-81491291.846375（1487 笔）, 重算 cash_end=18508708.153625, 账面 cash_end=18508708.153625, 差额=0.000000；判定：|差额|=2.6077e-08 <= 容差 1e-06；金额最大的 8 笔事件：2019-01-30 trade_buy -25211237.181308; 2025-02-20 trade_sell +25",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_position_identity,PASS,期末面值独立重算（11 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_nav_identity,PASS,NAV 独立重算 1730 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 6916 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_pnl_identity,PASS,NAV 路径合计=29977124.307762；MTM 路径合计=29977124.307762；合计差=2.98023e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=2.98023e-08（2024-07-01）；未解释项=2.98023e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→129977124.307762,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_full_price_identity,PASS,全价=净价+应计校验 6916 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_attribution_closure,PASS,"Σcomponents=29977124.307762（分项：price=+11632959.553490, coupon=+18814115.000000, principal_net=+0.000000, funding=-20892.823257, fees=-150239.173474, trade_settlement=-100134274.849643, pending_delta=+0.000000, slippage=-298818.248997, trade",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：11 只券、38 笔应付票息，cashflows 实际 coupon 事件 38 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,constraints_executed_days,PASS,有成交持仓日 410 天，成交日违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,constraints_passive_days,PASS,无成交的被动违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,spread_cost_from_final_face,PASS,成交逐笔价差=228391.935674，成本表价差=228391.935674,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,roll_event_same_day,PASS,滚动事件 7 个，缺策略同日成交 0 个，约束拒绝 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4), datetime.date(2022, 2, 7), datetime.date(2023, 1, 29), datetime.date(2023, 2, 8), datetime.date(2024, 2, 18), datetime.date(2025, 2, 19)]，策略缺 []",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,policy_pending_semantics,PASS,pending_status=['cancelled_by_roll']；被取消日 7，对应 policy_roll 决策 7,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+rv,attribution_across_rolls,PASS,换券日 7 个，归因缺 []，换券日残差=2.561e-08 元,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
