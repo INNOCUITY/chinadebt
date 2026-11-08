@@ -1167,9 +1167,24 @@ buyhold 两年 62 项与 rolling 2019-01-28→2021-12-31 的 79 项分别报告�
 `reward = nav_after − nav_before`（同一账本净收益，价差不重复扣）；`events` 按
 signal→project→execute→reject/roll→settle 排序（**展示顺序**，真实决策以 `gate_decisions` 为准），换券事件来自 `roll_events`。
 
-**已知限制（不掩盖）**：env 每次 step 从 episode 起点重跑引擎，O(n²)，是接口原型而非性能实现；
-闸门内部缩放重试档位未暴露给 env（只记录提交目标与 gate_level）；ML 标签当前是曲线平价券一阶代理，
-正式标签应复用账本/定价层。绩效比较与训练等 rolling/风险验收固定后再做。
+**监督学习数据集契约（2026-11-08 完成）**：`InformationClock` 固定
+`observation_lag=1 / execution=next_close / holding=5 / label_lag=1`；
+`build_supervised_dataset` 输出 `decision_as_of, available_through, execution_date,
+label_end_date, label_available_after, label + 9 特征`，标签 = **同引擎一次全区间回放**的
+`benchmark_nav[label_end]/benchmark_nav[execution]−1`（成本/票息/融资/滚动已入 NAV），
+与直接引擎复算 rel 1e-9 一致；特征仍逐决策时点 `build_training_matrix` + 逐行因果性。
+**线性基线（全量 22 split、n=277）**：OOS IC **0.020**、R² **−0.120**（零基线 −0.056）、
+MAE **2.09e-3**（零基线 2.00e-3）→ **线性 Ridge 未跑赢零基线**；quick n=75 IC −0.109、
+R² −0.179。这是负结果，不构成 alpha 证据；限制：单一已研究历史、标签是基准市场净收益而非策略
+超额、未做成本后组合回测、相邻 5 日标签重叠（区间 (t+1,t+5] 实为 4 个交易日）。
+
+**RL 动作/终止契约（2026-11-08 完成）**：`ActionSpec` 显式 `hold|target_krd|target_faces`；
+`StepRecord.action_outcome ∈ executed|scaled|rejected|cancelled_by_policy|no_trade_deadband`，
+`policy_actions` 与 `roll_events` 一一对应，机械换券不混入 `projected_target`；
+`terminate()` 返回 `TerminalState`（`nav_mark_to_market/cash/positions/unsettled_trades/
+unsettled_cash/accrued_fees/liquidation_assumption`），默认**不强制平仓**、未结算义务单列；
+`rollout(policy, start, end)` 用**一次** `run_backtest` 产出整段轨迹（O(n) 训练路径），
+与逐步 `step`（O(n²) 调试路径）逐位一致。
 
 ### 10.21 第十二轮独立审查：一日研究路径与新接口边界（2026-11-08）
 
@@ -1220,13 +1235,13 @@ signal→project→execute→reject/roll→settle 排序（**展示顺序**，�
 | **R42** | 多日 VaR 先聚合 h 日累计冲击再一次全重估；carry 每样本只加一次；参数/CF 直接用 h 日 PnL 分布 | 平 3% h=5 carry 58,967.64/样本（旧 294,838.19）；3%→4%→3% 两日净冲击 0.00（旧 +1,463,856.96）；h=2 累计重估==直接 t+h 重估；h=1 回归 324,181/445,807 不变 |
 | **R43** | ML 区分当前决策工作表与逐决策时点训练矩阵；`assert_per_row_causality` 校验逐行无未来 | `shift(-1)` 反例：改 2019-02-12 后 2019-02-11 行逐位不变；旧式整段截断矩阵被拒；ML 测试 8→18 |
 | **R44** | RL 零动作 = hold（不生成 pending/不主动成交），不是"保持 KRD"重求解；`projected_target` 来自真实 `gate_decisions` | 平 3% 建仓后 hold：`executed_face=0`、无成交；旧实现会买 30Y 200 万 |
-| **R45** | 引擎返回 `gate_decisions`（source/status/attempts/projected_faces/成交/拒单）；`roll_events.pending_status=cancelled_by_roll`（无延期队列，由当日新信号替代）；env 投影用真实决策，事件排序标注为展示顺序 | rolling 验收新增 `policy_pending_semantics`；91/91 含该项 |
+| **R45** | 引擎返回 `gate_decisions`（source/status/attempts/projected_faces/成交/拒单）；`roll_events.pending_status=cancelled_by_roll`（无延期队列，由当日新信号替代）；env 投影用真实决策，事件排序标注为展示顺序 | rolling 验收新增 `policy_pending_semantics` 与 `risk_multiday_contract`（h=5 carry≈5×、非 25×、n_obs=n−h+1）；92/92 含该项 |
 | **R46** | forced 缩放后按**取整最终面值**重算 `spread_cost` | 验收新增 `spread_cost_from_final_face`：逐笔价差==成本表价差（1e-6） |
 
 **验收口径修正**：持仓日违规拆成 `constraints_executed_days`（成交日违规→FAIL）与
 `constraints_passive_days`（无成交被动违规→单独披露、不阻塞）；carry 2022-03-21 被动单券边界
-不再被误报成执行失败。`make acceptance` **70/70 PASS**；`make acceptance-rolling`（2019–2021）
-**91/91 PASS**；延到 2025-12-31 同口径 **91/91 PASS**（`acceptance_summary_rolling_extended.csv`）。
+不再被误报成执行失败。`make acceptance` **71/71 PASS**；`make acceptance-rolling`（2019–2021）
+**92/92 PASS**；延到 2025-12-31 同口径 **92/92 PASS**（`acceptance_summary_rolling_extended.csv`）。
 
 **仍保留**：h>1 样本重叠、只作描述；ML 标签一阶代理；RL env 逐日重放 O(n²) 且闸门内部缩放档位
 仍未暴露（仅 `gate_attempts`）；h=5 风险数字是 2020-12-31 固定组合，不是全历史滚动 VaR。

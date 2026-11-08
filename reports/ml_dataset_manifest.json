@@ -1,0 +1,158 @@
+{
+  "dataset": "supervised_ml_dataset",
+  "builder": "build_supervised_dataset",
+  "n_rows": 344,
+  "n_features": 9,
+  "start": "2019-02-02",
+  "end": "2025-12-18",
+  "features": [
+    "level_5y",
+    "slope_2s10s",
+    "curvature_2_5_10",
+    "carry_proxy_5y",
+    "mom_20_5y",
+    "mom_60_5y",
+    "ewma_vol_20_5y",
+    "fdr007_level",
+    "fdr007_change_5"
+  ],
+  "columns": [
+    "decision_as_of",
+    "available_through",
+    "execution_date",
+    "label_end_date",
+    "label_available_after",
+    "label",
+    "level_5y",
+    "slope_2s10s",
+    "curvature_2_5_10",
+    "carry_proxy_5y",
+    "mom_20_5y",
+    "mom_60_5y",
+    "ewma_vol_20_5y",
+    "fdr007_level",
+    "fdr007_change_5"
+  ],
+  "date_columns": [
+    "decision_as_of",
+    "available_through",
+    "execution_date",
+    "label_end_date",
+    "label_available_after"
+  ],
+  "label": {
+    "name": "label",
+    "definition": "benchmark_nav[label_end] / benchmark_nav[execution_date] - 1；execution_date = decision + 1 交易日（next-close），label_end = decision + holding_days 交易日；基准 NAV 由同一 run_backtest 账本（含成本/票息/融资/滚动政策）生成，是与策略无关的市场标签",
+    "source": "run_backtest.benchmark_nav",
+    "benchmark_nav_source": "engine_single_run",
+    "benchmark_nav_window": [
+      "2019-01-28",
+      "2025-12-25"
+    ],
+    "execution": "next_close",
+    "holding_days": 5,
+    "label_lag_days": 1,
+    "available_after_rule": "label_available_after = label_end + label_lag_days 个交易日；严格晚于 label_end"
+  },
+  "clock": {
+    "observation_lag_days": 1,
+    "execution": "next_close",
+    "holding_days": 5,
+    "label_lag_days": 1,
+    "execution_offset_days": 1,
+    "label_end_offset_days": 5,
+    "label_available_offset_days": 6,
+    "label_definition": "benchmark_nav[label_end] / benchmark_nav[execution_date] - 1；execution_date = decision + 1 交易日（next-close），label_end = decision + holding_days 交易日；基准 NAV 由同一 run_backtest 账本（含成本/票息/融资/滚动政策）生成，是与策略无关的市场标签",
+    "calendar_rule": "所有边界按 TradingCalendar 的交易日推进；越界抛 ClockError"
+  },
+  "config_hash": "e00b863126881967",
+  "benchmark_version": "rolling",
+  "rolling_version": "roll_v1_trigger1y_parissue",
+  "n_input_rows": 345,
+  "n_dropped_rows": 1,
+  "dropped_rows": [
+    {
+      "decision_as_of": "2019-01-28",
+      "reason": "feature_warmup_or_missing_input"
+    }
+  ],
+  "n_nan_feature_rows": 1,
+  "nan_rows": [
+    {
+      "decision_as_of": "2019-01-28",
+      "reason": "feature_warmup_or_missing_input"
+    }
+  ],
+  "nan_rule": "特征列在决策时点含 NaN 的行整行删除（预热期/输入缺口），逐行披露在 attrs；标签 NaN 直接报错",
+  "causality": {
+    "per_row_checked": true,
+    "rule": "每个决策行只依赖 available_through 及之前的数据（逐行扰动复核）"
+  },
+  "row_contract": [
+    "available_through <= decision_as_of",
+    "execution_date <= label_end_date",
+    "label_available_after > label_end_date",
+    "feature columns contain no NaN (unless nan_rule says otherwise)"
+  ],
+  "holdout_status": "researched_sample",
+  "holdout_note": "2019–2025 已被本项目研究过，不是 untouched holdout；数据集只用于研究/训练，测试窗只做最后评估",
+  "research_boundary": "单一历史（2019–2025 已研究）；标签是基准市场净收益（含成本/票息/融资/滚动），不是策略超额收益；本 manifest 不含绩效结论",
+  "run": {
+    "script": "scripts/run_ml_baseline.py",
+    "quick": false,
+    "requested_end": "2025-12-31",
+    "effective_end": "2025-12-31",
+    "decision_step_days": 5,
+    "mode": "rolling",
+    "n_decisions": 345,
+    "n_splits_requested": 22,
+    "n_splits_evaluated": 22,
+    "n_splits_skipped": 0,
+    "purge_days": 6,
+    "embargo_days": 6,
+    "step_days": 63,
+    "declared_window": {
+      "train": [
+        "2019-01-28",
+        "2020-02-05"
+      ],
+      "valid": [
+        "2020-02-06",
+        "2020-05-07"
+      ],
+      "test": [
+        "2020-05-08",
+        "2020-08-04"
+      ],
+      "expanding": false
+    },
+    "model": {
+      "type": "numpy_closed_form_ridge",
+      "alpha_grid": [
+        0.01,
+        0.1,
+        1.0,
+        10.0,
+        100.0
+      ],
+      "preprocessing": "train_window_standardize_zscore",
+      "selection": "inner_valid_mae_only_test_never_used",
+      "zero_baseline": "train_label_mean"
+    },
+    "pooled_oos": {
+      "n": 277.0,
+      "ic": 0.019805910098479054,
+      "r2": -0.1197755837259673,
+      "r2_zero": -0.05566394995362911,
+      "mae": 0.002088331013670809,
+      "mae_zero": 0.0019967147334208246
+    },
+    "limitations": [
+      "单一历史：2019–2025 已被本项目研究，不是 untouched holdout",
+      "标签是基准市场净收益（含成本/票息/融资/滚动），不是策略超额收益",
+      "只报告 OOS 预测力；未做成本后的组合回测，不构成可交易 alpha 证据",
+      "标签 5 日持有、每 5 交易日决策，相邻标签仍有部分重叠，IC 独立性有限",
+      "Ridge/标准化只在训练窗拟合；测试窗不参与 alpha 选择或任何拟合"
+    ]
+  }
+}

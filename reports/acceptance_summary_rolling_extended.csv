@@ -14,6 +14,7 @@ zero_tilt_exact,recon_full_price_identity,PASS,全价=净价+应计校验 6916 �
 zero_tilt_exact,recon_attribution_closure,PASS,"Σcomponents=30079270.248081（分项：price=+10998613.465795, coupon=+19190625.000000, principal_net=+0.000000, funding=-3713.135243, fees=-11450.619230, trade_settlement=-99511855.250991, pending_delta=+0.000000, slippage=-94804.463241, trade_ent",2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
 zero_tilt_exact,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：11 只券、38 笔应付票息，cashflows 实际 coupon 事件 38 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
 zero_tilt_exact,risk_small_shock_convergence,PASS,蝶式0.001bp 相对误差=6.539e-07（阈值 1e-4；全重估与 KRD 同源即期）,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
+zero_tilt_exact,risk_multiday_contract,PASS,h=5 carry/一日 carry=5.001（应≈5 量级，非 25；短窗有 roll/coupon 非线性）；n_obs h=5=246、h=1=250,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
 zero_tilt_exact,constraints_executed_days,PASS,有成交持仓日 8 天，成交日违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
 zero_tilt_exact,constraints_passive_days,PASS,无成交的被动违规 0 天,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967
 zero_tilt_exact,spread_cost_from_final_face,PASS,成交逐笔价差=84346.793520，成本表价差=84346.793520,2019-01-28,2025-12-31,rolling,roll_v1_trigger1y_parissue,e00b863126881967

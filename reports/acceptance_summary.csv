@@ -14,6 +14,7 @@ zero_tilt,recon_full_price_identity,PASS,全价=净价+应计校验 1920 行：�
 zero_tilt,recon_attribution_closure,PASS,"Σcomponents=5972438.120200（分项：price=+2073952.443709, coupon=+3991200.000000, principal_net=+0.000000, funding=-3713.135243, fees=-3070.556707, trade_settlement=-102337996.386959, pending_delta=-2049981.233217, slippage=-85930.631559, trade_",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
 zero_tilt,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：4 只券、8 笔应付票息，cashflows 实际 coupon 事件 8 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
 zero_tilt,risk_small_shock_convergence,PASS,蝶式0.001bp 相对误差=4.089e-07（阈值 1e-4；全重估与 KRD 同源即期）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,risk_multiday_contract,PASS,h=5 carry/一日 carry=7.000（应≈5 量级，非 25；短窗有 roll/coupon 非线性）；n_obs h=5=246、h=1=250,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
 zero_tilt,constraints_executed_days,PASS,有成交持仓日 5 天，成交日违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
 zero_tilt,constraints_passive_days,PASS,无成交的被动违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
 zero_tilt,spread_cost_from_final_face,PASS,成交逐笔价差=74303.379089，成本表价差=74303.379089,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04

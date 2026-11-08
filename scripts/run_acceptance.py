@@ -99,6 +99,58 @@ def _recon_detail(rows: list[dict], name: str, reconciliation) -> None:
         _add(rows, name, f"recon_{check.name}", bool(check.passed), check.detail[:240])
 
 
+def _risk_multiday_check(rows: list[dict], name: str, panel, calendar, cfg) -> None:
+    """R42 契约：h=5 的 carry 只计一次（约 5× 一日 carry，不是 25×），样本数=n−h+1。"""
+    try:
+        from ficc.curve.curve import Curve
+        from ficc.data.schema import CANONICAL_TENORS
+        from ficc.portfolio.benchmark import build_benchmark
+        from ficc.portfolio.rolling import RollingUniverse
+        from ficc.risk.var import portfolio_pnl_current_portfolio_factors
+
+        day = END
+        curve = Curve(
+            as_of=day,
+            tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float).copy(),
+            rates=panel.loc[pd.Timestamp(day)].to_numpy(dtype=float),
+            method="linear",
+        )
+        bonds = RollingUniverse.build(curve, day, cfg=cfg).active()
+        bench = build_benchmark(curve, day, bonds=bonds, calendar=calendar, cfg=cfg)
+        # 2Y 在 2016–2019 有缺口：lookback 只用 2019-01-28 之后的样本，quick 窗口自动缩短
+        hist = panel.loc[
+            (panel.index <= pd.Timestamp(day)) & (panel.index >= pd.Timestamp("2019-01-28"))
+        ]
+        lookback = min(250, max(20, len(hist) - 5))
+        base = dict(
+            faces=bench.faces,
+            bonds=list(bonds),
+            panel=panel,
+            as_of=day,
+            lookback=lookback,
+            cfg=cfg,
+            calendar=calendar,
+        )
+        p1 = portfolio_pnl_current_portfolio_factors(**base, horizon_days=1, include_carry=False)
+        p1c = portfolio_pnl_current_portfolio_factors(**base, horizon_days=1, include_carry=True)
+        p5 = portfolio_pnl_current_portfolio_factors(**base, horizon_days=5, include_carry=False)
+        p5c = portfolio_pnl_current_portfolio_factors(**base, horizon_days=5, include_carry=True)
+        carry1 = float((p1c - p1).mean())
+        carry5 = float((p5c - p5).mean())
+        ratio = carry5 / carry1 if abs(carry1) > 1e-9 else float("nan")
+        n_ok = len(p5) == lookback - 5 + 1 and len(p1) == lookback
+        _add(
+            rows,
+            name,
+            "risk_multiday_contract",
+            bool(n_ok and 3.0 <= ratio <= 12.0),
+            f"h=5 carry/一日 carry={ratio:.3f}（应≈5 量级，非 25；短窗有 roll/coupon 非线性）；"
+            f"n_obs h=5={len(p5)}、h=1={len(p1)}",
+        )
+    except Exception as exc:
+        _add(rows, name, "risk_multiday_contract", False, f"检查失败: {exc}")
+
+
 def _risk_small_shock_check(rows: list[dict], name: str, panel, calendar, cfg) -> None:
     """固定组合蝶式 0.001bp：全重估 vs 同源 KRD 的一阶收敛（<1e-4）。"""
     try:
@@ -249,6 +301,7 @@ def _run_one(
     _recon_detail(rows, name, reconciliation)
     if do_risk:
         _risk_small_shock_check(rows, name, panel, calendar, cfg)
+        _risk_multiday_check(rows, name, panel, calendar, cfg)
 
     held = result.constraints[result.constraints["n_positions"] > 0]
     executed_days = held[held["n_trades"] > 0]

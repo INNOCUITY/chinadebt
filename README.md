@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（640 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（663 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（640 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（663 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -136,10 +136,14 @@ make check    # = ruff check + ruff format --check + pytest（640 项离线，ex
 - **R39 VaR**：改为冻结分析日组合 + 历史冲击（`analysis_as_of + frozen_positions + historical_shocks`）；95% VaR/ES **32.42/44.58 万元**（旧 aging 口径 35.67/49.67 万并列；审查的 YTM 冻结反例 31.82/43.33 万在测试中逐位复现）。
 - **R40 风险近似**：全重估与 KRD 统一 `price_from_spot` + `spot_shock`；小冲击收敛 8.3e-4 / 4.3e-6 / 4.3e-7；平行 ±100bp 8.2%/8.3%、陡平蝶 25bp ≈1.08%、历史 ~1%（旧"蝶式 16.4%"是不同源误差，已纠正）。
 - **R41 报告**：窗口契约改为 3×约 2 年 + 229 日尾窗；收益基期=前收 NAV；`pooled_cumulative_excess_bp`（全段 −120.58bp）与 `pooled_ann_excess_bp`（−13.37bp）、`mean_window_excess_bp`（−25.01bp）明确分列；carry 年化 **3.7358%**、MDD **−4.9915%**；`rolling_version` 填值；文档数字与 CSV 自动核对。
-- **验收**：默认 buyhold `make acceptance` **70/70 PASS**；滚动 `make acceptance-rolling` **91/91 PASS**（2019–2021），延到 2025-12-31 同为 **91/91 PASS**（含对账逐项、跨换券归因、票息权益、现金对账、未来扰动、风险小冲击收敛）；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
+- **验收**：默认 buyhold `make acceptance` **71/71 PASS**；滚动 `make acceptance-rolling` **92/92 PASS**（2019–2021），延到 2025-12-31 同为 **92/92 PASS**（含对账逐项、跨换券归因、票息权益、现金对账、未来扰动、风险小冲击收敛）；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
 - **边界**：主 VaR 用即期空间（与审查 YTM 冻结空间差 +1.9%/+2.9%，已并列）；price-only VaR 不含持有期 carry/现金事件；滚动基准为面值保持政策；重叠窗口不做推断。ML/RL 仅可先做 as-of/split 接口与零信号基线，绩效比较待 rolling/风险验收固定后。
 
-**第十二轮（R42–R46）**：多日 VaR 改为"先聚合 h 日冲击、carry 只计一次"（平 3% h=5 carry 58,967.64/样本，旧 5× 已消除；3%→4%→3% 净冲击 PnL=0）；ML 增加逐决策时点训练矩阵与逐行因果性校验（`shift(-1)` 反例 2019-02-11 行不变）；RL 零动作改为 **hold（不主动成交）**，`projected_target` 取引擎 `gate_decisions` 真实决策，pending 取消语义显式化；forced 缩放按最终整数面值重算价差成本。验收：buyhold 70/70、rolling 91/91（2019–2021 与 2025 延长样本同口径），carry 2022-03-21 被动超限单独披露。
+**第十二轮（R42–R46）**：多日 VaR 改为"先聚合 h 日冲击、carry 只计一次"（平 3% h=5 carry 58,967.64/样本，旧 5× 已消除；3%→4%→3% 净冲击 PnL=0）；ML 增加逐决策时点训练矩阵与逐行因果性校验（`shift(-1)` 反例 2019-02-11 行不变）；RL 零动作改为 **hold（不主动成交）**，`projected_target` 取引擎 `gate_decisions` 真实决策，pending 取消语义显式化；forced 缩放按最终整数面值重算价差成本。验收：buyhold 71/71、rolling 92/92（2019–2021 与 2025 延长样本同口径），carry 2022-03-21 被动超限单独披露。
+
+**监督学习数据集与线性基线（2026-11-08）**：信息时钟 lag=1 / next-close / h=5 / label_lag=1；账本口径标签（同引擎一次回放 benchmark_nav，成本/票息/融资/滚动已入）；逐决策时点特征 + 逐行因果性；线性 Ridge vs 零基线 22 split、n=277：OOS IC **0.020**、R² **−0.120**（零 −0.056）、MAE 2.09e-3（零 2.00e-3）——**未跑赢零基线**，负结果保留，不构成 alpha 证据。产物 `reports/ml_dataset*.csv/json`、`reports/ml_baseline_metrics.csv`；`make ml-baseline`。
+
+**RL 动作契约（2026-11-08）**：`ActionSpec` 显式 Hold/TargetKRD/TargetFaces；`StepRecord` 记录 action_outcome/substitution/policy_actions；`terminate()` 返回未结算义务（默认不强制平仓）；`rollout` 单次引擎 O(n) 训练路径，与 step O(n²) 逐位一致。
 
 **C 阶段接口（仅接口，未做绩效比较）**：`src/ficc/ml/`（`build_current_features` 当前决策工作表；`build_training_matrix` 逐决策时点构造；`assert_per_row_causality` 逐行因果性；`available_after` 标签；walk-forward purge/embargo；`researched_sample` 标注）；`src/ficc/rl/`（`RebalanceEnv` 复用同一引擎/账本/闸门，记录原动作→提交目标→实际成交/拒单、gate_level、reward=账本 NAV 差）。已知限制：env 每步重放 O(n²)、闸门内部重试档位未暴露（仅有 gate_attempts）、ML 标签为曲线一阶代理；绩效比较等 rolling/风险验收固定后再做。
 

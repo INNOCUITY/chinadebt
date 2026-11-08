@@ -119,7 +119,8 @@ class AsOfView:
         决策日（信号日）。**允许**出现在 metadata，但 panel/funding 里不允许出现
         ``> available_through`` 的行。
     panel : DataFrame
-        曲线面板（index=估值日，columns=期限）。只含 ``≤ available_through`` 的行。
+        曲线面板（index=估值日，columns=期限；可附加**数值**特征列，如资金面）。
+        只含 ``≤ available_through`` 的行。
     calendar : TradingCalendar
         交易日历（与回测同一套 CN_IB 实测日历）。
     funding : Series | None
@@ -229,6 +230,7 @@ def build_asof_view(
     ----------
     panel : DataFrame
         曲线面板（index=估值日，columns=期限；数值单位与项目其它模块一致，即 YTM 百分数）。
+        允许附加数值特征列（如资金面），它们只供 ``FeatureSpec`` 使用，不参与曲线定价。
     funding : Series | None
         资金面序列（index=估值日）。
     calendar : TradingCalendar
@@ -287,7 +289,7 @@ def build_asof_view(
         "available_through": available_through.isoformat(),
         "n_rows": len(sliced_panel),
         "n_funding_rows": len(sliced_funding) if sliced_funding is not None else 0,
-        "panel_columns": tuple(float(c) for c in sliced_panel.columns),
+        "panel_columns": _column_metadata(sliced_panel.columns),
         "sample_note": "2019–2025 已被研究，不是 untouched holdout",
     }
     return AsOfView(
@@ -304,6 +306,21 @@ def build_asof_view(
 # ---------------------------------------------------------------------------
 # 特征
 # ---------------------------------------------------------------------------
+def _column_metadata(columns: Iterable[Any]) -> tuple[float | str, ...]:
+    """元数据列名：期限解析为 float，非期限特征列（如 ``FDR007``）保留字符串。
+
+    面板允许附加**数值特征列**（见 :func:`ficc.ml.dataset.attach_funding_column`）；
+    定价/回测只取规范期限列，这些附加列不参与曲线构造。
+    """
+    labels: list[float | str] = []
+    for column in columns:
+        try:
+            labels.append(float(column))
+        except (TypeError, ValueError):
+            labels.append(str(column))
+    return tuple(labels)
+
+
 def _resolve_column(panel: pd.DataFrame, name: str) -> Any | None:
     """把 ``FeatureSpec.inputs`` 的名字解析到 panel 的实际列。
 

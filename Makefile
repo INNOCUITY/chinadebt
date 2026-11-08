@@ -1,4 +1,4 @@
-.PHONY: help setup install recon strategies cost-study attribution acceptance acceptance-rolling long-sample windows lot-exposure risk-report data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
+.PHONY: help setup install recon strategies cost-study attribution acceptance acceptance-rolling acceptance-rolling-extended long-sample windows lot-exposure risk-report ml-baseline data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
 
 # 优先使用项目本地 .venv（含 pandas/scipy/pytest/ruff），保证在任何 shell 下 `make check` 都能复现；
 # 没有 .venv 时回退系统 python3（此时请先 `make setup`）。
@@ -50,6 +50,9 @@ acceptance:  ## 统一验收（策略 + 归因 + 独立估值 + 对账；缺任�
 acceptance-rolling:  ## 滚动政策版统一验收（2019–2021，含换券事件同日映射）
 	$(PY) scripts/run_acceptance.py --rolling
 
+acceptance-rolling-extended:  ## 滚动政策完整样本验收（2019–2025；被动超限单独披露）
+	$(PY) scripts/run_acceptance.py --rolling --end 2025-12-31
+
 long-sample:  ## 长样本滚动回测（roll_v1 政策 + 滚动基准；2019-2025）
 	$(PY) scripts/run_long_sample.py
 
@@ -61,6 +64,9 @@ lot-exposure:  ## lot=5M 主动风险暴露解释（冻结主配置，只覆盖 
 
 risk-report:  ## VaR/ES 与压力测试（全重估 vs KRD 近似）
 	$(PY) scripts/run_risk.py
+
+ml-baseline:  ## 监督学习数据集契约 + 线性基线（OOS 预测力，不作 alpha 结论）
+	$(PY) scripts/run_ml_baseline.py
 
 # ------------------------- 研究 -------------------------
 fit:  ## 曲线拟合 + 残差诊断（最小链路：热力图 + NSS 残差）

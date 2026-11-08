@@ -400,19 +400,25 @@ def test_walkforward_validate_rejects_leakage(market) -> None:
 def test_ml_package_surface_is_stable() -> None:
     expected = {
         "AsOfView",
+        "ClockError",
         "EntryConvention",
         "FeatureSpec",
         "ForwardLabelSpec",
+        "InformationClock",
         "LabelRecord",
         "LeakageError",
         "ReturnType",
         "Split",
         "WalkForwardSpec",
         "assert_per_row_causality",
+        "attach_funding_column",
+        "benchmark_nav_for_labels",
         "build_asof_view",
         "build_current_features",
         "build_features",
+        "build_supervised_dataset",
         "build_training_matrix",
+        "dataset_manifest",
         "forward_returns",
         "generate_splits",
         "validate_no_leakage",
@@ -423,7 +429,7 @@ def test_ml_package_surface_is_stable() -> None:
 
     package_dir = Path(ml.__file__).resolve().parent
     files = {path.name for path in package_dir.glob("*.py")}
-    assert files == {"__init__.py", "asof.py", "labels.py", "walkforward.py"}
+    assert files == {"__init__.py", "asof.py", "dataset.py", "labels.py", "walkforward.py"}
 
 
 # ===========================================================================

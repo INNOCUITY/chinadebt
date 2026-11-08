@@ -288,3 +288,39 @@ def test_hold_action_does_not_trade_on_flat_curve() -> None:
     assert record.gate_attempts == 0
     assert record.policy_source == "none"
     assert "零动作" in record.notes
+
+
+def test_rollout_fast_path_matches_step(market) -> None:
+    """O(n) rollout 与逐步 O(n²) step 在同一动作序列下逐位一致。"""
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(START, END)
+    env_step = RebalanceEnv(panel, calendar, funding, cfg)
+    obs0 = env_step.reset(START, END)
+    bench = dict(obs0.benchmark_krd)
+    schedule = {days[0]: ActionSpec(target_krd=bench)}
+    for day in days[1:]:
+        schedule[day] = ActionSpec()  # hold
+    obs = env_step.reset(START, END)
+    navs = [obs.nav]
+    for day in days[:-1]:
+        obs, _rec = env_step.step(schedule[day])
+        navs.append(obs.nav)
+
+    env_roll = RebalanceEnv(panel, calendar, funding, cfg)
+    rollout = env_roll.rollout(lambda ctx: schedule.get(ctx.as_of, ActionSpec()), START, END)
+    assert len(rollout.records) >= 2
+    assert len(rollout.records) == len(days) - 1
+    np.testing.assert_allclose(
+        rollout.result.nav.to_numpy(), env_step.result.nav.to_numpy(), atol=1e-9, rtol=0.0
+    )
+    assert rollout.result.nav.index.equals(env_step.result.nav.index)
+    steps_trades = env_step.result.trades.reset_index(drop=True)
+    roll_trades = rollout.result.trades.reset_index(drop=True)
+    assert len(steps_trades) == len(roll_trades)
+    # trade_id 前缀含策略名（rl_env vs rl_rollout），其余成交字段必须逐位一致
+    for col in ("side", "face_value", "clean_price", "settlement_date"):
+        assert steps_trades[col].tolist() == roll_trades[col].tolist(), col
+    # hold 记录不得有主动成交
+    hold_records = [r for r in rollout.records if r.original_action.action_type == "hold"]
+    assert hold_records
+    assert all(r.executed_face == 0.0 for r in hold_records)
