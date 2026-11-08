@@ -1,33 +1,36 @@
-"""压力测试：假设情景（平行/陡平/蝶式）+ 历史情景重演（计划 §12.12-B）。
+"""压力测试：假设情景（平行/陡平/蝶式）+ 历史情景重演（R40 同源口径）。
 
-对同一固定面值组合，每个情景同时给出：
+R40 的关键修正：**全重估与 KRD 近似必须共用同一价格函数与同一冲击基**。
+本模块统一用即期曲线：
 
-- **全重估**：用冲击后的曲线逐券重估 T+N 结算日全价，
-  ``pnl_full = Σ face/100 × (dirty_shocked − dirty_base)``；
-- **KRD 近似**：``pnl_krd = −Σ_b KRD_b × Δz_b``（关键期限 KRD 元/bp；Δz 为
-  **即期曲线**关键期限零息利率变化，bp——KRD 定义在即期曲线上，用 YTM 差会
-  引入 YTM→即期映射误差）；
-- 差异 ``diff = pnl_full − pnl_krd``、占 NAV 的 bp、以及
-  ``error_ratio = diff / |pnl_full|``（近似误差占情景 PnL 的比例）。
+- 基准价 ``P0 = price_from_spot(bond, settlement, spot0)``（:mod:`ficc.risk.spot`）；
+- 冲击 ``spot_shock(spot0, key_tenors, shifts_bp)``（与 ``key_rate_durations``
+  完全相同的“关键点间线性、两端平推”权重）；
+- 全重估 ``pnl_full = Σ face/100 × [price_from_spot(spot_shocked) − P0]``；
+- KRD 近似 ``pnl_krd = −Σ_k KRD_k × shifts_bp_k``（KRD 元/bp、多头为正；
+  ``KRD_k`` 来自同一 ``spot0`` 上 ``key_rate_durations`` 的单点 +1bp 定价差分）。
 
-情景定义
---------
-1. ``parallel``：``Curve.shift(bp)``，``bp`` 可带符号（配置里有 ±100bp）；
-2. ``steepen`` / ``flatten`` / ``butterfly``：``Curve.shock(kind, bp)``，
-   ``bp`` 为**幅度**（≥0），方向由 ``kind`` 表达（与配置注释一致）；
-3. ``historical``：取配置窗口 ``[start, end]`` 内、长度为 ``window`` 个交易日
-   的**累计曲线变动** ``Δy = y_i − y_{i−window}``（逐期限节点），把该变动整体
-   叠加到**当前**曲线上重演，取对当前组合**最不利（全重估 PnL 最小）**的那个
-   路径。定义是「历史变动路径重演」而不是「历史当日重复」：只搬运曲线变动，
-   不搬历史价位。
+因此两者之差只剩**真正的二阶/高阶项**（随冲击幅度平方收敛），不再混入
+“YTM 定价 vs 即期 KRD”的一阶口径差。基准价、结算日、剩余期限对全重估与
+KRD 完全相同。
 
-   默认**不使用分析日之后的数据**：``end`` 会被截断到 ``curve.as_of``；若窗口
-   整段晚于分析日则返回 ``executed=False`` 的行（不静默当 0 处理）。确实要做
-   「把未来已实现路径当假设情景」时，显式传 ``allow_future_history=True``，
-   返回行的 ``note`` 会标注该假设。
+情景定义（在即期空间重写，保留配置的 YTM 情景语义）
+---------------------------------------------------
+1. ``parallel``：所有关键点同向 ``bp``（可带符号）。配置的 ±100bp 直接作为
+   即期关键点平行移动。
+2. ``steepen`` / ``flatten`` / ``butterfly``：期限形状取自
+   ``Curve.shock(kind, bp).rate(key_tenors) − curve.rate(key_tenors)``（与配置
+   YTM 情景同语义、同幅度），再作为**即期关键点**的 shifts 施加。
+3. ``historical``：在配置窗口内取长度为 ``window`` 个交易日的**即期曲线关键点
+   累计变动** ``Δz = z_i − z_{i−window}``（对每日 YTM 曲线 bootstrap，按日期
+   缓存 ``SpotCurve``；成本约为 1 次 bootstrap/日 + 每个冲击 1 次定价），
+   把 ``Δz`` 叠加到**分析日即期曲线**上重演，取当前组合最不利（全重估 PnL
+   最小）的路径。默认不使用分析日之后的数据（``end`` 截断到 ``curve.as_of``）；
+   整段晚于分析日时返回 ``executed=False``，只有显式
+   ``allow_future_history=True`` 才按假设情景重演并标注。
 
 单位约定：金额元、面值元、价格元/百元面值、收益率百分数、KRD 元/bp（多头为正）。
-``diff_bp = diff / NAV × 1e4``；NAV 为分析日固定组合全价市值（已扣到结算日）。
+``diff_bp = diff / NAV × 1e4``；NAV 为分析日固定组合即期全价市值（已扣到结算日）。
 """
 
 from __future__ import annotations
@@ -44,14 +47,14 @@ from ficc.config import Config
 from ficc.curve.bootstrap import bootstrap_spot
 from ficc.curve.curve import Curve
 from ficc.data.schema import BondStatic
-from ficc.portfolio.constraints import project_risk
-from ficc.portfolio.dates import remaining_years
-from ficc.pricing.bond import dirty_price_from_ytm
+from ficc.portfolio.dates import settlement_for
+from ficc.risk.spot import price_from_spot, spot_shock
 from ficc.risk.var import (
     _as_date,
     _bond_map,
-    _mark_portfolio,
     _normalise_panel,
+    _panel_curve,
+    _portfolio_krd_positive,
     _resolve_config,
     _validate_faces,
 )
@@ -60,32 +63,23 @@ __all__ = ["StressResult", "stress_test"]
 
 _SHAPE_SCENARIOS = ("steepen", "flatten", "butterfly")
 _EPS = 1e-9
+_PRICE_FUNCTION = "price_from_spot"
+_SHOCK_BASIS = "spot_key_linear_flat"
 
 
 @dataclass(frozen=True)
 class StressResult:
-    """单一压力情景的结果。
+    """单一压力情景的结果（全重估与 KRD 近似同为即期定价/冲击基）。
 
     Attributes
     ----------
-    scenario : str
-        情景名（配置里的 ``name``）。
-    pnl_full : float
-        全重估情景 PnL（元）。
-    pnl_krd : float
-        KRD 近似情景 PnL（元）。
-    diff : float
-        ``pnl_full − pnl_krd``（元）。
-    diff_bp : float
-        差异占 NAV 的 bp（``diff / NAV × 1e4``）。
-    error_ratio : float | None
-        ``|diff| / |pnl_full|``；``pnl_full`` 为 0 时为 None。
-    nav : float
-        分析日固定组合全价市值（元），用于 bp 换算。
-    executed : bool
-        是否实际执行（历史窗口超出可用数据/分析日时显式 False，不静默当 0）。
-    note : str
-        情景定义与假设披露（含历史重演窗口、未来数据假设等）。
+    scenario, pnl_full, pnl_krd, diff, diff_bp
+        情景名、全重估 PnL、KRD 近似 PnL、差（元）与差占 NAV bp。
+    error_ratio : |diff|/|pnl_full|；``pnl_full`` 为 0 时为 None。
+    nav : 分析日固定组合即期全价市值（元）。
+    executed : 是否实际执行（历史窗口超窗时显式 False）。
+    note : 情景定义与假设披露。
+    price_function, shock_basis : R40 口径说明（全重估与 KRD 共用）。
     """
 
     scenario: str
@@ -97,59 +91,64 @@ class StressResult:
     nav: float = 0.0
     executed: bool = True
     note: str = ""
+    price_function: str = _PRICE_FUNCTION
+    shock_basis: str = _SHOCK_BASIS
 
 
-def _curve_method_for_replay(curve: Curve) -> str:
-    """历史重演需要能由节点重建的插值曲线；参数化曲线降级 hermite。"""
-    method = str(curve.method)
-    return method if method in ("linear", "hermite") else "hermite"
+def _base_state(
+    faces: dict[str, float],
+    bond_by_code: dict[str, BondStatic],
+    curve: Curve,
+    *,
+    calendar: Any,
+    cfg: Config,
+    key_tenors: Sequence[float],
+) -> tuple[date, Any, dict[str, float], float, dict[float, float]]:
+    """分析日基准：结算日、即期曲线、逐券即期全价、NAV、组合 KRD（元/bp）。"""
+    settlement = settlement_for(calendar, curve.as_of, cfg=cfg)
+    spot = bootstrap_spot(curve, settlement=settlement, calendar=calendar)
+    base_prices = {
+        code: price_from_spot(bond_by_code[code], settlement, spot, cfg=cfg)
+        for code, face in faces.items()
+        if face > 0.0
+    }
+    nav = float(sum(faces[code] / 100.0 * base_prices[code] for code in base_prices))
+    if nav <= _EPS:
+        raise ValueError(f"组合即期市值为非正：{nav!r}")
+    krd = _portfolio_krd_positive(faces, bond_by_code, settlement, spot, key_tenors, cfg=cfg)
+    return settlement, spot, base_prices, nav, krd
 
 
 def _evaluate_shock(
     *,
     faces: dict[str, float],
     bond_by_code: dict[str, BondStatic],
-    base_curve: Curve,
-    shocked_curve: Curve,
-    dirty_base: dict[str, float],
     settlement: date,
+    base_spot: Any,
+    base_prices: dict[str, float],
     krd: dict[float, float],
     key_tenors: Sequence[float],
-    calendar: Any,
+    shifts_bp: np.ndarray,
     cfg: Config,
-) -> tuple[float, float, float]:
-    """返回 ``(pnl_full, pnl_krd, max_abs_delta_bp)``。
-
-    KRD 近似用**即期曲线**关键期限零息利率变化：对基准/冲击 YTM 曲线分别
-    bootstrap（同一结算日），取关键期限 ``zero_rate`` 之差（bp）。
-    """
+) -> tuple[float, float]:
+    """同一即期冲击基下返回 ``(pnl_full, pnl_krd)``（元）。"""
+    shifts = np.asarray(shifts_bp, dtype=float)
+    shocked_spot = spot_shock(base_spot, key_tenors, shifts)
     pnl_full = 0.0
     for code, face in faces.items():
         if face <= 0.0:
             continue
-        bond = bond_by_code[code]
-        remaining = remaining_years(bond, settlement)
-        if remaining <= 0.0:
-            raise ValueError(f"{code}: 结算日 {settlement} 剩余期限 ≤ 0，无法压力重估")
-        shocked_dirty = dirty_price_from_ytm(
-            bond,
-            settlement,
-            float(shocked_curve.rate(remaining)),
-            cfg=cfg,
+        pnl_full += (
+            face
+            / 100.0
+            * (
+                price_from_spot(bond_by_code[code], settlement, shocked_spot, cfg=cfg)
+                - base_prices[code]
+            )
         )
-        pnl_full += face / 100.0 * (shocked_dirty - dirty_base[code])
-    spot_base = bootstrap_spot(base_curve, settlement=settlement, calendar=calendar)
-    spot_shocked = bootstrap_spot(shocked_curve, settlement=settlement, calendar=calendar)
-    delta_bp = np.asarray(
-        [
-            (float(spot_shocked.zero_rate(tenor)) - float(spot_base.zero_rate(tenor))) * 100.0
-            for tenor in key_tenors
-        ],
-        dtype=float,
-    )
-    krd_vector = np.asarray([float(krd[tenor]) for tenor in key_tenors], dtype=float)
-    pnl_krd = float(-np.dot(krd_vector, delta_bp))
-    return float(pnl_full), pnl_krd, float(np.max(np.abs(delta_bp))) if delta_bp.size else 0.0
+    krd_vector = np.asarray([float(krd[float(tenor)]) for tenor in key_tenors], dtype=float)
+    pnl_krd = float(-np.dot(krd_vector, shifts))
+    return float(pnl_full), pnl_krd
 
 
 def _make_result(
@@ -177,6 +176,18 @@ def _make_result(
     )
 
 
+def _shape_shifts_bp(curve: Curve, kind: str, bp: float, key_tenors: Sequence[float]) -> np.ndarray:
+    """把配置的 YTM 形状情景（Curve.shock）映射为即期关键点 shifts（bp）。"""
+    shocked_curve = curve.shock(kind, bp)  # type: ignore[arg-type]
+    return np.asarray(
+        [
+            (float(shocked_curve.rate(tenor)) - float(curve.rate(tenor))) * 100.0
+            for tenor in key_tenors
+        ],
+        dtype=float,
+    )
+
+
 def _historical_scenario(
     scenario: Mapping[str, Any],
     *,
@@ -184,14 +195,15 @@ def _historical_scenario(
     faces: dict[str, float],
     bond_by_code: dict[str, BondStatic],
     base_curve: Curve,
-    dirty_base: dict[str, float],
     settlement: date,
+    base_spot: Any,
+    base_prices: dict[str, float],
     krd: dict[float, float],
     key_tenors: Sequence[float],
     nav: float,
-    calendar: Any,
     panel: pd.DataFrame | None,
     allow_future_history: bool,
+    calendar: Any,
     cfg: Config,
 ) -> StressResult:
     if panel is None:
@@ -219,62 +231,62 @@ def _historical_scenario(
             else f"窗口 [{start}, {end}] 可用交易日 {len(usable)} 个 < window+1={window + 1}，未执行"
         )
         return _make_result(
-            name=name,
-            pnl_full=0.0,
-            pnl_krd=0.0,
-            nav=nav,
-            note=reason,
-            executed=False,
+            name=name, pnl_full=0.0, pnl_krd=0.0, nav=nav, note=reason, executed=False
         )
 
-    tenors = panel_frame.columns.to_numpy(dtype=float)
-    rates = np.asarray([panel_frame.loc[day].to_numpy(dtype=float) for day in usable], dtype=float)
-    if not np.isfinite(rates).all():
-        raise ValueError(f"历史情景 {name!r} 的 panel 窗口含 NaN/inf")
-    base_rates = np.asarray(base_curve.rate(tenors), dtype=float)
-    replay_method = _curve_method_for_replay(base_curve)
+    # 历史日 spot 序列：每个交易日 1 次 bootstrap（缓存），之后只做冲击重估。
+    spot_cache: dict[date, Any] = {}
+
+    def spot_for(day: date) -> Any:
+        if day not in spot_cache:
+            spot_cache[day] = bootstrap_spot(
+                _panel_curve(panel_frame, day),
+                settlement=settlement_for(calendar, day, cfg=cfg),
+                calendar=calendar,
+            )
+        return spot_cache[day]
+
+    series = [spot_for(day) for day in usable]
     future_used = bool(allow_future_history and any(day > as_of for day in usable))
-
-    worst: tuple[float, float, date, date, float] | None = None
+    worst: tuple[float, float, date, date] | None = None
     for index in range(window, len(usable)):
-        delta = rates[index] - rates[index - window]
-        shocked_curve = Curve(
-            as_of=as_of,
-            tenors=tenors.copy(),
-            rates=base_rates + delta,
-            method=replay_method,  # type: ignore[arg-type]
+        shifts = np.asarray(
+            [
+                (
+                    float(series[index].zero_rate(tenor))
+                    - float(series[index - window].zero_rate(tenor))
+                )
+                * 100.0
+                for tenor in key_tenors
+            ],
+            dtype=float,
         )
-        pnl_full, pnl_krd, _ = _evaluate_shock(
+        pnl_full, pnl_krd = _evaluate_shock(
             faces=faces,
             bond_by_code=bond_by_code,
-            base_curve=base_curve,
-            shocked_curve=shocked_curve,
-            dirty_base=dirty_base,
             settlement=settlement,
+            base_spot=base_spot,
+            base_prices=base_prices,
             krd=krd,
             key_tenors=key_tenors,
-            calendar=calendar,
+            shifts_bp=shifts,
             cfg=cfg,
         )
         if worst is None or pnl_full < worst[0]:
-            worst = (pnl_full, pnl_krd, usable[index - window], usable[index], pnl_full)
-    assert worst is not None  # len(usable) >= window+1 保证至少一条路径
-    pnl_full, pnl_krd, from_day, to_day, _ = worst
+            worst = (pnl_full, pnl_krd, usable[index - window], usable[index])
+    assert worst is not None
+    pnl_full, pnl_krd, from_day, to_day = worst
     note = (
-        f"历史变动重演：{from_day}→{to_day} 共 {window} 个交易日的曲线变动，"
-        f"叠加到分析日 {as_of} 曲线上，取当前组合最不利路径"
+        f"历史即期曲线变动重演：{from_day}→{to_day} 共 {window} 个交易日的关键点 Δz，"
+        f"叠加到分析日 {as_of} 即期曲线上，取当前组合最不利路径"
+        "（历史日 spot 由当日 YTM 曲线 bootstrap 并缓存）"
     )
     if future_used:
         note += "；⚠️ 该窗口晚于分析日，属显式假设情景（allow_future_history=True）"
     elif end > as_of:
         note += f"；原窗口 end={end} 已截断到分析日 {as_of}（避免未来数据）"
     return _make_result(
-        name=name,
-        pnl_full=pnl_full,
-        pnl_krd=pnl_krd,
-        nav=nav,
-        note=note,
-        executed=True,
+        name=name, pnl_full=pnl_full, pnl_krd=pnl_krd, nav=nav, note=note, executed=True
     )
 
 
@@ -289,7 +301,7 @@ def stress_test(
     panel: pd.DataFrame | None = None,
     allow_future_history: bool = False,
 ) -> list[StressResult]:
-    """对固定面值组合执行压力情景（全重估 + KRD 近似并列）。
+    """对固定面值组合执行压力情景（全重估 + KRD 近似，同一即期定价/冲击基）。
 
     Parameters
     ----------
@@ -298,43 +310,42 @@ def stress_test(
     bonds : Sequence[BondStatic]
         债券条款；须覆盖 faces 的全部 code。
     curve : Curve
-        分析日曲线（``as_of`` 为分析日）；情景在它之上施加冲击。
+        分析日 YTM 曲线（``as_of`` 为分析日）。它用于：历史情景的 bootstrap 与
+        形状情景的期限形状（``Curve.shock`` 语义）；分析日即期曲线由它
+        bootstrap 得到。**全重估与 KRD 都只在这个即期曲线上做冲击**。
     scenarios : Sequence[Mapping] | None
-        情景列表；``None`` 时用 ``cfg.risk.stress_scenarios``。每项需含
-        ``type``（parallel/steepen/flatten/butterfly/historical）与 ``name``；
-        假设情景用 ``bp``，历史情景用 ``start``/``end``/可选 ``window``。
+        ``None`` 时用 ``cfg.risk.stress_scenarios``。每项含 ``type``
+        （parallel/steepen/flatten/butterfly/historical）与 ``name``；假设情景用
+        ``bp``，历史情景用 ``start``/``end``/可选 ``window``。
     calendar : Any
         ``TradingCalendar`` 或同接口对象（T+N 结算日）。
     cfg : Config | None
     panel : DataFrame | None
-        历史曲线面板（历史情景必需；index=日期、columns=期限）。
+        历史曲线面板（历史情景必需）。
     allow_future_history : bool, default False
-        历史窗口晚于分析日时是否允许作为**显式假设**重演；默认 False（避免未来
-        数据），超窗情景返回 ``executed=False``。
+        历史窗口晚于分析日时是否作为显式假设重演。
 
     Returns
     -------
     list[StressResult]
-        与 ``scenarios`` 同序；未执行的历史情景也在列表里（``executed=False``）。
+        与 ``scenarios`` 同序；未执行的历史情景保留 ``executed=False`` 行。
     """
     resolved = _resolve_config(cfg)
     if not isinstance(curve, Curve):
         raise TypeError(f"curve 必须是 Curve，实际 {type(curve).__name__}")
     bond_by_code = _bond_map(list(bonds))
     cleaned = _validate_faces(faces, bond_by_code)
-    dirty_base, nav, settlement = _mark_portfolio(
-        cleaned, bond_by_code, curve, calendar=calendar, cfg=resolved
-    )
-    risk = project_risk(
+    key_tenors = sorted(float(tenor) for tenor in resolved.risk.key_tenors_krd)
+    if not key_tenors:
+        raise ValueError("cfg.risk.key_tenors_krd 为空")
+    settlement, base_spot, base_prices, nav, krd = _base_state(
         cleaned,
-        list(bond_by_code.values()),
+        bond_by_code,
         curve,
         calendar=calendar,
         cfg=resolved,
+        key_tenors=key_tenors,
     )
-    key_tenors = sorted(float(t) for t in resolved.risk.key_tenors_krd)
-    if not key_tenors:
-        raise ValueError("cfg.risk.key_tenors_krd 为空")
     scenario_list = list(resolved.risk.stress_scenarios) if scenarios is None else list(scenarios)
     if not scenario_list:
         raise ValueError("scenarios 不能为空（cfg.risk.stress_scenarios 也为空）")
@@ -354,62 +365,57 @@ def stress_test(
                     faces=cleaned,
                     bond_by_code=bond_by_code,
                     base_curve=curve,
-                    dirty_base=dirty_base,
                     settlement=settlement,
-                    krd=dict(risk.krd),
+                    base_spot=base_spot,
+                    base_prices=base_prices,
+                    krd=krd,
                     key_tenors=key_tenors,
                     nav=nav,
-                    calendar=calendar,
                     panel=panel,
                     allow_future_history=allow_future_history,
+                    calendar=calendar,
                     cfg=resolved,
                 )
             )
             continue
-        if kind == "parallel":
-            if "bp" not in scenario:
-                raise ValueError(f"情景 {name!r} 缺少 bp")
-            bp = float(scenario["bp"])
-            if not np.isfinite(bp):
-                raise ValueError(f"情景 {name!r} 的 bp 非有限: {scenario['bp']!r}")
-            shocked_curve = curve.shift(bp)
-            note = f"平行移动 {bp:+g}bp（Curve.shift；带符号）"
-        elif kind in _SHAPE_SCENARIOS:
-            if "bp" not in scenario:
-                raise ValueError(f"情景 {name!r} 缺少 bp")
-            bp = float(scenario["bp"])
-            if not np.isfinite(bp) or bp < 0.0:
-                raise ValueError(
-                    f"情景 {name!r} 的 {kind} bp 是幅度，必须是非负有限数，"
-                    f"实际 {scenario['bp']!r}（方向由 type 表达）"
-                )
-            shocked_curve = curve.shock(kind, bp)  # type: ignore[arg-type]
-            note = f"形状冲击 {kind} {bp:g}bp（Curve.shock；方向由 type 表达）"
-        else:
+        if kind not in ("parallel", *_SHAPE_SCENARIOS):
             raise ValueError(
                 f"未知情景类型 {kind!r}（情景 {name!r}）；支持 parallel/steepen/"
                 "flatten/butterfly/historical"
             )
-        pnl_full, pnl_krd, _ = _evaluate_shock(
+        if "bp" not in scenario:
+            raise ValueError(f"情景 {name!r} 缺少 bp")
+        bp = float(scenario["bp"])
+        if not np.isfinite(bp):
+            raise ValueError(f"情景 {name!r} 的 bp 非有限: {scenario['bp']!r}")
+        if kind == "parallel":
+            shifts = np.full(len(key_tenors), bp, dtype=float)
+            note = f"即期关键点全部 {bp:+g}bp（平行；配置 YTM 平行语义）"
+        elif kind in _SHAPE_SCENARIOS:
+            if bp < 0.0:
+                raise ValueError(
+                    f"情景 {name!r} 的 {kind} bp 是幅度，必须是非负有限数，"
+                    f"实际 {scenario['bp']!r}（方向由 type 表达）"
+                )
+            shifts = _shape_shifts_bp(curve, kind, bp, key_tenors)
+            note = (
+                f"即期关键点按 Curve.shock 的 {kind} {bp:g}bp 期限形状平移"
+                "（与配置 YTM 情景同语义，作用在即期关键点）"
+            )
+        else:  # pragma: no cover - 已在上方拦截未知类型
+            raise ValueError(f"未知情景类型 {kind!r}（情景 {name!r}）")
+        pnl_full, pnl_krd = _evaluate_shock(
             faces=cleaned,
             bond_by_code=bond_by_code,
-            base_curve=curve,
-            shocked_curve=shocked_curve,
-            dirty_base=dirty_base,
             settlement=settlement,
-            krd=dict(risk.krd),
+            base_spot=base_spot,
+            base_prices=base_prices,
+            krd=krd,
             key_tenors=key_tenors,
-            calendar=calendar,
+            shifts_bp=shifts,
             cfg=resolved,
         )
         results.append(
-            _make_result(
-                name=name,
-                pnl_full=pnl_full,
-                pnl_krd=pnl_krd,
-                nav=nav,
-                note=note,
-                executed=True,
-            )
+            _make_result(name=name, pnl_full=pnl_full, pnl_krd=pnl_krd, nav=nav, note=note)
         )
     return results

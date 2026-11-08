@@ -49,8 +49,10 @@ from ficc.research.windows import (
     WindowSpec,
     add_years,
     build_windows,
+    daily_returns,
     window_active_returns,
     window_metrics,
+    window_return_basis,
     window_total_returns,
 )
 
@@ -84,6 +86,7 @@ __all__ = [
     "build_strategy_factories",
     "build_windows",
     "classify_excess_source",
+    "daily_returns",
     "excess_attribution_bp",
     "fit_residual_panel",
     "newey_west",
@@ -91,5 +94,6 @@ __all__ = [
     "tracking_error_bp",
     "window_active_returns",
     "window_metrics",
+    "window_return_basis",
     "window_total_returns",
 ]

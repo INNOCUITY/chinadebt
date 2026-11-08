@@ -27,8 +27,10 @@ from ficc.research.inference import (
 from ficc.research.windows import (
     WindowSpec,
     build_windows,
+    daily_returns,
     window_active_returns,
     window_metrics,
+    window_return_basis,
     window_total_returns,
 )
 
@@ -74,9 +76,13 @@ def test_nonoverlap_window_counts_and_truncation(business_days: list[date]) -> N
     assert len(one_year) == 5  # 2019..2023 年末 + 2023 半截
     two_year = build_windows(business_days, window_years=2, overlap=False)
     assert len(two_year) == 3
-    # 最后一个窗口是截断的（不足 2 年）
+    # 最后一个窗口是截断的（不足 2 年）→ partial=True；其余为整窗
     assert two_year[-1].n_days < two_year[0].n_days
     assert two_year[-1].end == business_days[-1]
+    assert two_year[-1].partial is True
+    assert all(window.partial is False for window in two_year[:-1])
+    assert one_year[-1].partial is True
+    assert one_year[0].partial is False
 
 
 def test_overlap_windows_count_and_membership(business_days: list[date]) -> None:
@@ -195,11 +201,14 @@ def test_bootstrap_deterministic_and_directional() -> None:
 # ---------------------------------------------------------------------------
 # 窗口指标（用合成 BacktestResult 帧，不跑引擎）
 # ---------------------------------------------------------------------------
-def _fake_result(days: list[date]) -> object:
+def _fake_result(days: list[date], *, growth: float = 0.0) -> object:
     from types import SimpleNamespace
 
-    nav = pd.Series(np.full(len(days), 1e8), index=days, name="nav")
-    benchmark = pd.Series(np.full(len(days), 1e8), index=days, name="benchmark_nav")
+    factor = np.power(1.0 + growth, np.arange(len(days)))
+    nav = pd.Series(1e8 * factor, index=days, name="nav")
+    benchmark = pd.Series(
+        1e8 * np.power(1.0 + growth / 2.0, np.arange(len(days))), index=days, name="benchmark_nav"
+    )
     costs = pd.DataFrame(
         {
             "date": days,
@@ -256,6 +265,11 @@ def test_window_metrics_slices_costs_trades_and_exposure() -> None:
     window = WindowSpec(label="W1", start=days[0], end=days[4], days=tuple(days[:5]))
     metrics = window_metrics(result, window, annual_days=250)
     assert metrics["n_days"] == 5
+    assert metrics["partial"] is False
+    # 窗口从回测起点开始 → 基期就是重置 NAV（首日收盘）
+    assert metrics["return_base_date"] == days[0]
+    assert metrics["return_base_nav"] == pytest.approx(1e8)
+    assert metrics["start_close_nav"] == pytest.approx(1e8)
     assert metrics["n_obs"] == 4  # 首日无前收，主动收益从第 2 天开始
     assert metrics["strategy_total_return"] == pytest.approx(0.0)
     assert metrics["excess_bp"] == pytest.approx(0.0)
@@ -273,6 +287,104 @@ def test_window_metrics_slices_costs_trades_and_exposure() -> None:
     assert strategy_total == pytest.approx(0.0)
     assert benchmark_total == pytest.approx(0.0)
     assert excess_bp == pytest.approx(0.0)
+
+
+def test_continuous_window_return_basis_uses_previous_close() -> None:
+    """continuous：后窗收益基期=前一交易日收盘 NAV（不删边界收益，R41）。"""
+    days = [timestamp.date() for timestamp in pd.bdate_range("2019-01-01", periods=10)]
+    result = _fake_result(days, growth=0.001)
+    window = WindowSpec(label="W2", start=days[5], end=days[9], days=tuple(days[5:]))
+    base_date, base_nav, start_close_nav = window_return_basis(result, window)
+    assert base_date == days[4]  # 前一交易日
+    assert base_nav == pytest.approx(float(result.nav.iloc[4]))  # 前收
+    assert start_close_nav == pytest.approx(float(result.nav.iloc[5]))  # 首日收盘（≠基期）
+    metrics = window_metrics(result, window, annual_days=250)
+    expected_total = float(result.nav.iloc[9] / result.nav.iloc[4] - 1.0)
+    assert metrics["strategy_total_return"] == pytest.approx(expected_total)
+    assert metrics["final_nav"] == pytest.approx(float(result.nav.iloc[9]))
+    # 日收益连乘等价：包含"前收→首日"的边界收益，不丢日
+    strategy_returns, _benchmark_returns = daily_returns(result, window.days)
+    assert len(strategy_returns) == 5  # 5 个交易日全部有收益（含首日边界收益）
+    compounded = float((1.0 + strategy_returns).prod() - 1.0)
+    assert compounded == pytest.approx(expected_total)
+
+
+def test_pooled_fields_cumulative_vs_window_mean(windows_module) -> None:
+    """pooled 累计超额 = 策略/基准各自复利后相减；窗口算术均值单独命名。"""
+    days = [timestamp.date() for timestamp in pd.bdate_range("2020-01-01", periods=6)]
+    strategy = pd.Series([0.01, -0.005, 0.002, 0.004, -0.001, 0.003], index=days)
+    benchmark = pd.Series([0.004, 0.001, -0.002, 0.002, 0.0, 0.001], index=days)
+    from types import SimpleNamespace
+
+    continuous_result = SimpleNamespace(
+        nav=pd.Series(1e8 * (1.0 + strategy).cumprod(), index=days, name="nav")
+    )
+    fields, note = windows_module._pooled_fields(
+        strategy_returns=[strategy.iloc[:3], strategy.iloc[3:]],
+        benchmark_returns=[benchmark.iloc[:3], benchmark.iloc[3:]],
+        window_excess=[10.0, -20.0],
+        windows=[],
+        mode="continuous",
+        continuous_result=continuous_result,
+        sample_days=days,
+        annual_days=250,
+        bootstrap_reps=50,
+        window_set="nonoverlap",
+        structure="W1–W2 示意",
+    )
+    strategy_total = float((1.0 + strategy).prod() - 1.0)
+    benchmark_total = float((1.0 + benchmark).prod() - 1.0)
+    assert fields["pooled_strategy_total_return"] == pytest.approx(strategy_total)
+    assert fields["pooled_benchmark_total_return"] == pytest.approx(benchmark_total)
+    assert fields["pooled_cumulative_excess_bp"] == pytest.approx(
+        (strategy_total - benchmark_total) * 1e4
+    )
+    assert fields["mean_window_excess_bp"] == pytest.approx(-5.0)  # (10 + -20)/2
+    assert fields["pooled_cumulative_excess_bp"] != pytest.approx(fields["mean_window_excess_bp"])
+    assert fields["pooled_ann_excess_bp"] == pytest.approx(
+        float((strategy - benchmark).mean()) * 250 * 1e4
+    )
+    assert np.isfinite(fields["ann_return"]) and np.isfinite(fields["max_drawdown"])
+    assert "连续路径" in note and "算术均值" not in note
+    # 重叠窗口：不拼接重复日期、不做区间推断
+    overlap_fields, overlap_note = windows_module._pooled_fields(
+        strategy_returns=[strategy],
+        benchmark_returns=[benchmark],
+        window_excess=[10.0],
+        windows=[],
+        mode="continuous",
+        continuous_result=continuous_result,
+        sample_days=days,
+        annual_days=250,
+        bootstrap_reps=50,
+        window_set="overlap",
+        structure="重叠示意",
+    )
+    assert np.isnan(overlap_fields["pooled_cumulative_excess_bp"])
+    assert np.isnan(overlap_fields["hac_t"])
+    assert "不拼接" in overlap_note
+
+
+def test_reset_pooled_has_no_continuous_nav_metrics(windows_module) -> None:
+    days = [timestamp.date() for timestamp in pd.bdate_range("2020-01-01", periods=4)]
+    strategy = pd.Series([0.01, 0.002, -0.001, 0.003], index=days)
+    benchmark = pd.Series([0.001, 0.0, 0.0, 0.001], index=days)
+    fields, note = windows_module._pooled_fields(
+        strategy_returns=[strategy.iloc[:2], strategy.iloc[2:]],
+        benchmark_returns=[benchmark.iloc[:2], benchmark.iloc[2:]],
+        window_excess=[5.0, 5.0],
+        windows=[],
+        mode="reset",
+        continuous_result=None,
+        sample_days=days,
+        annual_days=250,
+        bootstrap_reps=50,
+        window_set="nonoverlap",
+        structure="W1–W2 示意",
+    )
+    assert np.isnan(fields["ann_return"]) and np.isnan(fields["max_drawdown"])
+    assert np.isfinite(fields["pooled_cumulative_excess_bp"])
+    assert "独立重置" in note or "不构成连续净值" in note
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +462,7 @@ def windows_quick_run(windows_report_dir: Path) -> Path:
 
 
 def test_windows_quick_outputs_stable_columns(windows_quick_run: Path, windows_module) -> None:
+    """reset（buyhold）quick：列契约、窗口结构、基期与 pooled 语义（R41）。"""
     summary_path = windows_quick_run / "windows_summary.csv"
     inference_path = windows_quick_run / "windows_inference.csv"
     assert summary_path.exists() and inference_path.exists()
@@ -361,9 +474,43 @@ def test_windows_quick_outputs_stable_columns(windows_quick_run: Path, windows_m
     assert set(summary["window_set"]) == {"nonoverlap"}
     assert set(summary["mode"]) == {"reset"}
     assert list(summary["window"]) == ["W1", "W2"]
+    # 窗口结构：W1 整年、W2 为尾窗（partial=True）
+    windows = summary.set_index("window")
+    assert bool(windows.loc["W1", "partial"]) is False
+    assert bool(windows.loc["W2", "partial"]) is True
+    assert "尾窗" in str(windows.loc["W2", "window_structure"])
+    # reset：收益基期=该窗重置 NAV（首日收盘、无交易前净值）
+    for row in summary.itertuples(index=False):
+        assert row.return_base_date == row.start
+        assert row.return_base_nav == pytest.approx(1e8)
+        assert row.start_close_nav == pytest.approx(1e8)
+        # 累计收益确实以 return_base_nav 为分母
+        assert row.final_nav == pytest.approx(
+            row.return_base_nav * (1.0 + row.strategy_total_return)
+        )
+        assert row.ann_return is not np.nan and np.isfinite(row.ann_return)
+        assert np.isfinite(row.max_drawdown)
     pooled = inference[inference["window"] == "pooled"]
+    per_window = inference[inference["window"] != "pooled"]
     assert len(pooled) == 1
     assert int(pooled["n_windows"].iloc[0]) == 2
+    assert np.isfinite(pooled["pooled_cumulative_excess_bp"].iloc[0])
+    assert np.isfinite(pooled["pooled_ann_excess_bp"].iloc[0])
+    assert np.isfinite(pooled["mean_window_excess_bp"].iloc[0])
+    # pooled 行不再用旧"窗口均值"语义
+    assert pd.isna(pooled["excess_bp"].iloc[0])
+    expected_mean = float(per_window["excess_bp"].mean())
+    assert pooled["mean_window_excess_bp"].iloc[0] == pytest.approx(expected_mean)
+    assert pooled["pooled_cumulative_excess_bp"].iloc[0] == pytest.approx(
+        (
+            pooled["pooled_strategy_total_return"].iloc[0]
+            - pooled["pooled_benchmark_total_return"].iloc[0]
+        )
+        * 1e4
+    )
+    # reset 模式没有连续净值 → 全段 ann/MDD 不可定义
+    assert pd.isna(pooled["ann_return"].iloc[0])
+    assert pd.isna(pooled["max_drawdown"].iloc[0])
     for column in (
         "ann_excess_bp",
         "hac_se_ann_bp",
@@ -381,6 +528,10 @@ def test_windows_quick_outputs_stable_columns(windows_quick_run: Path, windows_m
     assert (inference["hac_ci_low_bp"] <= inference["hac_ci_high_bp"]).all()
     assert ((inference["boot_p_value"] >= 0) & (inference["boot_p_value"] <= 1)).all()
     assert (pd.to_numeric(inference["boot_reps"], errors="coerce") > 0).all()
+    # reset 模式 note 必须写明"独立重置"，不能写 continuous
+    for note in inference["note"].astype(str):
+        assert "独立重置" in note or "重叠" in note
+        assert "连续回测" not in note
 
 
 @pytest.fixture(scope="module")
@@ -424,13 +575,47 @@ def windows_rolling_quick_run(tmp_path_factory) -> Path:
 
 
 def test_windows_rolling_branch_end_to_end(windows_rolling_quick_run: Path) -> None:
+    """continuous（rolling）quick：基期=前收、版本字段、note 与 pooled（R41）。"""
     summary = pd.read_csv(windows_rolling_quick_run / "windows_summary.csv")
     inference = pd.read_csv(windows_rolling_quick_run / "windows_inference.csv")
     assert set(summary["benchmark_version"]) == {"rolling"}
     assert set(inference["benchmark_version"]) == {"rolling"}
+    # 滚动政策版本号必须同时写入两张 CSV（R41）
+    assert summary["rolling_version"].astype(str).str.len().gt(0).all()
+    assert inference["rolling_version"].astype(str).str.len().gt(0).all()
+    assert set(summary["rolling_version"]) == {"roll_v1_trigger1y_parissue"}
     # rolling 基准默认按连续长回测切窗
     assert set(summary["mode"]) == {"continuous"}
-    # 滚动政策版本号必须记录（新旧基准不可混比）
-    assert summary["rolling_version"].astype(str).str.len().gt(0).all()
     assert (summary["n_days"] > 0).all()
     assert set(summary["strategy"]) == {"carry_roll"}
+    # continuous：后窗收益基期=前一交易日收盘（W1 末日），不是该窗首日收盘
+    windows = summary.set_index("window")
+    assert bool(windows.loc["W2", "partial"]) is True
+    assert str(windows.loc["W2", "return_base_date"]) == str(windows.loc["W1", "end"])
+    assert float(windows.loc["W2", "return_base_nav"]) == pytest.approx(
+        float(windows.loc["W1", "final_nav"])
+    )
+    assert float(windows.loc["W2", "start_close_nav"]) != pytest.approx(
+        float(windows.loc["W2", "return_base_nav"])
+    )
+    for row in summary.itertuples(index=False):
+        assert row.final_nav == pytest.approx(
+            row.return_base_nav * (1.0 + row.strategy_total_return)
+        )
+    # note 不得再写"每窗独立重置"（continuous 是连续净值）
+    for note in inference["note"].astype(str):
+        assert "每窗独立重置" not in note
+    for note in inference[inference["window"] != "pooled"]["note"].astype(str):
+        assert "连续回测" in note
+    # pooled：全段累计 ≠ 窗口算术均值；ann/MDD 为全样本连续口径
+    pooled = inference[inference["window"] == "pooled"].iloc[0]
+    per_window = inference[inference["window"] != "pooled"]
+    assert np.isfinite(pooled["pooled_cumulative_excess_bp"])
+    assert np.isfinite(pooled["pooled_ann_excess_bp"])
+    assert np.isfinite(pooled["ann_return"])
+    assert np.isfinite(pooled["max_drawdown"])
+    assert pooled["mean_window_excess_bp"] == pytest.approx(float(per_window["excess_bp"].mean()))
+    assert pooled["pooled_cumulative_excess_bp"] == pytest.approx(
+        (pooled["pooled_strategy_total_return"] - pooled["pooled_benchmark_total_return"]) * 1e4
+    )
+    assert pooled["pooled_cumulative_excess_bp"] != pytest.approx(pooled["mean_window_excess_bp"])

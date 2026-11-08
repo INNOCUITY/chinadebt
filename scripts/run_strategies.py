@@ -36,7 +36,7 @@ from ficc.config import Config, get_config  # noqa: E402
 from ficc.data.loader import load_curve_long, load_funding_series  # noqa: E402
 from ficc.data.schema import CANONICAL_TENORS  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
-from ficc.portfolio.types import MarketContext, TargetKRD  # noqa: E402
+from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD  # noqa: E402
 from ficc.strategy.carry_rolldown import CarryRollStrategy  # noqa: E402
 from ficc.strategy.curve_steepener import SteepenerStrategy  # noqa: E402
 from ficc.strategy.relative_value import RelativeValueStrategy  # noqa: E402
@@ -46,6 +46,23 @@ log = get_logger("run_strategies")
 
 DEFAULT_START = date(2019, 1, 28)
 DEFAULT_END = date(2020, 12, 31)
+
+
+class ExactReplayStrategy:
+    """精确基准回放（控制组）：目标 = 基准逐腿面值，绕过 KRD 求解/整手映射。
+
+    用于把"执行调度/求解偏差"从零 tilt 控制组中分离（R37/R38 计划）；只用于控制，
+    不是可交易策略。
+    """
+
+    name = "zero_tilt_exact"
+
+    def target_krd(self, ctx: MarketContext) -> TargetFaces:
+        return TargetFaces(
+            as_of=ctx.as_of,
+            faces={leg.bond.code: leg.face_value for leg in ctx.benchmark.legs},
+            notes="控制组：精确基准面值回放",
+        )
 
 
 class ZeroTiltStrategy:

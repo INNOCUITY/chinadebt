@@ -6,6 +6,22 @@
 Cornish-Fisher）。全重估与 KRD 近似在同一窗口、同一面板上并列计算，差异
 单独报告，不用任何一方回填另一方。
 
+两种 VaR 口径（R39/R40，必须区分）
+----------------------------------
+- **current_frozen（默认/新增，:func:`portfolio_pnl_current_portfolio_factors`）**：
+  冻结分析日（``as_of``）的曲线、T+N 结算日、剩余期限与面值，只把**历史日的
+  即期曲线关键点变化 Δz_t**（bp）通过 :func:`ficc.risk.spot.spot_shock` 搬到
+  分析日即期曲线上，用 **:func:`ficc.risk.spot.price_from_spot`** 重估当前组合；
+  默认 price-only（瞬时价格风险，BIS 历史模拟口径），``include_carry=True``
+  时再叠加分析日曲线下的持有期 carry/roll 与区间票息现金。
+  KRD 对照用 :func:`portfolio_pnl_current_portfolio_krd`：同一分析日即期曲线、
+  同一 ``spot_shock`` 冲击基、同一 KRD 定义，只差线性化。
+- **historical_aging（legacy，保留对照）**：
+  :func:`portfolio_pnl_fixed_revaluation` / :func:`portfolio_pnl_krd_approx`
+  按历史交易日的结算日/剩余期限/曲线逐日重估同一批固定面值，等价于
+  “固定面值历史 PnL 回看”；其组合还隐含历史发行/老化（lookback 变化会改变
+  待测组合），**不是分析日快照风险**。R39 只把它作为并列披露的旧口径保留。
+
 口径（必须明示）
 ----------------
 1. **固定组合（买入持有）**：面值固定、窗口内不交易、不滚动。逐日 PnL 在
@@ -44,6 +60,7 @@ Cornish-Fisher）。全重估与 KRD 近似在同一窗口、同一面板上并�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
@@ -60,6 +77,8 @@ from ficc.portfolio.constraints import project_risk
 from ficc.portfolio.dates import remaining_years, settlement_for
 from ficc.pricing.bond import dirty_price_from_ytm
 from ficc.pricing.conventions import coupon_dates
+from ficc.risk.spot import portfolio_krd_from_spot, price_from_spot, spot_shock
+from ficc.utils.calendar import add_business_days
 
 __all__ = [
     "VarResult",
@@ -67,6 +86,8 @@ __all__ = [
     "parametric_var_es",
     "pnl_pct_from_cny",
     "portfolio_market_value",
+    "portfolio_pnl_current_portfolio_factors",
+    "portfolio_pnl_current_portfolio_krd",
     "portfolio_pnl_fixed_revaluation",
     "portfolio_pnl_krd_approx",
 ]
@@ -466,6 +487,350 @@ def portfolio_pnl_krd_approx(
         pnl_values,
         index=pd.Index(index, name="date"),
         name="pnl_krd_approx",
+        dtype=float,
+    )
+
+
+# ---------------------------------------------------------------------------
+# R39：当前组合 + 历史风险因素冲击（current_frozen）
+# ---------------------------------------------------------------------------
+def _portfolio_krd_positive(
+    faces: dict[str, float],
+    bond_by_code: dict[str, BondStatic],
+    settlement: date,
+    spot: Any,
+    key_tenors: Sequence[float],
+    *,
+    cfg: Config,
+) -> dict[float, float]:
+    """固定组合的关键期限 KRD（元/bp，多头为正；与 portfolio 层同符号约定）。
+
+    R40：由 :func:`ficc.risk.spot.portfolio_krd_from_spot` 给出 ``price_from_spot``
+    的**解析一阶导**（而不是 ``key_rate_durations`` 的 1bp 单边差分），因此
+    全重估与 KRD 近似共用同一价格函数、同一冲击基，且没有 1bp 差分的
+    ``O(1bp)`` 偏差（30Y 约 0.14%，会淹没小冲击收敛验收）。
+    """
+    bonds = list(bond_by_code.values())
+    return portfolio_krd_from_spot(faces, bonds, settlement, spot, key_tenors, cfg=cfg)
+
+
+def _forward_carry(
+    *,
+    faces: dict[str, float],
+    bond_by_code: dict[str, BondStatic],
+    base_prices: dict[str, float],
+    analysis_curve: Curve,
+    settlement: date,
+    as_of: date,
+    horizon_days: int,
+    calendar: Any,
+    cfg: Config,
+) -> float:
+    """``include_carry=True`` 的持有期 carry/roll + 区间票息现金（元）。
+
+    口径：**分析日曲线保持不动、时间前进 ``horizon_days`` 个交易日**——
+    用分析日 YTM 曲线在 ``settlement_for(next_trading_day(as_of, h))`` 上重新
+    bootstrap 即期曲线并重估同券；差额即 carry + roll-down。另把
+    ``(settlement, forward_settlement]`` 内到期的规则票息现金计入（与
+    historical-aging 全重估的票息口径一致；顺延只影响到账日，日频误差 ≤1 日）。
+    该口径是“曲线不变假设下的总收益近似”，不是路径一致的持有期回测；
+    ``include_carry=False`` 时是 BIS 意义上的瞬时价格风险（instantaneous
+    price risk），二者不可混称。
+    """
+    horizon = int(horizon_days)
+    if horizon < 1:
+        raise ValueError(f"horizon_days 必须 >= 1，实际 {horizon_days!r}")
+    if hasattr(calendar, "next_trading_day"):
+        forward_observation = calendar.next_trading_day(as_of, horizon)
+    else:
+        forward_observation = add_business_days(as_of, horizon)
+    forward_settlement = settlement_for(calendar, forward_observation, cfg=cfg)
+    forward_spot = bootstrap_spot(analysis_curve, settlement=forward_settlement, calendar=calendar)
+    total = 0.0
+    for code, face in faces.items():
+        if face <= 0.0:
+            continue
+        bond = bond_by_code[code]
+        roll = price_from_spot(bond, forward_settlement, forward_spot, cfg=cfg) - base_prices[code]
+        total += face / 100.0 * roll
+        total += _coupon_cash_between(
+            face,
+            bond,
+            settlement,
+            forward_settlement,
+            _coupon_schedule(bond),
+        )
+    return float(total)
+
+
+def _frozen_basis(
+    faces: Any,
+    bonds: list[BondStatic] | tuple[BondStatic, ...],
+    panel: pd.DataFrame,
+    as_of: date,
+    lookback: int,
+    *,
+    cfg: Config,
+    calendar: Any,
+) -> tuple[
+    dict[str, float],
+    dict[str, BondStatic],
+    pd.DataFrame,
+    date,
+    list[date],
+    Curve,
+    date,
+    Any,
+    dict[str, float],
+    list[float],
+]:
+    """current_frozen 口径的公共中间量（分析日组合/曲线/即期曲线/历史日期）。"""
+    bond_by_code = _bond_map(bonds)
+    cleaned = _validate_faces(faces, bond_by_code)
+    panel_frame = _normalise_panel(panel)
+    analysis_day = _as_date(as_of, field="as_of")
+    if analysis_day not in panel_frame.index:
+        raise ValueError(f"panel 缺少分析日 {analysis_day} 的曲线行")
+    horizon = int(lookback)
+    if horizon < 1:
+        raise ValueError(f"lookback 必须 >= 1，实际 {lookback!r}")
+    dates = [day for day in panel_frame.index if day <= analysis_day]
+    if len(dates) < horizon + 1:
+        raise ValueError(
+            f"lookback={horizon} 需要至少 {horizon + 1} 个交易日（含前一日），"
+            f"panel 到 {analysis_day} 只有 {len(dates)} 个"
+        )
+    analysis_curve = _panel_curve(panel_frame, analysis_day)
+    settlement = settlement_for(calendar, analysis_day, cfg=cfg)
+    analysis_spot = bootstrap_spot(analysis_curve, settlement=settlement, calendar=calendar)
+    base_prices = {
+        code: price_from_spot(bond_by_code[code], settlement, analysis_spot, cfg=cfg)
+        for code, face in cleaned.items()
+        if face > 0.0
+    }
+    key_tenors = sorted(float(tenor) for tenor in cfg.risk.key_tenors_krd)
+    if not key_tenors:
+        raise ValueError("cfg.risk.key_tenors_krd 为空")
+    return (
+        cleaned,
+        bond_by_code,
+        panel_frame,
+        analysis_day,
+        dates,
+        analysis_curve,
+        settlement,
+        analysis_spot,
+        base_prices,
+        key_tenors,
+    )
+
+
+def _historical_spot_shifts(
+    panel_frame: pd.DataFrame,
+    dates: list[date],
+    lookback: int,
+    key_tenors: Sequence[float],
+    *,
+    cfg: Config,
+    calendar: Any,
+) -> tuple[list[date], list[np.ndarray]]:
+    """历史日的即期关键点变化 ``Δz_t``（bp）；按日期缓存 bootstrap 结果。"""
+    cache: dict[date, Any] = {}
+
+    def spot_for(day: date) -> Any:
+        if day not in cache:
+            cache[day] = bootstrap_spot(
+                _panel_curve(panel_frame, day),
+                settlement=settlement_for(calendar, day, cfg=cfg),
+                calendar=calendar,
+            )
+        return cache[day]
+
+    history_days = dates[-lookback:]
+    previous_day = dates[-lookback - 1]
+    previous_spot = spot_for(previous_day)
+    shifts: list[np.ndarray] = []
+    for day in history_days:
+        current_spot = spot_for(day)
+        shifts.append(
+            np.asarray(
+                [
+                    (float(current_spot.zero_rate(tenor)) - float(previous_spot.zero_rate(tenor)))
+                    * 100.0
+                    for tenor in key_tenors
+                ],
+                dtype=float,
+            )
+        )
+        previous_spot = current_spot
+    return history_days, shifts
+
+
+def portfolio_pnl_current_portfolio_factors(
+    faces: Any,
+    bonds: list[BondStatic] | tuple[BondStatic, ...],
+    panel: pd.DataFrame,
+    as_of: date,
+    *,
+    lookback: int = 250,
+    horizon_days: int = 1,
+    include_carry: bool = False,
+    cfg: Config | None = None,
+    calendar: Any = None,
+) -> pd.Series:
+    """**当前组合 + 历史冲击**的历史模拟逐日 PnL（R39；默认 price-only）。
+
+    冻结分析日 ``as_of`` 的曲线、T+N 结算日、剩余期限与面值；对 ``lookback``
+    个历史交易日取即期曲线关键期限变化 ``Δz_t = z_t − z_{t−1}``（bp），通过
+    :func:`ficc.risk.spot.spot_shock` 搬到**分析日即期曲线**上，再用
+    :func:`price_from_spot` 重估当前组合：
+
+    ``PnL_t = Σ face/100 × [price_from_spot(spot_shock(S0, Δz_t)) − price_from_spot(S0)]``
+
+    - 默认 ``include_carry=False``：纯**瞬时价格风险**（BIS 历史模拟口径）；
+    - ``include_carry=True``：再叠加分析日曲线下、时间前进 ``horizon_days`` 个
+      交易日的 carry/roll 与区间票息现金（total-return 近似，见
+      :func:`_forward_carry`；不是路径一致的持有期回测）。同一常数加到每个
+      历史冲击样本上，因此不改变分布形状、只平移均值。
+
+    与 legacy :func:`portfolio_pnl_fixed_revaluation`（历史老化口径）的区别：
+    本函数不要求债券在历史窗口内已经存在、不随 lookback 改变组合/发行日，
+    是当前快照风险；legacy 口径衡量历史逐日老化的固定面值 PnL 回看。
+
+    Parameters
+    ----------
+    faces, bonds : 固定面值（元）与债券条款。
+    panel : YTM 面板；``as_of`` 行必须存在。
+    as_of : 分析日（冻结）。
+    lookback : 历史冲击样本数（交易日）。
+    horizon_days : ``include_carry=True`` 时的时间推进（交易日）。
+    include_carry : 是否叠加 carry/roll + 现金票息。
+    cfg : Config | None。
+    calendar : TradingCalendar | None（None 时 settlement 退回工作日规则并 warning；
+        生产/复现审查反例应显式传 CN_IB 日历）。
+
+    Returns
+    -------
+    pandas.Series
+        index=历史冲击所属交易日（name="date"），name="pnl_current_portfolio_factors"。
+    """
+    resolved = _resolve_config(cfg)
+    if not isinstance(include_carry, bool):
+        raise TypeError(f"include_carry 必须是 bool，实际 {type(include_carry).__name__}")
+    (
+        cleaned,
+        bond_by_code,
+        panel_frame,
+        analysis_day,
+        dates,
+        analysis_curve,
+        settlement,
+        analysis_spot,
+        base_prices,
+        key_tenors,
+    ) = _frozen_basis(faces, bonds, panel, as_of, lookback, cfg=resolved, calendar=calendar)
+    history_days, shifts = _historical_spot_shifts(
+        panel_frame, dates, int(lookback), key_tenors, cfg=resolved, calendar=calendar
+    )
+    pnl_values: list[float] = []
+    for shift in shifts:
+        shocked_spot = spot_shock(analysis_spot, key_tenors, shift)
+        total = 0.0
+        for code, face in cleaned.items():
+            if face <= 0.0:
+                continue
+            total += (
+                face
+                / 100.0
+                * (
+                    price_from_spot(bond_by_code[code], settlement, shocked_spot, cfg=resolved)
+                    - base_prices[code]
+                )
+            )
+        pnl_values.append(float(total))
+    carry = 0.0
+    if include_carry:
+        carry = _forward_carry(
+            faces=cleaned,
+            bond_by_code=bond_by_code,
+            base_prices=base_prices,
+            analysis_curve=analysis_curve,
+            settlement=settlement,
+            as_of=analysis_day,
+            horizon_days=int(horizon_days),
+            calendar=calendar,
+            cfg=resolved,
+        )
+    values = np.asarray(pnl_values, dtype=float) + carry
+    return pd.Series(
+        values,
+        index=pd.Index(history_days, name="date"),
+        name="pnl_current_portfolio_factors",
+        dtype=float,
+    )
+
+
+def portfolio_pnl_current_portfolio_krd(
+    faces: Any,
+    bonds: list[BondStatic] | tuple[BondStatic, ...],
+    panel: pd.DataFrame,
+    as_of: date,
+    *,
+    lookback: int = 250,
+    horizon_days: int = 1,
+    include_carry: bool = False,
+    cfg: Config | None = None,
+    calendar: Any = None,
+) -> pd.Series:
+    """current_frozen 口径的 **KRD 线性近似**（R40：与全重估同源）。
+
+    与 :func:`portfolio_pnl_current_portfolio_factors` 使用完全相同的分析日
+    即期曲线、历史 ``Δz_t`` 与 KRD 定义，只把全价重估换成
+
+    ``PnL_t ≈ −Σ_k KRD_k(as_of) × Δz_k(t)``（KRD 元/bp 多头为正、Δz bp）。
+    ``include_carry`` 与全重估版本用同一 carry 常数，便于 VaR/ES 逐项比较。
+    """
+    resolved = _resolve_config(cfg)
+    if not isinstance(include_carry, bool):
+        raise TypeError(f"include_carry 必须是 bool，实际 {type(include_carry).__name__}")
+    (
+        cleaned,
+        bond_by_code,
+        panel_frame,
+        _analysis_day,
+        dates,
+        analysis_curve,
+        settlement,
+        analysis_spot,
+        base_prices,
+        key_tenors,
+    ) = _frozen_basis(faces, bonds, panel, as_of, lookback, cfg=resolved, calendar=calendar)
+    history_days, shifts = _historical_spot_shifts(
+        panel_frame, dates, int(lookback), key_tenors, cfg=resolved, calendar=calendar
+    )
+    krd = _portfolio_krd_positive(
+        cleaned, bond_by_code, settlement, analysis_spot, key_tenors, cfg=resolved
+    )
+    krd_vector = np.asarray([krd[float(tenor)] for tenor in key_tenors], dtype=float)
+    pnl_values = [-float(np.dot(krd_vector, shift)) for shift in shifts]
+    carry = 0.0
+    if include_carry:
+        carry = _forward_carry(
+            faces=cleaned,
+            bond_by_code=bond_by_code,
+            base_prices=base_prices,
+            analysis_curve=analysis_curve,
+            settlement=settlement,
+            as_of=_as_date(as_of, field="as_of"),
+            horizon_days=int(horizon_days),
+            calendar=calendar,
+            cfg=resolved,
+        )
+    values = np.asarray(pnl_values, dtype=float) + carry
+    return pd.Series(
+        values,
+        index=pd.Index(history_days, name="date"),
+        name="pnl_current_portfolio_krd",
         dtype=float,
     )
 

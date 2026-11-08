@@ -432,7 +432,8 @@ class Ledger:
         *,
         extra_trades: tuple[TradeRecord, ...] = (),
         horizon: date | None = None,
-    ) -> LedgerSnapshot:
+        return_path: bool = False,
+    ) -> LedgerSnapshot | tuple[LedgerSnapshot, ...]:
         """预演"推进今日已发生事件 + 加入候选成交 + 推进到检查时点"后的快照。
 
         - **不读未来**：克隆后把资金利率表截断到 ``<= as_of``，未来自然日只能
@@ -441,6 +442,8 @@ class Ledger:
           票息/本金（含顺延）、费用、融资全部按账本规则逐日推进，不另写近似公式。
         - ``horizon`` 默认 = ``max(as_of, 候选成交最大结算日的下一个交易日)``：
           覆盖 T+lag 结算以及结算后到下一个 NAV 检查点之间的周末/长假融资。
+        - ``return_path=True`` 时返回**投影窗口内的逐日快照序列**（含 as_of 当日），
+          供成交前闸门逐时点检查（不能只看最后一个快照，R37）。
         """
         as_of = _check_date(as_of, field="as_of")
         if self._last_processed is not None and as_of < self._last_processed:
@@ -476,20 +479,18 @@ class Ledger:
         if target < as_of:
             raise ValueError(f"horizon({target}) 不能早于 as_of({as_of})")
 
-        snapshot = projection._snapshots[-1] if projection._snapshots else None
+        path: list[LedgerSnapshot] = []
         day = (
             as_of
             if projection._last_processed is None
             else projection._last_processed + timedelta(days=1)
         )
-        if projection._last_processed is None and projection._snapshots == []:
-            day = as_of
         while day <= target:
-            snapshot = projection.process_day(day, self._curve_proxy(curve, day))
+            path.append(projection.process_day(day, self._curve_proxy(curve, day)))
             day += timedelta(days=1)
-        if snapshot is None:  # pragma: no cover - target >= as_of 时至少处理一天
-            snapshot = projection.process_day(target, self._curve_proxy(curve, target))
-        return snapshot
+        if not path:  # pragma: no cover - target >= as_of 时至少处理一天
+            path.append(projection.process_day(target, self._curve_proxy(curve, target)))
+        return tuple(path) if return_path else path[-1]
 
     # ---- 提交成交 ------------------------------------------------------
     def submit(self, trade: TradeRecord) -> None:

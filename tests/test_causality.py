@@ -187,3 +187,52 @@ def test_weekly_rebalance_only_trades_on_weekly_dates(market) -> None:
         if days:
             first_trading_days.add(min(days))
     assert set(weekly.signals["date"]) == first_trading_days
+
+
+def test_rolling_future_perturbation_does_not_change_past(market) -> None:
+    """R37/R38：滚动模式下扰动未来曲线/融资，截止 CUTOFF 的净值与成交前缀不变。"""
+    cfg, panel, funding, calendar = market
+    rolling = cfg.portfolio.rolling.model_copy(update={"enabled": True})
+    rolling_cfg = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(update={"rolling": rolling}),
+            "backtest": cfg.backtest.model_copy(update={"benchmark_version": "rolling"}),
+        }
+    )
+    end = date(2020, 3, 31)
+    base = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=rolling_cfg,
+        start=START,
+        end=end,
+    )
+    # 扰动必须发生在比较截止日之后（首次换券前：2020-01-31）
+    cutoff = date(2020, 1, 31)
+    panel2 = panel.copy()
+    future = panel2.index > pd.Timestamp(cutoff)
+    panel2.loc[future, :] = panel2.loc[future, :] * 1.5
+    funding2 = funding.copy()
+    funding2.loc[funding2.index > pd.Timestamp(cutoff)] = (
+        funding2.loc[funding2.index > pd.Timestamp(cutoff)] + 3.0
+    )
+    pert = run_backtest(
+        _ZeroTilt(),
+        panel=panel2,
+        calendar=calendar,
+        funding=funding2,
+        cfg=rolling_cfg,
+        start=START,
+        end=end,
+    )
+    nav_base = base.nav.loc[base.nav.index <= cutoff]
+    nav_pert = pert.nav.loc[pert.nav.index <= cutoff]
+    assert nav_base.index.equals(nav_pert.index)
+    np.testing.assert_allclose(nav_base.to_numpy(), nav_pert.to_numpy(), rtol=0, atol=1e-9)
+    trades_base = base.trades[base.trades["trade_date"] <= cutoff].reset_index(drop=True)
+    trades_pert = pert.trades[pert.trades["trade_date"] <= cutoff].reset_index(drop=True)
+    assert len(trades_base) == len(trades_pert)
+    for column in ("trade_id", "side", "face_value", "clean_price", "settlement_date"):
+        assert trades_base[column].tolist() == trades_pert[column].tolist(), column

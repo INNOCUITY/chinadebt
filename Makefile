@@ -1,4 +1,4 @@
-.PHONY: help setup install recon strategies cost-study attribution acceptance long-sample windows lot-exposure risk-report data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
+.PHONY: help setup install recon strategies cost-study attribution acceptance acceptance-rolling long-sample windows lot-exposure risk-report data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
 
 # 优先使用项目本地 .venv（含 pandas/scipy/pytest/ruff），保证在任何 shell 下 `make check` 都能复现；
 # 没有 .venv 时回退系统 python3（此时请先 `make setup`）。
@@ -46,6 +46,9 @@ attribution:  ## 账本归因（固定持仓：桥接 + carry/roll + 因子 + �
 
 acceptance:  ## 统一验收（策略 + 归因 + 独立估值 + 对账；缺任一检查即失败）
 	$(PY) scripts/run_acceptance.py
+
+acceptance-rolling:  ## 滚动政策版统一验收（2019–2021，含换券事件同日映射）
+	$(PY) scripts/run_acceptance.py --rolling
 
 long-sample:  ## 长样本滚动回测（roll_v1 政策 + 滚动基准；2019-2025）
 	$(PY) scripts/run_long_sample.py

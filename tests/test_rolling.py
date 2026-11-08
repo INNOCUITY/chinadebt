@@ -188,3 +188,59 @@ def test_rolling_and_buyhold_benchmarks_differ(market) -> None:
     assert r_buy.benchmark_version == "buyhold"
     assert len(r_buy.benchmark_trades) == 4  # 买入持有：只在起点买一次
     assert not np.isclose(r_roll.benchmark_nav.iloc[-1], r_buy.benchmark_nav.iloc[-1], rtol=1e-9)
+
+
+def test_roll_events_map_to_same_day_strategy_trades(market) -> None:
+    """R38/§12.15：滚动事件到成交的映射必须完整，且策略同日换券。"""
+    cfg, panel, funding, calendar = market
+    rolling = _rolling_cfg(cfg)
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=rolling,
+        start=date(2019, 1, 28),
+        end=date(2021, 12, 31),
+    )
+    events = result.roll_events
+    assert len(events) >= 2
+    assert set(events["status"]) <= {"same_day", "rejected_constraint"}
+    rejected = events[events["status"] == "rejected_constraint"]
+    if len(rejected):
+        assert (rejected["reason"] != "").all()  # 拒单必须可审计
+    same_day = events[events["status"] == "same_day"]
+    assert (same_day["strategy_trade_ids"] != "").all()
+    assert (events["bench_sell_trade_id"] != "").all()
+    assert (events["bench_buy_trade_id"] != "").all()
+
+
+def test_exact_benchmark_replay_control_is_zero(market) -> None:
+    """精确基准面值回放控制组：同政策、同成交，超额必须为 0（分离执行/求解偏差）。"""
+    from ficc.portfolio.types import TargetFaces
+
+    class _Exact:
+        name = "zero_exact"
+
+        def target_krd(self, ctx):
+            return TargetFaces(
+                as_of=ctx.as_of,
+                faces={leg.bond.code: leg.face_value for leg in ctx.benchmark.legs},
+                notes="exact replay",
+            )
+
+    cfg, panel, funding, calendar = market
+    rolling = _rolling_cfg(cfg)
+    result = run_backtest(
+        _Exact(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=rolling,
+        start=date(2019, 1, 28),
+        end=date(2021, 12, 31),
+    )
+    excess = result.nav.iloc[-1] / result.benchmark_nav.iloc[-1] - 1.0
+    assert abs(excess) < 1e-12
+    assert set(result.roll_events["status"]) == {"same_day"}
+    assert (result.roll_events["strategy_trade_ids"] != "").all()

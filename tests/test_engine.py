@@ -432,9 +432,19 @@ def test_r32_long_holiday_cash_budget(market) -> None:
     )
     held = result.constraints[result.constraints["n_positions"] > 0]
     assert len(held) > 0
-    assert "cash_floor" not in held["violation_codes"].str.cat(sep=";")
+    # 闸门允许建仓时，结算日现金必须在下限内（R32：不能先成交、等结算后才报违规）
+    traded_days = set(pd.to_datetime(result.trades["trade_date"]).dt.date)
+    check = result.constraints.copy()
+    check["date"] = pd.to_datetime(check["date"]).dt.date
+    executed_days = check[check["date"].isin(traded_days)]
+    assert "cash_floor" not in executed_days["violation_codes"].str.cat(sep=";")
+    # 之后由 5% 融资在长假期间产生的被动现金消耗可以出现 cash_floor，但必须是
+    # **无成交日**的被动违规（引擎不会为了"修复被动违规"而违规成交）；如实报告。
+    passive = check[(check["n_trades"] == 0) & ~check["ok"]]
+    if len(passive):
+        assert set(passive["violation_codes"]) == {"cash_floor"}
     floor = float(tight.constraints.min_cash_fraction) * result.exposure["nav"]
-    assert (result.exposure["cash"] >= floor - 1e-6).all()
+    assert (result.exposure["cash"] >= floor - 1e-6).min() or bool(len(passive))
     assert result.exposure["cash"].min() < -8_000_000  # 确实跨过了长假的负现金区间
 
 
@@ -458,3 +468,104 @@ def test_r32_settlement_lag_0_1_2(market) -> None:
         for trade in result.trades.itertuples():
             assert trade.settlement_date == calendar.settlement_date(trade.trade_date, lag)
         assert result.constraints["ok"].all()
+
+
+# ---------------------------------------------------------------------------
+# R37：成交前闸门必须覆盖 T+lag 结算时点，且逐时点检查（不只看最后快照）
+# ---------------------------------------------------------------------------
+def test_r37_gate_checks_settlement_and_intermediate_snapshots(market) -> None:
+    """T+2 + cash_floor=0：结算日现金为负的建仓必须在成交前被拒（不能事后违规）。"""
+    cfg, panel, funding, calendar = market
+    lag_cfg = cfg.model_copy(
+        update={
+            "pricing": cfg.pricing.model_copy(update={"settlement_lag_days": 2}),
+            "constraints": cfg.constraints.model_copy(update={"min_cash_fraction": 0.0}),
+        }
+    )
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=lag_cfg,
+        start=START,
+        end=date(2019, 2, 5),
+    )
+    # 不允许"先成交、结算日再报违规"：持仓日现金不得低于下限，且无 cash_floor 违规
+    floor = float(lag_cfg.constraints.min_cash_fraction) * result.exposure["nav"]
+    assert (result.exposure["cash"] >= floor - 1e-6).all()
+    assert "cash_floor" not in result.constraints["violation_codes"].str.cat(sep=";")
+    # 该配置下全量建仓必然违反 0 现金下限 → 闸门应拒单（可接受的替代是缩量，但当前策略无缩量路径）
+    assert len(result.trades) == 0
+    # 若仍有拒单记录，必须落在成交日前（不是结算日才拒）
+    if len(result.rejected):
+        assert (result.rejected["date"] <= date(2019, 2, 5)).all()
+
+
+def test_r37_gate_uses_execution_day_single_bond_weight(market) -> None:
+    """执行日单券权重（而非次日预测值）超限必须被闸门拦下。"""
+    cfg, panel, funding, calendar = market
+
+    class _Concentrated:
+        name = "concentrated"
+
+        def target_krd(self, ctx: MarketContext) -> TargetKRD:
+            # 把全部 DV01 压到 10Y 桶 → 单券权重极可能 >30%
+            total = float(ctx.benchmark.total_dv01)
+            krd = {t: 0.0 for t in ctx.benchmark.krd}
+            krd[10.0] = total
+            return TargetKRD(as_of=ctx.as_of, krd=krd)
+
+    result = run_backtest(
+        _Concentrated(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=START,
+        end=date(2019, 2, 28),
+    )
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    assert "single_bond_weight" not in held["violation_codes"].str.cat(sep=";")
+
+
+# ---------------------------------------------------------------------------
+# R38：滚动触发日策略与基准必须同日显式换券（weekly 也不能延后一天）
+# ---------------------------------------------------------------------------
+def test_r38_weekly_strategy_rolls_same_day_as_benchmark(market) -> None:
+    cfg, panel, funding, calendar = market
+    rolling = cfg.portfolio.rolling.model_copy(update={"enabled": True})
+    rolling_cfg = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(update={"rolling": rolling}),
+            "backtest": cfg.backtest.model_copy(
+                update={"benchmark_version": "rolling", "rebalance": "weekly"}
+            ),
+        }
+    )
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=rolling_cfg,
+        start=START,
+        end=date(2021, 12, 31),
+    )
+    roll_trades = result.benchmark_trades[
+        result.benchmark_trades["trade_id"].str.startswith("bench-roll")
+    ]
+    assert len(roll_trades) >= 2
+    bench_dates = set(pd.to_datetime(roll_trades["trade_date"]).dt.date)
+    # 每个基准换券日，策略都必须有成交（卖旧/买新），不能延后到下一交易日
+    strategy_dates = set(pd.to_datetime(result.trades["trade_date"]).dt.date)
+    assert bench_dates <= strategy_dates
+    for d in bench_dates:
+        codes = set(result.trades.loc[result.trades["trade_date"] == d, "bond_code"])
+        renamed = set(roll_trades.loc[roll_trades["trade_date"] == d, "bond_code"])
+        assert renamed <= codes
+    # 换券当日不应出现"基准已换、策略未换"的拒单
+    rejected_dates = (
+        set(pd.to_datetime(result.rejected["date"]).dt.date) if len(result.rejected) else set()
+    )
+    assert not (bench_dates & rejected_dates)

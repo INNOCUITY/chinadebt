@@ -34,9 +34,9 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from run_strategies import (  # noqa: E402
     CarryRollStrategy,
+    ExactReplayStrategy,
     RelativeValueStrategy,
     SteepenerStrategy,
-    ZeroTiltStrategy,
     load_market,
 )
 
@@ -106,6 +106,19 @@ def metrics(result, cfg: Config) -> dict[str, float | str]:
         "avg_duration_dev": float((exp["duration"] - exp["bench_duration"]).abs().mean()),
         "n_constraint_violations": float((~held["ok"]).sum()),
         "n_days_held": float(len(held)),
+        "n_rolls": float(len(result.roll_events)),
+        "n_roll_missing_strategy_trade": float(
+            (
+                result.roll_events.get("status", pd.Series(dtype=str)) == "missing_strategy_trade"
+            ).sum()
+        )
+        if len(result.roll_events)
+        else 0.0,
+        "n_roll_rejected_constraint": float(
+            (result.roll_events.get("status", pd.Series(dtype=str)) == "rejected_constraint").sum()
+        )
+        if len(result.roll_events)
+        else 0.0,
     }
 
 
@@ -117,6 +130,7 @@ def _save(result, out: Path) -> None:
         "trades": result.trades,
         "benchmark_trades": result.benchmark_trades,
         "constraints": result.constraints,
+        "roll_events": result.roll_events,
     }
     for name, frame in frames.items():
         frame.to_csv(
@@ -161,7 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     residual_bp.columns = [float(c) for c in residual_bp.columns]
     strategies = [
-        ZeroTiltStrategy(),
+        # 控制组用**精确基准面值回放**（绕过 KRD 求解），把执行调度/求解偏差分离出来
+        ExactReplayStrategy(),
         CarryRollStrategy(),
         SteepenerStrategy(),
         RelativeValueStrategy(residuals=-residual_bp),
@@ -188,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     summary["config_hash"] = cfg.hash()
     summary.to_csv(out / "long_sample_summary.csv", index=False, encoding="utf-8-sig")
 
-    zero = summary.loc[summary["strategy"] == "zero_tilt"].iloc[0]
+    zero = summary.loc[summary["strategy"] == "zero_tilt_exact"].iloc[0]
     # 滚动政策在换券日会产生结构性 KRD 跳变（信号 t 与执行 t+1 之间发生滚动），
     # 零 tilt 控制组允许 ≤2bp 基线漂移；超过说明基准/执行口径不一致。
     if abs(float(zero["excess_bp"])) > 2.0:
@@ -216,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         "total_turnover",
         "avg_abs_dv01_ratio_dev",
         "n_constraint_violations",
+        "n_rolls",
+        "n_roll_missing_strategy_trade",
+        "n_roll_rejected_constraint",
     ]
     with pd.option_context("display.width", 260):
         print(summary[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))

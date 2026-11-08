@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""VaR/ES 与压力测试脚本（Phase 3 / task-24）。
+"""VaR/ES 与压力测试脚本（Phase 3 / R39-R40）。
 
 只消费「固定组合持仓 + 曲线」，**不消费归因分项**（未修正的因子归因不作为风险
-解释真值）。输出全重估与 KRD 近似的并列结果：
+解释真值）。R39/R40 后的口径：
 
-1. `reports/var_es.csv`：历史模拟 / 参数正态 / Cornish-Fisher 三种方法，
-   ``[0.95, 0.99]`` 置信度下的 VaR 与 ES（全重估 vs KRD 近似，元与 NAV bp）；
-2. `reports/stress_test.csv`：配置 ``cfg.risk.stress_scenarios`` 的平行/陡平/蝶式
-   与历史窗口情景（全重估、KRD 近似、差异、近似误差占比）。
+1. **current_frozen（默认）**：冻结分析日（``--as-of``）的曲线/结算日/剩余期限/
+   面值，只搬历史即期曲线关键点变化 ``Δz``，用 ``price_from_spot`` 重估当前组合
+   （默认 price-only；``--include-carry`` 叠加分析日曲线下的持有期 carry/roll 与
+   现金票息）；KRD 对照用同一即期曲线/冲击基的解析一阶导线性化。
+2. **historical_aging（legacy 对照）**：旧“固定面值逐日历史 PnL 回看”
+   （历史结算日/剩余期限/曲线，含票息现金），并列披露，不作为当前快照风险。
+3. **压力测试**：情景在即期空间重写（平行=所有关键点同向；陡平/蝶式沿用
+   ``Curve.shock`` 的期限形状并作用到关键点）；全重估与 KRD 共用
+   ``price_from_spot`` + ``spot_shock``。历史情景用历史日 spot 曲线变动重演，
+   默认不使用分析日之后的数据。
 
-默认组合 = **基准阶梯的固定面值**（``build_benchmark``，notional 1e8）在
-``--as-of`` 上估值；``--positions-csv`` 可读某策略的逐券快照
-（``reports/strategy_*_positions.csv``，按 SYN-<tenor>Y-<YYYYMMDD> 代码还原条款）。
+默认组合 = **分析日前 250 个交易日建仓的基准阶梯固定面值**（``build_benchmark``，
+notional 1e8；``--portfolio-age`` 可调，与 VaR lookback 解耦）。``--positions-csv``
+可读某策略逐券快照（``reports/strategy_*_positions.csv``，按
+``SYN-<tenor>Y-<YYYYMMDD>`` 代码还原条款）。
 
 用法::
 
@@ -42,17 +49,22 @@ import pandas as pd  # noqa: E402
 from run_strategies import load_market  # noqa: E402
 
 from ficc.config import Config, get_config  # noqa: E402
+from ficc.curve.bootstrap import bootstrap_spot  # noqa: E402
 from ficc.curve.curve import Curve  # noqa: E402
 from ficc.data.schema import CANONICAL_TENORS, BondStatic  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds  # noqa: E402
+from ficc.portfolio.dates import settlement_for  # noqa: E402
 from ficc.risk import (  # noqa: E402
     historical_var_es,
     parametric_var_es,
     pnl_pct_from_cny,
     portfolio_market_value,
+    portfolio_pnl_current_portfolio_factors,
+    portfolio_pnl_current_portfolio_krd,
     portfolio_pnl_fixed_revaluation,
     portfolio_pnl_krd_approx,
+    price_from_spot,
     stress_test,
 )
 
@@ -61,6 +73,15 @@ log = get_logger("run_risk")
 TENORS = np.asarray(sorted(CANONICAL_TENORS), dtype=float)
 DEFAULT_AS_OF = date(2020, 12, 31)
 QUICK_WINDOW = 60
+DEFAULT_PORTFOLIO_AGE = 250
+_PRICE_FUNCTION = "price_from_spot"
+_SHOCK_BASIS = "spot_key_linear_flat"
+_KRD_METHOD = "spot_analytic_derivative"
+# R39 审查反例（YTM 空间冻结口径，price-only）：默认基准组合、lookback=250。
+REVIEW_TARGETS = {
+    "var_cny": 318_246.69828,
+    "es_cny": 433_273.83884,
+}
 _POSITION_CODE = re.compile(r"^SYN-(?P<tenor>\d+(?:\.\d+)?)Y-(?P<day>\d{8})$")
 
 
@@ -77,6 +98,23 @@ def _panel_curve(panel: pd.DataFrame, day: date) -> Curve:
         rates=row.to_numpy(dtype=float),
         method="hermite",
     )
+
+
+def _spot_market_value(
+    faces: dict[str, float],
+    bonds: tuple[BondStatic, ...],
+    curve: Curve,
+    calendar: object,
+    cfg: Config,
+) -> float:
+    settlement = settlement_for(calendar, curve.as_of, cfg=cfg)
+    spot = bootstrap_spot(curve, settlement=settlement, calendar=calendar)
+    total = 0.0
+    for bond in bonds:
+        face = faces.get(bond.code, 0.0)
+        if face > 0.0:
+            total += face / 100.0 * price_from_spot(bond, settlement, spot, cfg=cfg)
+    return float(total)
 
 
 def _bonds_from_codes(codes: list[str], panel: pd.DataFrame, cfg: Config) -> tuple[BondStatic, ...]:
@@ -106,7 +144,6 @@ def _build_portfolio(
     calendar: object,
     cfg: Config,
     analysis_day: date,
-    window_start: date,
     trading_days: list[date],
 ) -> tuple[dict[str, float], tuple[BondStatic, ...], str]:
     if args.positions_csv:
@@ -128,11 +165,18 @@ def _build_portfolio(
         bonds = _bonds_from_codes(list(faces), panel, cfg)
         return faces, bonds, f"positions:{path.name}"
 
-    # 默认：基准阶梯固定面值。合成券在建仓日发行，保证覆盖整个 VaR 历史窗口。
-    positions = trading_days.index(window_start)
-    if positions == 0:
-        raise ValueError(f"窗口起点 {window_start} 之前没有交易日，无法构造固定组合")
-    issue_day = trading_days[positions - 1]
+    # 固定组合：分析日前 --portfolio-age 个交易日建仓，之后买入持有；**与 VaR
+    # lookback 解耦**（R39：lookback 变化不得改变面值/发行日）。
+    age = int(args.portfolio_age)
+    if age < 1:
+        raise ValueError(f"--portfolio-age 必须 >= 1，实际 {age}")
+    analysis_index = trading_days.index(analysis_day)
+    issue_index = analysis_index - age
+    if issue_index < 0:
+        raise ValueError(
+            f"--portfolio-age={age} 超过可用交易日（分析日前只有 {analysis_index} 个）"
+        )
+    issue_day = trading_days[issue_index]
     bonds = build_universe_bonds(_panel_curve(panel, issue_day), issue_day, cfg=cfg)
     benchmark = build_benchmark(
         _panel_curve(panel, analysis_day),
@@ -145,23 +189,61 @@ def _build_portfolio(
     return (
         faces,
         bonds,
-        f"benchmark ladder（建仓 {issue_day}，notional {cfg.benchmark.notional:,.0f}）",
+        f"benchmark ladder（{issue_day} 建仓、age={age} 交易日、"
+        f"notional {cfg.benchmark.notional:,.0f}）",
     )
 
 
 # ---------------------------------------------------------------------------
 # VaR / ES 表
 # ---------------------------------------------------------------------------
-def _var_table(
+_VAR_COLUMNS = [
+    "portfolio_basis",
+    "price_function",
+    "shock_basis",
+    "krd_price_function",
+    "method",
+    "confidence",
+    "horizon_days",
+    "lookback",
+    "n_obs",
+    "window_start",
+    "window_end",
+    "nav",
+    "include_carry",
+    "var_full_pct",
+    "var_full_cny",
+    "var_krd_pct",
+    "var_krd_cny",
+    "var_diff_cny",
+    "var_diff_bp",
+    "es_full_pct",
+    "es_full_cny",
+    "es_krd_pct",
+    "es_krd_cny",
+    "es_diff_cny",
+    "es_diff_bp",
+    "mean_pnl_full_cny",
+    "mean_pnl_krd_cny",
+    "mean_diff_cny",
+]
+
+
+def _var_rows(
+    *,
+    portfolio_basis: str,
     pnl_full: pd.Series,
     pnl_krd: pd.Series,
-    *,
     nav: float,
     cfg: Config,
     window_start: date,
     window_end: date,
+    lookback: int,
     horizon_days: int,
-) -> pd.DataFrame:
+    include_carry: bool,
+    price_function: str,
+    shock_basis: str,
+) -> list[dict[str, object]]:
     pct_full = pnl_pct_from_cny(pnl_full, nav)
     pct_krd = pnl_pct_from_cny(pnl_krd, nav)
     confidences = tuple(float(c) for c in cfg.risk.confidence)
@@ -188,7 +270,7 @@ def _var_table(
                     pct_krd, confidences=confidences, horizon_days=horizon_days, dist=dist
                 )
         except ValueError as exc:
-            log.warning("跳过 %s：%s", label, exc)
+            log.warning("跳过 %s/%s：%s", portfolio_basis, label, exc)
             continue
         for full_result, krd_result in zip(full_results, krd_results, strict=True):
             var_full_cny = full_result.var_pct / 100.0 * nav
@@ -197,13 +279,19 @@ def _var_table(
             es_krd_cny = krd_result.es_pct / 100.0 * nav
             rows.append(
                 {
+                    "portfolio_basis": portfolio_basis,
+                    "price_function": price_function,
+                    "shock_basis": shock_basis,
+                    "krd_price_function": _KRD_METHOD,
                     "method": label,
                     "confidence": full_result.confidence,
                     "horizon_days": full_result.horizon_days,
+                    "lookback": lookback,
+                    "n_obs": full_result.n_obs,
                     "window_start": window_start,
                     "window_end": window_end,
-                    "n_obs": full_result.n_obs,
                     "nav": nav,
+                    "include_carry": include_carry,
                     "var_full_pct": full_result.var_pct,
                     "var_full_cny": var_full_cny,
                     "var_krd_pct": krd_result.var_pct,
@@ -219,21 +307,31 @@ def _var_table(
                     "mean_pnl_full_cny": float(pnl_full.mean()),
                     "mean_pnl_krd_cny": float(pnl_krd.mean()),
                     "mean_diff_cny": float((pnl_full - pnl_krd).mean()),
-                    "pnl_std_full_cny": float(pnl_full.std(ddof=0)),
                 }
             )
-    return pd.DataFrame(rows)
+    return rows
 
 
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="固定组合 VaR/ES 与压力测试")
+    parser = argparse.ArgumentParser(description="固定组合 VaR/ES 与压力测试（R39/R40）")
     parser.add_argument("--as-of", type=date.fromisoformat, default=DEFAULT_AS_OF)
-    parser.add_argument("--window", type=int, default=None, help="VaR 历史窗口（交易日数）")
+    parser.add_argument("--window", type=int, default=None, help="VaR 历史 lookback（交易日数）")
     parser.add_argument("--horizon", type=int, default=1, help="VaR 持有期（交易日）")
+    parser.add_argument(
+        "--portfolio-age",
+        type=int,
+        default=DEFAULT_PORTFOLIO_AGE,
+        help="默认组合在分析日前多少个交易日建仓（固定，与 lookback 解耦）",
+    )
     parser.add_argument("--positions-csv", default=None, help="策略逐券持仓快照 CSV")
+    parser.add_argument(
+        "--include-carry",
+        action="store_true",
+        help="current_frozen 叠加分析日曲线下的持有期 carry/roll + 现金票息",
+    )
     parser.add_argument("--allow-future-history", action="store_true")
     parser.add_argument("--config", default=None)
     parser.add_argument("--quick", action="store_true", help="短窗口（60 个交易日）")
@@ -254,55 +352,122 @@ def main(argv: list[str] | None = None) -> int:
     if analysis_day != args.as_of:
         log.warning("--as-of %s 不是交易日，改用最近交易日 %s", args.as_of, analysis_day)
 
-    window = int(args.window) if args.window is not None else int(cfg.risk.var_window)
+    lookback = int(args.window) if args.window is not None else int(cfg.risk.var_window)
     if args.quick:
-        window = min(window, QUICK_WINDOW)
-    max_window = len(trading_days) - 2
-    if window > max_window:
-        log.warning("窗口 %d 超过可用交易日，压缩为 %d", window, max_window)
-        window = max_window
-    if window < 10:
-        raise ValueError(f"可用 VaR 窗口过短（{window} 个交易日 < 10）")
-    window_start = trading_days[-window]
+        lookback = min(lookback, QUICK_WINDOW)
+    max_lookback = len(trading_days) - 2
+    if lookback > max_lookback:
+        log.warning("lookback %d 超过可用交易日，压缩为 %d", lookback, max_lookback)
+        lookback = max_lookback
+    if lookback < 10:
+        raise ValueError(f"可用 VaR lookback 过短（{lookback} 个交易日 < 10）")
+    window_start = trading_days[-lookback]
     horizon_days = int(args.horizon)
-    if horizon_days + 1 > window:
+    if horizon_days + 1 > lookback:
         raise ValueError("--horizon 相对 --window 过大")
 
     faces, bonds, description = _build_portfolio(
-        args, panel, calendar, cfg, analysis_day, window_start, trading_days
+        args, panel, calendar, cfg, analysis_day, trading_days
     )
     curve_analysis = _panel_curve(panel, analysis_day)
-    nav = portfolio_market_value(faces, bonds, curve_analysis, calendar=calendar, cfg=cfg)
+    nav_spot = _spot_market_value(faces, bonds, curve_analysis, calendar, cfg)
+    nav_ytm = portfolio_market_value(faces, bonds, curve_analysis, calendar=calendar, cfg=cfg)
 
     log.info(
-        "VaR 窗口 %s → %s（%d 个交易日），horizon=%d",
-        window_start,
+        "current_frozen：分析日 %s 冻结组合，历史 lookback=%d（即期 Δz），horizon=%d",
         analysis_day,
-        window,
+        lookback,
         horizon_days,
     )
-    pnl_full = portfolio_pnl_fixed_revaluation(
-        faces, bonds, panel, calendar, start=window_start, end=analysis_day, cfg=cfg
+    frozen_full = portfolio_pnl_current_portfolio_factors(
+        faces,
+        bonds,
+        panel,
+        analysis_day,
+        lookback=lookback,
+        horizon_days=horizon_days,
+        include_carry=bool(args.include_carry),
+        cfg=cfg,
+        calendar=calendar,
     )
-    pnl_krd = portfolio_pnl_krd_approx(
-        faces, bonds, panel, calendar, start=window_start, end=analysis_day, cfg=cfg
+    frozen_krd = portfolio_pnl_current_portfolio_krd(
+        faces,
+        bonds,
+        panel,
+        analysis_day,
+        lookback=lookback,
+        horizon_days=horizon_days,
+        include_carry=bool(args.include_carry),
+        cfg=cfg,
+        calendar=calendar,
     )
-    var_table = _var_table(
-        pnl_full,
-        pnl_krd,
-        nav=nav,
+    var_rows = _var_rows(
+        portfolio_basis="current_frozen",
+        pnl_full=frozen_full,
+        pnl_krd=frozen_krd,
+        nav=nav_spot,
         cfg=cfg,
         window_start=window_start,
         window_end=analysis_day,
+        lookback=lookback,
         horizon_days=horizon_days,
+        include_carry=bool(args.include_carry),
+        price_function=_PRICE_FUNCTION,
+        shock_basis=_SHOCK_BASIS,
     )
+
+    # legacy：固定面值历史逐日老化（含票息现金），仅作并列披露。
+    try:
+        aging_full = portfolio_pnl_fixed_revaluation(
+            faces,
+            bonds,
+            panel,
+            calendar,
+            start=window_start,
+            end=analysis_day,
+            cfg=cfg,
+        )
+        aging_krd = portfolio_pnl_krd_approx(
+            faces,
+            bonds,
+            panel,
+            calendar,
+            start=window_start,
+            end=analysis_day,
+            cfg=cfg,
+        )
+        var_rows += _var_rows(
+            portfolio_basis="historical_aging",
+            pnl_full=aging_full,
+            pnl_krd=aging_krd,
+            nav=nav_ytm,
+            cfg=cfg,
+            window_start=window_start,
+            window_end=analysis_day,
+            lookback=lookback,
+            horizon_days=horizon_days,
+            include_carry=True,
+            price_function="dirty_price_from_ytm",
+            shock_basis="ytm_curve(aging)+spot_key_daily",
+        )
+    except ValueError as exc:
+        log.warning("historical_aging 旧口径不可用（%s），仅报告 current_frozen", exc)
+
+    var_table = pd.DataFrame(var_rows, columns=_VAR_COLUMNS)
     var_table.to_csv(out / "var_es.csv", index=False, encoding="utf-8-sig")
 
+    # 压力测试：配置情景 + 小冲击收敛检查（R40 验收证据）。
+    convergence = [
+        {"name": "[收敛]平行1bp", "type": "parallel", "bp": 1.0},
+        {"name": "[收敛]陡峭化0.01bp", "type": "steepen", "bp": 0.01},
+        {"name": "[收敛]平坦化0.01bp", "type": "flatten", "bp": 0.01},
+        {"name": "[收敛]蝶式0.001bp", "type": "butterfly", "bp": 0.001},
+    ]
     stress_results = stress_test(
         faces,
         bonds,
         curve_analysis,
-        scenarios=cfg.risk.stress_scenarios,
+        scenarios=list(cfg.risk.stress_scenarios) + convergence,
         calendar=calendar,
         cfg=cfg,
         panel=panel,
@@ -312,13 +477,15 @@ def main(argv: list[str] | None = None) -> int:
         [asdict(result) for result in stress_results],
         columns=[
             "scenario",
+            "executed",
             "pnl_full",
             "pnl_krd",
             "diff",
             "diff_bp",
             "error_ratio",
             "nav",
-            "executed",
+            "price_function",
+            "shock_basis",
             "note",
         ],
     )
@@ -328,43 +495,75 @@ def main(argv: list[str] | None = None) -> int:
     if skipped:
         log.warning("未执行的历史情景（窗口晚于分析日/数据不足）：%s", skipped)
 
-    print("\n=== 固定组合 VaR / ES（全重估 vs KRD 近似；金额元，pct 为组合市值百分比）===")
+    print("\n=== 固定组合 VaR / ES（金额元；current_frozen 为 R39 默认口径）===")
     print(f"组合：{description}")
     print(
-        f"分析日：{analysis_day}；NAV（全价市值）={nav:,.2f} 元；窗口 {window_start}→{analysis_day}"
+        f"分析日：{analysis_day}；NAV（current_frozen 即期全价）={nav_spot:,.2f} 元；lookback={lookback}"
     )
     view = var_table[
         [
+            "portfolio_basis",
             "method",
             "confidence",
             "n_obs",
             "var_full_cny",
             "var_krd_cny",
-            "var_diff_cny",
             "var_diff_bp",
             "es_full_cny",
             "es_krd_cny",
-            "es_diff_cny",
-            "mean_diff_cny",
+            "es_diff_bp",
         ]
     ]
     with pd.option_context("display.width", 240):
         print(view.to_string(index=False, float_format=lambda value: f"{value:,.2f}"))
 
-    print("\n=== 压力测试（全重估 vs KRD 近似）===")
+    frozen_95 = var_table[
+        (var_table["portfolio_basis"] == "current_frozen")
+        & (var_table["method"] == "historical")
+        & (var_table["confidence"].round(6) == 0.95)
+        & (~var_table["include_carry"])
+    ]
+    if not frozen_95.empty:
+        row = frozen_95.iloc[0]
+        for label, column, target in (
+            ("VaR", "var_full_cny", REVIEW_TARGETS["var_cny"]),
+            ("ES", "es_full_cny", REVIEW_TARGETS["es_cny"]),
+        ):
+            diff_pct = (float(row[column]) / target - 1.0) * 100.0
+            log.info(
+                "R39 审查反例对照（current_frozen 95%% %s）：本脚本 %.2f 元 vs 反例 %.2f 元（%+.2f%%）",
+                label,
+                float(row[column]),
+                target,
+                diff_pct,
+            )
+
+    print("\n=== 压力测试（全重估 vs KRD；同一 price_from_spot + spot_shock）===")
     stress_view = stress_table[
-        ["scenario", "executed", "pnl_full", "pnl_krd", "diff", "diff_bp", "error_ratio"]
-    ].copy()
-    stress_view["note"] = [result.note for result in stress_results]
-    with pd.option_context("display.width", 260, "display.max_colwidth", 48):
-        print(stress_view.to_string(index=False, float_format=lambda value: f"{value:,.2f}"))
+        [
+            "scenario",
+            "executed",
+            "pnl_full",
+            "pnl_krd",
+            "diff",
+            "diff_bp",
+            "error_ratio",
+            "price_function",
+            "shock_basis",
+        ]
+    ]
+    with pd.option_context("display.width", 260, "display.max_colwidth", 32):
+        print(stress_view.to_string(index=False, float_format=lambda value: f"{value:,.6g}"))
 
     print("\n披露：")
-    print("- 风险包只消费持仓 + 曲线，不使用归因分项（未修正的因子归因不作为风险解释）。")
-    print("- 全重估 PnL = 全价变动 + 区间票息现金（T+N 结算日、老化剩余期限重估）。")
-    print("- KRD 近似 = −Σ KRD×Δspot（不含 carry/roll、凸性与曲线形状高阶项）；")
-    print("  平行大冲击（凸性）、蝶式（曲率）与历史多期限路径是主要误差来源，需并列解读。")
-    print("- 历史情景默认只用到分析日的数据；--allow-future-history 时未来窗口按显式假设处理。")
+    print("- current_frozen：冻结分析日曲线/结算日/剩余期限/面值，只搬历史即期关键点 Δz；")
+    print("  默认 price-only（瞬时价格风险，BIS 历史模拟口径）；--include-carry 为总收益近似。")
+    print("- historical_aging：旧固定面值逐日老化回看（含票息现金），随 lookback 改变组合，")
+    print("  仅并列披露，不能作为当前快照风险；两者差异见 var_es.csv 的 portfolio_basis 列。")
+    print("- 压力测试：平行=即期关键点同向；陡平/蝶式=Curve.shock 期限形状作用于即期关键点；")
+    print("  历史=历史日即期曲线变动重演。全重估/KRD 共用 price_from_spot + spot_shock，")
+    print("  KRD 用同一即期曲线的解析一阶导（消除 1bp 单边差分偏差）。")
+    print("- 风险包只消费持仓+曲线，不使用归因分项（未修正的因子归因不作为风险解释）。")
     log.info("产物: %s, %s", out / "var_es.csv", out / "stress_test.csv")
     return 0
 

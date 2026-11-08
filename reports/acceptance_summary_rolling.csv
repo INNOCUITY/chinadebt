@@ -1,0 +1,46 @@
+﻿strategy,check,status,detail
+zero_tilt_exact,attribution_bridge,PASS,max|bridge_residual|=2.242e-08 元（容差 1e-05）
+zero_tilt_exact,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
+zero_tilt_exact,factor_identity,PASS,max|F@B−I|=0.000e+00
+zero_tilt_exact,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元
+zero_tilt_exact,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.242e-08 元
+zero_tilt_exact,ledger_reconciliation,PASS,执行 7 项；失败: 无
+zero_tilt_exact,reconciliation_coverage,PASS,未执行: 无
+zero_tilt_exact,constraints_held_days,PASS,有持仓日 730 天，违规 0 天
+zero_tilt_exact,roll_event_same_day,PASS,滚动事件 2 个，缺策略同日成交 0 个，约束拒绝 0 个
+zero_tilt_exact,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个
+zero_tilt_exact,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4)]，策略缺 []"
+zero_tilt_exact,zero_tilt_control,PASS,excess=0.0000bp（阈值 ±2bp），成交 8 笔
+carry_roll,attribution_bridge,PASS,max|bridge_residual|=2.718e-08 元（容差 1e-05）
+carry_roll,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
+carry_roll,factor_identity,PASS,max|F@B−I|=0.000e+00
+carry_roll,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元
+carry_roll,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.242e-08 元
+carry_roll,ledger_reconciliation,PASS,执行 7 项；失败: 无
+carry_roll,reconciliation_coverage,PASS,未执行: 无
+carry_roll,constraints_held_days,PASS,有持仓日 730 天，违规 0 天
+carry_roll,roll_event_same_day,PASS,滚动事件 2 个，缺策略同日成交 0 个，约束拒绝 0 个
+carry_roll,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个
+carry_roll,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4)]，策略缺 []"
+2s10s,attribution_bridge,PASS,max|bridge_residual|=2.701e-08 元（容差 1e-05）
+2s10s,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
+2s10s,factor_identity,PASS,max|F@B−I|=0.000e+00
+2s10s,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元
+2s10s,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.242e-08 元
+2s10s,ledger_reconciliation,PASS,执行 7 项；失败: 无
+2s10s,reconciliation_coverage,PASS,未执行: 无
+2s10s,constraints_held_days,PASS,有持仓日 730 天，违规 0 天
+2s10s,roll_event_same_day,PASS,滚动事件 2 个，缺策略同日成交 0 个，约束拒绝 0 个
+2s10s,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个
+2s10s,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4)]，策略缺 []"
+rv,attribution_bridge,PASS,max|bridge_residual|=2.980e-08 元（容差 1e-05）
+rv,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
+rv,factor_identity,PASS,max|F@B−I|=0.000e+00
+rv,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元
+rv,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.242e-08 元
+rv,ledger_reconciliation,PASS,执行 7 项；失败: 无
+rv,reconciliation_coverage,PASS,未执行: 无
+rv,constraints_held_days,PASS,有持仓日 730 天，违规 0 天
+rv,roll_event_same_day,PASS,滚动事件 2 个，缺策略同日成交 0 个，约束拒绝 0 个
+rv,roll_event_rejection_audited,PASS,约束拒绝 0 个，缺原因 0 个
+rv,roll_event_dates,PASS,"基准换券日 [datetime.date(2020, 2, 3), datetime.date(2021, 2, 4)]，策略缺 []"

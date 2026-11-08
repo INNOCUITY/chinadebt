@@ -123,7 +123,15 @@
 | C-083 | 2026-11-08 | [feat] | 研究 | 多窗口/HAC/块 bootstrap 区间估计（预注册参数） |
 | C-084 | 2026-11-08 | [feat] | 研究 | lot=5M +33.45bp 主动风险暴露解释（非可调参数） |
 | C-085 | 2026-11-08 | [feat] | 风险 | VaR/ES（全重估 vs KRD 近似）+ 压力测试 |
-| C-086 | 2026-11-08 | [test] | 测试 | 测试基线 551 → **593 项全绿** |
+| C-086 | 2026-11-08 | [test] | 测试 | 测试基线 551 → 593 项全绿 |
+| C-087 | 2026-11-08 | [fix] | 执行 | R37：闸门逐时点检查投影路径（含成交日/各结算日） |
+| C-088 | 2026-11-08 | [fix] | 滚动 | R38：滚动日策略机械同日换券 + roll_events 事件映射/拒单审计 |
+| C-089 | 2026-11-08 | [fix] | 风险 | R39：VaR 改为冻结分析日组合 + 历史冲击 |
+| C-090 | 2026-11-08 | [fix] | 风险 | R40：全重估/KRD 统一即期定价与冲击基 + 收敛验收 |
+| C-091 | 2026-11-08 | [fix] | 报告 | R41：窗口元数据/基期/pooled 语义/版本字段与数字核对 |
+| C-092 | 2026-11-08 | [feat] | 验收 | `make acceptance-rolling`（43 项，含换券同日/拒单审计） |
+| C-093 | 2026-11-08 | [test] | 测试 | 测试基线 593 → **608 项全绿** |
+| C-087 | 2026-11-08 | [docs] | 独立审查 | 登记 R37–R41；复核执行/滚动/风险与报告，修订 B 包验收和 ML/RL 推进条件 |
 | C-070 | 2026-11-08 | [docs] | 独立审查 | 复核执行边界、归因与成本对照，登记 R31–R36 并调整下一轮验收顺序 |
 | C-062 | 2026-11-07 | [docs] | 阶段评估 | 明确 Phase 2 收尾与下一轮验收；补查 R23 现金预算，收紧策略统计结论 |
 | C-050 | 2026-11-07 | [docs] | 独立审查 | 复现组合/策略产物，登记 R22–R30；修订验收结论与归因前置条件 |
@@ -137,7 +145,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：593 passed / 0 failed / 1 deselected（network）/ 约 6 分钟（含真实数据回归与回测）
+基线：608 passed / 0 failed / 1 deselected（network）/ 约 6 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -151,7 +159,8 @@
 | 2026-11-07 第六轮（约束+策略） | 475 | 475 | 0 | 1（network） | 新增 69 项：基准 9、约束 15、构建 16、策略 18、账本/对账 pending_cash 8、引擎集成 3 |
 | 2026-11-07 第七轮（R22–R30 修复） | 508 | 508 | 0 | 1（network） | 新增 33 项：账本登记权益/融资 11、对账执行状态+票息校验 9、引擎 R22/R23/R26 5、日期契约 9、R28/R29 2 |
 | 2026-11-08 第九轮（R31–R36） | 551 | 551 | 0 | 1（network） | 新增/改写 11 项：R31/R32 执行状态 6、R33 因子基 2、R34 估值 2、R35 到期 1；另适配既有归因/引擎测试 |
-| 2026-11-08 第十轮（滚动/风险） | **593** | 593 | 0 | 1（network） | 新增 42 项：滚动政策/基准 5、多窗口/HAC/bootstrap 约 12、lot 暴露约 4、VaR/ES/压力 15、研究公共模块测试 |
+| 2026-11-08 第十轮（滚动/风险） | 593 | 593 | 0 | 1（network） | 新增 42 项：滚动政策/基准 5、多窗口/HAC/bootstrap 约 12、lot 暴露约 4、VaR/ES/压力 15、研究公共模块测试 |
+| 2026-11-08 第十一轮（R37–R41） | **608** | 608 | 0 | 1（network） | 新增 15 项：R37 2、R38 2、精确回放 1、滚动因果性 1、VaR/ES/压力 21（含 R39/R40 新增）、窗口 19（含 R41 新增）、lot 6 |
 | 2026-11-07 研究层独立复核 | 319 | 319 | 0 | 1（network） | 关闭 debugging/capture 后 exit 0；默认 make check 的 readline 环境故障未修复 |
 | 2026-11-07 约束/策略独立复核 | **475** | 475 | 0 | 1（network） | 关闭 debugging/capture 后 exit 0；默认 make check exit 2，R22–R30 待处理 |
 
@@ -1162,7 +1171,21 @@ make fit        # = run_pipeline.py --stage curve
 
 ---
 
+### C-087 [docs] 第十一轮独立审查与推进计划
+
+- **基线**：`be1da05`；只更新 README、方法论、计划和本记录，未修改业务代码/测试/报告 CSV。
+- **验证**：默认 `make check` 实跑 exit 0（593 项）；默认两年 `run_acceptance.py` 隔离复跑 33/33 PASS；
+  四组 1730 日引擎回测重跑全部摘要数值一致（复用本轮同配置自由拟合残差）；
+  `run_risk.py` 隔离重跑的两份 CSV 与现有数值一致；窗口 HAC/bootstrap 由已保存连续 NAV 复算一致。
+- **新增证据**：T+2 零融资预算仍获准超支；RV 已报告违规实际由主动交易引入；weekly 换券比基准晚一天；
+  当前 VaR 实为历史老化 PnL，KRD 与全重估的蝶式差异在极小冲击下仍约 9.38%。
+- **结论**：B 包功能可运行，金融验收未关闭；详见下方 R37–R41、方法论 §10.18、计划 §12.15。
+
 ## 六、待办与已知问题
+
+**当前新增阻塞项（2026-11-08）**：R37（事件路径闸门）、R38（共同滚动执行政策）、
+R39（快照 VaR）和 R40（同源风险近似）须在 ML/RL 绩效验收前关闭；R41 为报告契约修正。
+以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
 |---|------|------|-------------|
@@ -1676,6 +1699,176 @@ PYTHONPATH=src .venv/bin/python scripts/run_strategies.py --config /tmp/debt_rou
 到期退出与市场曲线分离、统一验收入口实际执行归因；但历史回撤无法靠当日交易消除（只保证降风险动作可执行）、
 `other_curve` 仍是三因子未覆盖期限变化的真实量、滚动/新发与多窗口未做。
 
+### 2026-11-08 第十一轮独立审查（R37–R41）
+
+**范围与已确认进展**：滚动宇宙/引擎、窗口统计、lot 暴露归因、VaR/ES/压力脚本及测试与文档。
+默认 `make check` exit 0；两年 buyhold 验收隔离重跑 33/33 PASS；四组 1730 日回测全部摘要数值复现。
+长样本复跑使用本轮同配置 `fit_panel` 得到的自由拟合残差，未重跑 `run_long_sample.py` 的 CLI 包装层。
+风险两份 CSV 与原产物数值一致
+（rtol=1e-10、atol=1e-7）；pooled 日频均值、HAC 与 bootstrap 值由长样本 NAV 独立复算一致。
+本轮反例放在临时审查进程，未修改业务实现或现有测试。测试全绿说明既有断言通过，不证明下列契约。
+
+**R37 [P1 / 执行] 只校验下一交易日末点，漏掉 T+2 付款与成交日超限**
+
+- **位置**：`src/ficc/backtest/engine.py:345–355`；`src/ficc/portfolio/ledger.py:471–493`。
+  引擎显式传 `horizon=calendar.next_trading_day(d,1)`，覆盖 simulate 默认“最晚结算后的下一交易日”；
+  simulate 虽逐自然日推进，但只返回末日快照供闸门检查，中间时点未逐项检查。
+- **反例 A（预算）**：默认真实曲线/FDR007/CN_IB，零 tilt，2019-01-28→02-01，只改
+  `settlement_lag_days=2`、`min_cash_fraction=0`。01-29 建仓 4 笔（合计面值 100M），
+  01-31 结算后现金 **−305,208.46449 元**，02-01 **−305,230.95794 元**，均 cash_floor 违规。
+  01-29 闸门只看到 01-30 的现金 100M，付款尚未发生。现有 `test_r32_settlement_lag_0_1_2`
+  用宽松默认现金预算，只验证日期/原场景无违规，未覆盖此边界。
+- **反例 B（默认长样本 RV）**：复跑至 2023-07-05，在 07-04 对同一账本/当日曲线分别预演
+  不成交、成交后当日、闸门次日状态。最大单券权重依次 **0.243711451212 / 0.300001425408 /
+  0.299999608610**；实际当日买入 `SYN-2Y-20230208` 面值 **10M**。故已有报告的一天违规是
+  **主动交易引入**，不是被动市场漂移。超限幅度小不代表净值有重大错误，但分类与执行契约必须纠正。
+- **验收**：检查从成交日到既有/新增最晚结算后观察点的全部必要状态；逐时点对齐基准/风险日期，
+  保存最小现金余量和最大违规及发生时点。上述两个反例在成交前拒绝/缩减；覆盖 lag 0/1/2、长假、
+  票息顺延和结算现金流先后抵消，不能仅延长 horizon 后仍只验最后一个快照。
+
+**R38 [P1 / 滚动] 基准机械换券，策略换券却依赖 pending 信号**
+
+- **位置**：`src/ficc/backtest/engine.py:393–399,547–548,687–690`；
+  `src/ficc/portfolio/construction.py` 的退出券卖出同样受 min_trade_face 死区过滤。
+- **反例**：默认真实市场、rolling、零 tilt，仅 rebalance=weekly，回测 2019-01-28→2020-02-10。
+  基准 **2020-02-03** 卖旧 `SYN-2Y-20190128`、买新 `SYN-2Y-20200203`；策略两笔交易均在
+  **02-04**，无拒单。02-03 没有 pending，所以只更新可交易宇宙，没有执行策略滚动。
+- **影响**：不符合冻结政策“触发交易日显式换券、策略/基准共用”；调仓频率比较混入不同的政策执行时点。
+  daily 的旧目标 KRD 在新宇宙求解、拒单后延迟和小于死区的退出券也应明确版本契约。
+  本反例不等于所有默认 daily NAV 错误，现有 −1.10bp 控制漂移也不能证明滚动一致性已经验收。
+- **验收**：显式机械事件与主动信号解耦，共同定义触发、计划执行、实际执行、拒单与重试；每个事件有完整状态。
+  覆盖 weekly、无信号、小额旧券、约束拒绝和跨付息；保持 T+1 主动策略因果性，勿靠伪造更早信号时间解决。
+
+**R39 [P1 / VaR] 历史逐日老化收益被作为分析日固定快照风险**
+
+- **位置**：`src/ficc/risk/var.py:353–380`、`scripts/run_risk.py:132–148,285–306`。
+  每个历史样本使用历史日曲线、历史结算日与当时剩余期限；KRD 也随历史日重新计算。
+  默认组合发行日还依赖 window_start，所以改变 lookback 同时改变了待测组合。
+- **复核**：保留默认 faces/条款与 250 个历史 ΔYTM，将每个冲击叠加到 2020-12-31 当前曲线，
+  固定该日结算/剩余期限、做同一 YTM 定价的 price-only 全重估。95% VaR/ES 为
+  **318,246.69828 / 433,273.83884 元**；现有回看分布为 **356,731.66623 / 496,682.83234 元**。
+  此对照同时隔离了历史老化/carry，目的在于证明对象不同，不是未经验收替换报告。
+- **依据与边界**：当前组合历史模拟应将历史风险因素变化作用到当前组合；参见
+  [BIS 原始方法说明](https://www.bis.org/publ/bcbsc224.pdf)。现有函数作为“固定面值历史 PnL 回看”有用途，
+  但不能直接背书当前快照 VaR；读取近期发行的持仓也不应要求债券在整个历史窗口已经存在。
+- **验收**：输入显式 analysis_as_of/positions/shocks/horizon，冻结组合不随样本窗口变化；
+  区分 instantaneous price risk 与含固定持有期时间推进/现金事件的 total-return risk，重生成三方法表。
+
+**R40 [P1 / 风险对照] YTM 定价与即期 KRD 不同源，一阶误差被称为凸性/曲率**
+
+- **位置**：`src/ficc/risk/stress.py:134–151`、`src/ficc/risk/var.py` 的两种 PnL 构造函数。
+  full 用 `dirty_price_from_ytm`；KRD 来自 bootstrap spot 现金流贴现，再乘关键点 Δspot。
+  把 ΔYTM 换成 Δspot 并不能使两个价格函数及关键点冲击插值变成同一函数/方向。
+- **反例**：同 run_risk 默认组合，蝶式幅度 25/1/0.1/0.01/0.001bp，对应相对差异
+  **16.416% / 9.647% / 9.410% / 9.387% / 9.384%**。
+  最小冲击 full **−5.072780 元**、KRD **−5.548821 元**；平行 0.001bp 仍差 **1.1485%**。
+  这是显著的一阶/口径误差，不能将全部差异归为随冲击缩小消失的非线性项。
+  KRD 当前采用 1bp 单边差分也有有限差分误差；历史 VaR 两侧另有 carry/roll 是否包含的差异。
+- **验收**：若 full 保留 YTM 账本估值，应计算同一 YTM 节点函数的敏感度并正确命名；
+  若验证 spot KRD，full 同样按 spot 现金流贴现，且使用同一关键点线性冲击基。
+  用不同票面/剩余期限、非平坦曲线的中心差分和幅度收敛验证一阶项，分开报告模型差/基投影/高阶项。
+
+**R41 [P2 / 结果与血缘] 文档数字、窗口基期与版本元数据不一致**
+
+- **数值**：当前 long_sample CSV 与 NAV 的年化分别 **3.87435% / 3.73431% / 3.84123% / 3.86738%**
+  （零 tilt/carry/2s10s/rv），不是简报的 3.94/3.68/3.78/3.91%；carry 最大回撤为 **−4.99116%**，
+  不是 −5.04%。本轮已纠正文档当前表，未重写原报告。
+- **窗口**：实际 499/496/506/229 日，最后为不足一年尾窗；不是四个完整两年窗。
+  连续模式后窗包含前一收盘到首日的收益，但 `window_metrics.initial_nav` 导出的是首日收盘。
+  例如 W2 零 tilt 写 **105,947,448.85 元**，累计收益实际基期是 **106,129,695.32 元**。
+  应导出 return_base_date/nav 或更名 start_close_nav，而不是删除边界收益造成漏日。
+- **导出**：`scripts/run_windows.py:160–166,268–280,406` 的 note 固定写“每窗独立重置”，
+  实际 mode=continuous；20 行 inference 的 rolling_version 全空；pooled excess_bp 为窗口累计超额均值，
+  不是连续路径累计超额（carry **−25.38208bp** vs 全段 **−121.88277bp**）。
+  pooled 年化 −13.51965bp、HAC t=−3.16346 和本表 CI/p 可复算，以上问题不推翻这些具体计算。
+- **解释**：长窗 carry 全部成本 46.63bp，小于 121.88bp 跑输的一半，不能沿用短窗“主要来自价差”的因果判断。
+  固定常量不等于可追溯的事前预注册；如要称预注册，应记录冻结提交/时间和偏离方案。
+- **验收**：报告写明连续/重置、尾窗、return_base、累计/年化单位、政策/配置/代码/数据版本，
+  从产物生成文档并做字段一致性断言。重叠 pooled 不得把重复日期拼成新样本再对该序列套 lag=5。
+
+**推进判断**：短窗归因与 lot 暴露解释构成进展；“尚无稳健超额证据”仍合理。
+但默认 acceptance 的区间是 2019-01-28→2020-12-31、buyhold，33 项通过不覆盖本轮 rolling 与风险契约。
+先修 R37/R38 并做跨滚动的统一账本/归因/因果性验收，同时修 R39/R40 和 R41；随后重跑冻结实验。
+重叠窗口推断不必成为强制扩展项，按 DV01 保持的替代政策可做独立稳健性对照；未来历史情景
+`allow_future_history` 已有默认截断、显式标注及测试，无需重复实现。ML/RL 可先设计 as-of/split 接口，
+绩效验收待上述关闭；完整任务顺序见计划 §12.15。
+
+### R37–R41 修复对照（2026-11-08 第十一轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R37 | P1 | `simulate(return_path=True)` + 路径逐时点约束；默认 horizon 覆盖最晚结算；成交日权重也检查；拒单原因含最后违规码 | C-087；`test_r37_*`；T+2+floor0 建仓被拒；rv 2023-07-04 违规消失 |
+| R38 | P1 | 滚动日机械同日换券（卖旧 + 该腿滚动到基准新券面值）；pending 顺延；`roll_events` 记录成交映射/status/reason；小额旧券按最小整手处理 | C-088；`test_r38_weekly...`、`test_roll_events...`、滚动因果性；acceptance-rolling 45/45 |
+| R39 | P1 | VaR 冻结分析日组合 + 历史 Δz 冲击；老化口径保留对照；price-only/include_carry 显式 | C-089；95% VaR/ES 32.42/44.58 万；YTM 冻结反例 31.82/43.33 万逐位复现 |
+| R40 | P1 | `price_from_spot` + `spot_shock` 统一；解析 KRD；小冲击收敛验收 | C-090；平行 1bp 8.3e-4、蝶式 0.001bp 4.3e-7；压力 8.2%/1.08%/0.94% |
+| R41 | P2 | 窗口结构/基期/pooled 三列/版本字段；数字与 CSV 自动核对 | C-091；carry 年化 3.7358%、MDD −4.9915%、全段 −120.58bp、年化 −13.37bp |
+
+**范围声明**：buyhold 33 项与 rolling 43 项分别验收，不能互相替代；主 VaR 即期空间与审查
+YTM 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现金事件；滚动基准为面值
+保持政策，DV01 保持未做；重叠窗口不做推断。
+
+### C-087 [fix] R37：闸门逐时点检查投影路径
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/portfolio/ledger.py`、`src/ficc/backtest/engine.py`、`tests/test_engine.py`
+- **变更内容**：`simulate(return_path=True)` 返回投影窗口逐日快照；闸门删除显式 `horizon=下一交易日`，改用默认 `max(as_of, 最大结算日的下一交易日)`；对路径每个快照跑 9 项约束，成交日当天状态（含单券权重）也检查；拒单原因附最后违规码。
+- **原因**：R37：T+2/现金下限 0 仍建仓 4 笔、结算日现金 −305,208.46；RV 2023-07-04 成交后单券权重 0.3000014254，闸门只看次日 0.2999996086。
+- **验证方式**：`test_r37_gate_checks_settlement_and_intermediate_snapshots`、`test_r37_gate_uses_execution_day_single_bond_weight`；长样本 rv 违规=0。
+- **风险/遗留**：被动融资在长假后仍可能产生无成交日的 cash_floor（如实报告，不再声称"始终无违规"）。
+
+### C-088 [fix] R38：滚动日策略机械同日换券
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/backtest/engine.py`、`src/ficc/portfolio/rolling.py`、`tests/test_rolling.py`、`tests/test_engine.py`、`tests/test_causality.py`
+- **变更内容**：滚动日基准换券后，策略执行机械订单（卖光旧券 + 该腿滚动到基准的新券面值（双方共用政策），最小整手）；旧宇宙 pending 顺延并记录 `pending_deferred`；`roll_events` 记录事件→基准/策略成交、status（same_day/rejected_constraint）、reason；新增滚动因果性测试与 `TargetFaces` 精确基准回放控制组（超额 0.0000bp，证明执行/政策一致）。
+- **原因**：R38：weekly 零 tilt 基准 2020-02-03 换券、策略 02-04 才换；daily 拒单后也会延迟。
+- **验证方式**：weekly 同日测试、roll_events 映射测试、rolling 因果性、`make acceptance-rolling` 45/45。
+- **风险/遗留**：rv 有 1 次滚动因既有单券权重边界被约束拒绝（已记录原因，次日信号处理）；旧券面值极小时按最小整手处理，可能略增成本。
+
+### C-089 [fix] R39：VaR 冻结分析日组合
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/risk/var.py`、`src/ficc/risk/spot.py`、`scripts/run_risk.py`、`tests/test_risk.py`
+- **变更内容**：新增 `portfolio_pnl_current_portfolio_factors`（冻结分析日面值/条款/结算/剩余期限，只搬历史即期 Δz）；旧 `portfolio_pnl_fixed_revaluation` 标注 historical_aging 对照；CSV 增 `portfolio_basis/price_function/shock_basis/include_carry`；`--portfolio-age` 与 lookback 解耦。
+- **原因**：R39：历史逐日老化 PnL 被当当前快照风险，lookback 还会改变组合发行日。
+- **验证方式**：`pytest tests/test_risk.py`（21 项）；95% VaR/ES 32.42/44.58 万（审查 YTM 冻结 31.82/43.33 万逐位复现；旧 aging 35.67/49.67 万并列）。
+- **风险/遗留**：主口径即期空间与 YTM 空间差 +1.9%/+2.9%；price-only 默认不含 carry/现金事件。
+
+### C-090 [fix] R40：全重估与 KRD 统一即期定价
+
+- **日期**：2026-11-08
+- **文件**：`src/ficc/risk/spot.py`、`src/ficc/risk/stress.py`、`tests/test_risk.py`
+- **变更内容**：`price_from_spot`（SpotCurve 贴现）+ `spot_shock`（关键点线性/两端平推）；全重估与 KRD 同源；KRD 用同源解析一阶导；压力情景在即期关键点空间重写；小冲击收敛行输出。
+- **原因**：R40：蝶式 0.001bp 时相对差异仍 9.384%，不能归为凸性/曲率。
+- **验证方式**：平行 1bp 8.3e-4（<1e-3）、陡/平 0.01bp 4.3e-6、蝶式 0.001bp 4.3e-7（<1e-4）；大冲击 8.2%/1.08%/0.94%。
+- **风险/遗留**：30Y-only +100bp 误差 13.3%，单点长端仍需全重估；历史情景开关默认截断。
+
+### C-091 [fix] R41：窗口导出契约与数字核对
+
+- **日期**：2026-11-08
+- **文件**：`scripts/run_windows.py`、`src/ficc/research/`、`tests/test_windows.py`
+- **变更内容**：`window_structure`（3×约 2 年 + 229 日尾窗）；continuous 收益基期=前收 NAV（`return_base_nav`）；`pooled_cumulative_excess_bp`/`pooled_ann_excess_bp`/`mean_window_excess_bp` 分列；`rolling_version` 填值；note 按模式生成；与 `long_sample_summary.csv` 的 ann/MDD/全段超额自动核对。
+- **原因**：R41：文档数字与 CSV 不符、窗口结构/基期错误、pooled 语义错误、版本字段空。
+- **验证方式**：`pytest tests/test_windows.py`（19 项）、`make windows`；carry 年化 3.7358%、MDD −4.9915%、全段 −120.58bp。
+- **风险/遗留**：重叠窗口无推断；bootstrap p 非 studentized；"预注册"缺分析前冻结提交时间戳。
+
+### C-092 [feat] 滚动政策版统一验收
+
+- **日期**：2026-11-08
+- **文件**：`scripts/run_acceptance.py`、`Makefile`
+- **变更内容**：`--rolling` 模式（2019–2021，roll_v1 + rolling 基准）；新增 `roll_event_same_day`、`roll_event_rejection_audited`、`roll_event_dates` 检查；输出 `acceptance_summary_rolling.csv`；零 tilt 阈值 2bp。
+- **验证方式**：`make acceptance-rolling` 45/45 PASS；`--quick` 9 项 PASS。
+- **风险/遗留**：rolling 验收是 2019–2021 子样本，不覆盖 2019–2025 全段；与 buyhold 33 项不能互相替代。
+
+### C-093 [test] 测试基线 593 → 608
+
+- **日期**：2026-11-08
+- **变更内容**：新增 15 项：R37 2、R38 2 + 精确回放 1、滚动因果性 1、风险 6（R39/R40）、窗口 3（R41）等。
+- **验证方式**：`make check`（608 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 6 分钟；rolling/long-sample 由 make 目标单独执行。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -1683,7 +1876,7 @@ PYTHONPATH=src .venv/bin/python scripts/run_strategies.py --config /tmp/debt_rou
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **593** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **608** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

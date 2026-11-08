@@ -28,7 +28,7 @@ from ficc.curve.curve import Curve
 from ficc.logging import get_logger
 from ficc.portfolio.dates import settlement_for
 from ficc.portfolio.ledger import Ledger, TradeRecord
-from ficc.portfolio.types import BenchmarkPortfolio, MarketContext, TargetKRD
+from ficc.portfolio.types import BenchmarkPortfolio, MarketContext, TargetFaces, TargetKRD
 
 log = get_logger("backtest.engine")
 
@@ -61,6 +61,7 @@ class BacktestResult:
     end: date
     benchmark_version: str
     rolling_version: str
+    roll_events: pd.DataFrame
     nav: pd.Series
     benchmark_nav: pd.Series
     exposure: pd.DataFrame
@@ -240,6 +241,7 @@ def run_backtest(
     order_spread: dict[str, float] = {bond.code: 0.0 for bond in universe}
     bench_trade_rows: list[dict[str, Any]] = []
     trade_spread_rows: list[dict[str, Any]] = []
+    roll_rows: list[dict[str, Any]] = []
 
     band_face = float(cfg.constraints.min_trade_lot) * float(cfg.constraints.rebalance_band_lots)
     last_rebalance_week: tuple[int, int] | None = None
@@ -252,27 +254,111 @@ def run_backtest(
     # ------------------------------------------------------------------
     # 成交前完整校验（R23）
     # ------------------------------------------------------------------
-    def _current_report(
-        snapshot: Any, curve: Curve, benchmark_d: BenchmarkPortfolio
-    ) -> tuple[Any, Any]:
-        """当前（交易前）组合的风险与约束报告。"""
-        if snapshot is None:
-            from ficc.portfolio.constraints import ConstraintReport, PortfolioRisk
+    def _orders_from_faces(
+        target_faces: dict[str, float], snapshot: Any, curve: Curve, d: date
+    ) -> tuple[Any, ...]:
+        """把逐券目标面值转成订单（高于最小整手才交易；非目标持仓全部卖出）。"""
+        from ficc.portfolio.construction import Order
 
-            empty = PortfolioRisk(
-                total_dv01=0.0,
-                krd={},
-                duration=0.0,
-                market_value=0.0,
-                cash=float(cfg.backtest.init_cash),
-                nav=float(cfg.backtest.init_cash),
+        current = {p.bond.code: p for p in (snapshot.positions if snapshot else ())}
+        lot = float(cfg.constraints.min_trade_lot)
+        orders: list[Order] = []
+        codes = set(current) | set(target_faces)
+        for code in sorted(codes):
+            position = current.get(code)
+            current_face = float(position.face_value) if position is not None else 0.0
+            target_face = float(target_faces.get(code, 0.0))
+            delta = target_face - current_face
+            if abs(delta) < lot - 1e-9:
+                continue
+            bond = position.bond if position is not None else None
+            if bond is None:
+                # 目标中有、当前无：从 universe 找（仅新券场景由 policy roll 处理）
+                bond = next((b for b in universe if b.code == code), None)
+            if bond is None:
+                continue
+            side = "buy" if delta > 0 else "sell"
+            face = round(abs(delta) / lot) * lot
+            if face <= 0.0:
+                continue
+            clean_exec, mid, spread_bp, per100 = execution_price(
+                bond, curve, side=side, calendar=calendar, cfg=cfg
             )
-            return empty, ConstraintReport(as_of=curve.as_of, violations=(), metrics={})
-        risk = portfolio_risk(snapshot, curve, calendar=calendar, cfg=cfg)
-        report = check_constraints(
-            risk=risk, benchmark=benchmark_d, nav_high_water=nav_high, cfg=cfg
-        )
-        return risk, report
+            orders.append(
+                Order(
+                    bond=bond,
+                    side=side,
+                    face_value=float(face),
+                    clean_price=clean_exec,
+                    target_face=target_face,
+                    current_face=current_face,
+                    mid_clean_price=mid,
+                    spread_bp=spread_bp,
+                    spread_cost=per100 * face / 100.0,
+                )
+            )
+        return tuple(orders)
+
+    def _policy_roll_orders(
+        events: list[Any],
+        snapshot: Any,
+        curve: Curve,
+        d: date,
+        bench_faces: dict[str, float],
+    ) -> tuple[Any, ...]:
+        """机械换券订单：卖光旧券 + 按**基准同腿面值**买入新券（双方共用政策）。
+
+        与基准完全一致的腿面值（而不是"保持策略旧面值"或"DV01 等价"）保证零 tilt 控制组
+        在滚动日与基准同步；主动策略在该腿的偏离会在下一次信号中重新建立。
+        """
+        from ficc.portfolio.construction import Order
+
+        positions = {p.bond.code: p for p in (snapshot.positions if snapshot else ())}
+        lot = float(cfg.constraints.min_trade_lot)
+        orders: list[Order] = []
+        for event in events:
+            position = positions.get(event.retired.code)
+            old_face = float(position.face_value) if position is not None else 0.0
+            if old_face <= 0.0:
+                continue
+            clean_exec, mid, spread_bp, per100 = execution_price(
+                event.retired, curve, side="sell", calendar=calendar, cfg=cfg
+            )
+            orders.append(
+                Order(
+                    bond=event.retired,
+                    side="sell",
+                    face_value=old_face,
+                    clean_price=clean_exec,
+                    target_face=0.0,
+                    current_face=old_face,
+                    mid_clean_price=mid,
+                    spread_bp=spread_bp,
+                    spread_cost=per100 * old_face / 100.0,
+                )
+            )
+            # 与基准共用同一政策：该腿滚动到**基准的新券面值**，零 tilt 因此与基准逐腿一致。
+            target_face = float(bench_faces.get(event.issued.code, 0.0))
+            new_face = round(target_face / lot) * lot if target_face > 0.0 else 0.0
+            if new_face <= 0.0:
+                continue
+            clean_exec_b, mid_b, spread_bp_b, per100_b = execution_price(
+                event.issued, curve, side="buy", calendar=calendar, cfg=cfg
+            )
+            orders.append(
+                Order(
+                    bond=event.issued,
+                    side="buy",
+                    face_value=new_face,
+                    clean_price=clean_exec_b,
+                    target_face=new_face,
+                    current_face=0.0,
+                    mid_clean_price=mid_b,
+                    spread_bp=spread_bp_b,
+                    spread_cost=per100_b * new_face / 100.0,
+                )
+            )
+        return tuple(orders)
 
     def _candidate_trades(
         orders: tuple[Any, ...], *, signal_date: date, trade_date: date
@@ -292,6 +378,36 @@ def run_backtest(
             for order in orders
         )
 
+    def _reports_for_path(
+        path: tuple[Any, ...],
+        curve: Curve,
+        benchmark_d: BenchmarkPortfolio,
+        nav_high: float,
+    ) -> list[Any]:
+        """对投影路径的**每个快照**跑完整 9 项约束（R37：不能只看最后一个时点）。"""
+        reports = []
+        for snap in path:
+            risk = portfolio_risk(snap, curve, calendar=calendar, cfg=cfg)
+            reports.append(
+                check_constraints(
+                    risk=risk, benchmark=benchmark_d, nav_high_water=nav_high, cfg=cfg
+                )
+            )
+        return reports
+
+    def _path_action_profile(reports: list[Any]) -> tuple[frozenset[str], float]:
+        """路径上可交易行动项的并集与最差严重度（历史回撤不计，R31 口径）。"""
+        codes: set[str] = set()
+        severity = 0.0
+        for report in reports:
+            codes.update(
+                str(violation.code)
+                for violation in report.violations
+                if violation.code in ACTION_CODES
+            )
+            severity = max(severity, float(action_severity(report)))
+        return frozenset(codes), severity
+
     def project_and_validate(
         target: TargetKRD,
         *,
@@ -301,6 +417,8 @@ def run_backtest(
         benchmark_d: BenchmarkPortfolio,
         nav_high_water: float,
         risk_off: bool = False,
+        force_min_lot: bool = False,
+        forced_orders: tuple[Any, ...] | None = None,
     ) -> tuple[tuple[Any, ...] | None, list[TargetKRD], str, bool, float]:
         """成交前完整校验（R31/R32 修复版）。
 
@@ -315,11 +433,60 @@ def run_backtest(
         - **降风险偏序**：只对可交易行动项要求"不新增 code 且严重度下降"，历史回撤允许仍存在。
         """
         positions_before = () if snapshot is None else snapshot.positions
-        _current_risk, current_report = _current_report(snapshot, curve, benchmark_d)
+        # 当前状态的"路径报告"：只推进今日已发生事件（不提交候选），包含 as_of 当日。
+        # 与候选路径使用同一批量口径比较，避免"当前快照 vs 候选末日"的不对称（R37）。
+        try:
+            current_path = ledger.simulate(d, curve, extra_trades=(), return_path=True)
+        except ValueError:
+            current_path = (ledger.snapshot(),) if hasattr(ledger, "snapshot") else ()
+        current_reports = _reports_for_path(current_path, curve, benchmark_d, nav_high_water)
+        current_codes, current_severity = _path_action_profile(current_reports)
 
         bench_krd = {float(k): float(v) for k, v in benchmark_d.krd.items()}
         dev = {t: float(target.krd.get(t, bench_krd[t])) - bench_krd[t] for t in bench_krd}
         attempted: list[TargetKRD] = []
+        last_violation_codes = ""
+        if forced_orders is not None:
+            # 滚动政策：机械换券（卖旧 + 按 DV01 等价买新）必须同日执行；不做 tilt 缩放，
+            # 只按 [1.0..0.0] 缩放买入面值以恢复可行性（卖出旧券始终保留）。
+            lot = float(cfg.constraints.min_trade_lot)
+            for scale in (1.0, 0.9, 0.8, 0.6, 0.4, 0.2, 0.0):
+                scaled = tuple(
+                    order
+                    if order.side == "sell"
+                    else order.__class__(
+                        bond=order.bond,
+                        side=order.side,
+                        face_value=round(order.face_value * scale / lot) * lot,
+                        clean_price=order.clean_price,
+                        target_face=round(order.face_value * scale / lot) * lot,
+                        current_face=0.0,
+                        mid_clean_price=order.mid_clean_price,
+                        spread_bp=order.spread_bp,
+                        spread_cost=order.spread_cost * scale,
+                    )
+                    for order in forced_orders
+                )
+                scaled = tuple(order for order in scaled if order.face_value > 0)
+                trades = _candidate_trades(scaled, signal_date=target.as_of, trade_date=d)
+                try:
+                    path = ledger.simulate(d, curve, extra_trades=trades, return_path=True)
+                except ValueError:
+                    continue
+                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
+                if all(report.ok for report in reports):
+                    return scaled, attempted, "", False, 1.0
+                last_violation_codes = ";".join(
+                    sorted({v.code for report in reports for v in report.violations})
+                )
+            return (
+                None,
+                attempted,
+                f"滚动政策同日换券不可行（{last_violation_codes or '无违规码'}）",
+                False,
+                1.0,
+            )
+
         level_factors = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0] if risk_off else [1.0]
 
         for level in level_factors:
@@ -336,36 +503,38 @@ def run_backtest(
                     universe,
                     curve,
                     # 熔断时按最小整手交易（否则降风险幅度小会被 2-lot 死区吞掉）
-                    min_trade_face=float(cfg.constraints.min_trade_lot) if risk_off else band_face,
+                    min_trade_face=(
+                        float(cfg.constraints.min_trade_lot)
+                        if (risk_off or force_min_lot)
+                        else band_face
+                    ),
                     calendar=calendar,
                     cfg=cfg,
                 )
                 trades = _candidate_trades(orders, signal_date=target.as_of, trade_date=d)
                 try:
-                    projection = ledger.simulate(
-                        d, curve, extra_trades=trades, horizon=calendar.next_trading_day(d, 1)
-                    )
+                    # 默认 horizon = max(as_of, 最大结算日的下一交易日)，覆盖 T+lag 结算；
+                    # return_path=True 逐时点检查，不再只看最后一个快照（R37）。
+                    path = ledger.simulate(d, curve, extra_trades=trades, return_path=True)
                 except ValueError:
                     # 历史成交已推进到 d（重复调用）等边界：显式失败而不是静默成交
                     return None, attempted, "投影失败：账本状态不允许模拟该候选", False, level
-                risk_proj = portfolio_risk(projection, curve, calendar=calendar, cfg=cfg)
-                report = check_constraints(
-                    risk=risk_proj,
-                    benchmark=benchmark_d,
-                    nav_high_water=nav_high_water,
-                    cfg=cfg,
-                )
-                if report.ok:
+                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
+                if all(report.ok for report in reports):
                     return orders, attempted, "", False, level
 
-                if risk_off and allows_partial_de_risk(current_report, report):
+                cand_codes, cand_severity = _path_action_profile(reports)
+                last_violation_codes = ";".join(
+                    sorted({v.code for report in reports for v in report.violations})
+                )
+                if risk_off and cand_codes <= current_codes and cand_severity < current_severity:
                     return orders, attempted, "partial_de_risk", True, level
                 dev = {t: value * 0.5 for t, value in dev.items()}
 
         return (
             None,
             attempted,
-            f"6 次投影仍不可行（{len(attempted)} 次尝试）",
+            f"6 次投影仍不可行（{len(attempted)} 次尝试；最后违规={last_violation_codes or '无'}）",
             False,
             level_factors[-1] if level_factors else 1.0,
         )
@@ -397,10 +566,25 @@ def run_backtest(
                 settle = settlement_for(calendar, d, cfg=cfg)
                 roll_signal = calendar.prev_trading_day(d, 1)
                 for event in roll_events:
+                    roll_row: dict[str, Any] = {
+                        "date": d,
+                        "tenor": float(event.tenor),
+                        "retired_code": event.retired.code,
+                        "issued_code": event.issued.code,
+                        "bench_sell_trade_id": "",
+                        "bench_buy_trade_id": "",
+                        "strategy_trade_ids": "",
+                        "status": "pending",
+                        "reason": "",
+                    }
+                    roll_rows.append(roll_row)
                     old_face = float(bench_faces.pop(event.retired.code, 0.0))
                     if old_face > 0.0:
                         clean_exec, mid, _bp, per100 = execution_price(
                             event.retired, curve_d, side="sell", calendar=calendar, cfg=cfg
+                        )
+                        roll_row["bench_sell_trade_id"] = (
+                            f"bench-roll-{d:%Y%m%d}-{event.retired.code}-sell"
                         )
                         bench_ledger.submit(
                             TradeRecord(
@@ -443,6 +627,9 @@ def run_backtest(
                         event.issued, curve_d, side="buy", calendar=calendar, cfg=cfg
                     )
                     if face > 0.0:
+                        roll_row["bench_buy_trade_id"] = (
+                            f"bench-roll-{d:%Y%m%d}-{event.issued.code}-buy"
+                        )
                         bench_ledger.submit(
                             TradeRecord(
                                 trade_id=f"bench-roll-{d:%Y%m%d}-{event.issued.code}-buy",
@@ -537,39 +724,80 @@ def run_backtest(
                 )
             bench_bought = True
 
+        # ---- 1.5) R38：滚动日双方同日换券 ----
+        # 基准已在上面换券；策略若当日没有 pending 信号（weekly 非调仓日），按"当前 KRD
+        # 不变、只换券"生成当日 policy 目标并**同日**执行，保证触发日双方显式换券。
+        policy_roll_target: TargetKRD | None = None
+        policy_orders: tuple[Any, ...] | None = None
+        if roll_events and last_snapshot is not None:
+            prev_day = calendar.prev_trading_day(d, 1)
+            prev_curve = _curve_at(panel, curve_tenors, prev_day)
+            current_risk = portfolio_risk(last_snapshot, prev_curve, calendar=calendar, cfg=cfg)
+            deferred = pending is not None
+            policy_roll_target = TargetKRD(
+                as_of=pending.as_of if pending is not None else prev_day,
+                krd=dict(current_risk.krd),
+                notes=(
+                    "滚动政策：触发日同日机械换券（原 pending 顺延）"
+                    if deferred
+                    else "滚动政策：触发日同日机械换券"
+                ),
+            )
+            policy_orders = _policy_roll_orders(roll_events, last_snapshot, curve_d, d, bench_faces)
+            if deferred:
+                # 滚动日机械换券优先：旧宇宙上生成的 pending 信号已过期，顺延到
+                # 下一交易日/下一调仓日由信号重新生成；事件表记录 pending_deferred=True。
+                for roll_row in roll_rows:
+                    if roll_row["date"] == d:
+                        roll_row["pending_deferred"] = True
+                pending = None
+
         # ---- 2) 策略成交：先做完整成交前校验，再提交 ----
         executed = 0
         executed_notional = 0.0
+        submitted_ids: list[str] = []
         rejected_reason = ""
         partial_de_risk = False
         gate_level = 1.0
         gate_target: TargetKRD | None = None
-        if pending is not None:
+        active_target = pending if pending is not None else policy_roll_target
+        face_target = active_target if isinstance(active_target, TargetFaces) else None
+        if face_target is not None:
+            # 精确基准回放：按目标面值直接构造订单（不经 KRD 求解），仍走同一成交前闸门
+            face_orders = _orders_from_faces(face_target.faces, last_snapshot, curve_d, d)
+            policy_orders = face_orders
+            active_target = TargetKRD(
+                as_of=face_target.as_of, krd=dict(benchmark_d.krd), notes=face_target.notes
+            )
+            pending = None
+        if active_target is not None:
             accepted_orders, attempted, reason, partial_de_risk, gate_level = project_and_validate(
-                pending,
+                active_target,
                 curve=curve_d,
                 d=d,
                 snapshot=last_snapshot,
                 benchmark_d=benchmark_d,
                 nav_high_water=nav_high,
                 risk_off=risk_off,
+                force_min_lot=policy_roll_target is not None,
+                forced_orders=policy_orders,
             )
             if accepted_orders is None:
                 rejected_reason = reason or "成交前约束不可行"
                 rejected_rows.append(
                     {
                         "date": d,
-                        "signal_date": pending.as_of,
+                        "signal_date": active_target.as_of,
                         "reason": rejected_reason,
-                        "target_total_dv01": pending.total_dv01,
+                        "target_total_dv01": active_target.total_dv01,
                         "n_attempts": len(attempted),
                         "gate_level": gate_level,
                         "risk_off": risk_off,
-                        "notes": pending.notes,
+                        "notes": active_target.notes,
                     }
                 )
             else:
-                gate_target = attempted[-1]
+                gate_target = attempted[-1] if attempted else active_target
                 settle = settlement_for(calendar, d, cfg=cfg)
                 for order in accepted_orders:
                     ledger.submit(
@@ -585,6 +813,9 @@ def run_backtest(
                         )
                     )
                     executed += 1
+                    submitted_ids.append(
+                        f"{strategy.name}-{d:%Y%m%d}-{order.bond.code}-{order.side}"
+                    )
                     executed_notional += order.face_value * order.clean_price / 100.0
                     order_spread[order.bond.code] = (
                         order_spread.get(order.bond.code, 0.0) + order.spread_cost
@@ -678,6 +909,24 @@ def run_backtest(
             }
         )
 
+        # 滚动事件 → 成交映射（R38/计划 §12.15：记录事件到成交的关系）
+        for roll_row in roll_rows:
+            if roll_row["date"] != d or roll_row["status"] != "pending":
+                continue
+            matched = [
+                trade_id
+                for trade_id in submitted_ids
+                if roll_row["retired_code"] in trade_id or roll_row["issued_code"] in trade_id
+            ]
+            roll_row["strategy_trade_ids"] = ";".join(matched)
+            if matched:
+                roll_row["status"] = "same_day"
+            elif rejected_reason:
+                roll_row["status"] = "rejected_constraint"
+                roll_row["reason"] = rejected_reason
+            else:
+                roll_row["status"] = "missing_strategy_trade"
+
         # ---- 4) 下一日信号（只读 <= d 数据）----
         last_snapshot = snapshot
         iso = d.isocalendar()
@@ -732,6 +981,7 @@ def run_backtest(
         end=days[-1],
         benchmark_version=benchmark_version,
         rolling_version=roll_policy.version if roll_policy.enabled else "",
+        roll_events=pd.DataFrame(roll_rows),
         nav=pd.Series(nav_rows, name="nav").sort_index(),
         benchmark_nav=pd.Series(bench_nav_rows, name="benchmark_nav").sort_index(),
         exposure=pd.DataFrame(exposure_rows),

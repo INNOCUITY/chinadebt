@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -38,8 +38,10 @@ __all__ = [
     "WindowSpec",
     "add_years",
     "build_windows",
+    "daily_returns",
     "window_active_returns",
     "window_metrics",
+    "window_return_basis",
     "window_total_returns",
 ]
 
@@ -68,12 +70,17 @@ def add_years(day: date, years: int | float) -> date:
 
 @dataclass(frozen=True)
 class WindowSpec:
-    """一个回测窗口（交易日集合连续，含首尾）。"""
+    """一个回测窗口（交易日集合连续，含首尾）。
+
+    ``partial`` 表示窗口因样本末日而**短于标称年数**（如 229 日尾窗），
+    报告必须显式披露，不能把尾窗当完整两年窗。
+    """
 
     label: str
     start: date
     end: date
     days: tuple[date, ...]
+    partial: bool = False
 
     def __post_init__(self) -> None:
         if not self.days:
@@ -161,6 +168,7 @@ def build_windows(
                     start=window_days[0],
                     end=window_days[-1],
                     days=tuple(window_days),
+                    partial=add_years(start, window_years) > last + timedelta(days=1),
                 )
             )
             cursor += len(window_days)
@@ -186,43 +194,73 @@ def build_windows(
                     start=window_days[0],
                     end=window_days[-1],
                     days=tuple(window_days),
+                    partial=add_years(start, window_years) > last + timedelta(days=1),
                 )
             )
         index += 1
     return windows
 
 
+def window_return_basis(result: BacktestResult, window: WindowSpec) -> tuple[date, float, float]:
+    """逐窗累计收益的**真实基期**。
+
+    返回 ``(return_base_date, return_base_nav, start_close_nav)``：
+
+    - **continuous 模式**（一条长回测按日期切窗）：该窗累计收益包含"前一交易日收盘
+      到该窗首日"的边界收益，因此基期是**该窗前一交易日收盘**（首个窗口没有前收，
+      基期 = 样本首日 NAV）。``start_close_nav`` 是该窗首日收盘 NAV，仅作对照。
+    - **reset 模式**（每窗独立重置回测）：窗口首日就是该次回测起点，基期 = 该窗
+      重置 NAV（当天无成交前净值，等于首日收盘 NAV）。
+
+    不能用首日收盘 NAV 当后窗基期（会漏掉边界收益，R41）。
+    """
+    nav = result.nav
+    index = nav.index
+    try:
+        position = int(index.get_loc(window.start))
+    except KeyError as exc:  # pragma: no cover - 窗口首日必须是回测覆盖的交易日
+        raise ValueError(f"窗口起点 {window.start} 不在回测 NAV 索引内") from exc
+    start_close_nav = float(nav.iloc[position])
+    if position > 0:
+        base_date = index[position - 1]
+        base_nav = float(nav.iloc[position - 1])
+    else:
+        base_date = window.start
+        base_nav = start_close_nav
+    return _as_date(base_date), base_nav, start_close_nav
+
+
+def daily_returns(result: BacktestResult, days: Sequence[date]) -> tuple[pd.Series, pd.Series]:
+    """给定交易日的策略/基准日收益（小数，已对齐；不含缺失日）。"""
+    day_list = list(days)
+    strategy_returns = result.nav.pct_change().reindex(day_list)
+    benchmark_returns = result.benchmark_nav.pct_change().reindex(day_list)
+    mask = strategy_returns.notna() & benchmark_returns.notna()
+    return strategy_returns[mask], benchmark_returns[mask]
+
+
 def window_total_returns(result: BacktestResult, window: WindowSpec) -> tuple[float, float, float]:
     """窗口内策略/基准累计收益（小数）与超额（bp）。
 
-    用窗口内逐日收益连乘（窗口首日无前收，故首日收益不计）；样本起点重置的回测
-    首日 NAV = 初始现金，因此该口径与"期末/期初 NAV − 1"一致。
+    用窗口日收益连乘；连续模式下首个日收益来自"前一收盘→该窗首日"，因此基期与
+    :func:`window_return_basis` 返回的 ``return_base_nav`` 一致（不删边界收益）。
     """
-    nav = result.nav
-    benchmark = result.benchmark_nav
-    days = list(window.days)
-    strategy_returns = nav.pct_change().reindex(days)
-    benchmark_returns = benchmark.pct_change().reindex(days)
-    mask = strategy_returns.notna() & benchmark_returns.notna()
-    strategy_total = (
-        float((1.0 + strategy_returns[mask]).prod() - 1.0) if mask.any() else float("nan")
-    )
-    benchmark_total = (
-        float((1.0 + benchmark_returns[mask]).prod() - 1.0) if mask.any() else float("nan")
-    )
-    excess_bp = (strategy_total - benchmark_total) * 1e4
-    return strategy_total, benchmark_total, excess_bp
+    strategy_returns, benchmark_returns = daily_returns(result, window.days)
+    if len(strategy_returns) == 0:
+        nan = float("nan")
+        return nan, nan, nan
+    strategy_total = float((1.0 + strategy_returns).prod() - 1.0)
+    benchmark_total = float((1.0 + benchmark_returns).prod() - 1.0)
+    return strategy_total, benchmark_total, (strategy_total - benchmark_total) * 1e4
 
 
 def window_active_returns(result: BacktestResult, window: WindowSpec) -> pd.Series:
-    """窗口内日频主动收益 ``r_strategy,t − r_benchmark,t``（小数）。"""
-    days = list(window.days)
-    strategy_returns = result.nav.pct_change().reindex(days)
-    benchmark_returns = result.benchmark_nav.pct_change().reindex(days)
-    mask = strategy_returns.notna() & benchmark_returns.notna()
-    active = strategy_returns[mask] - benchmark_returns[mask]
-    active.name = "active_return"
-    return active
+    """窗口内日频主动收益 ``r_strategy,t − r_benchmark,t``（小数）。
+
+    连续模式下包含"前一收盘→该窗首日"的边界收益（与累计收益口径一致，不漏日）。
+    """
+    strategy_returns, benchmark_returns = daily_returns(result, window.days)
+    return (strategy_returns - benchmark_returns).rename("active_return")
 
 
 def _date_column(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -233,6 +271,14 @@ def _date_column(frame: pd.DataFrame, column: str) -> pd.Series:
     return frame[column].map(_as_date)
 
 
+def _max_drawdown(nav: pd.Series) -> float:
+    if len(nav) == 0:
+        return float("nan")
+    values = nav.astype(float)
+    peak = values.cummax()
+    return float((values / peak - 1.0).min())
+
+
 def window_metrics(
     result: BacktestResult,
     window: WindowSpec,
@@ -241,15 +287,29 @@ def window_metrics(
 ) -> dict[str, Any]:
     """窗口描述统计：收益/超额、成本、换手、成交、暴露、违规。
 
-    暴露指标见 :func:`ficc.research.exposure.active_exposure_metrics`
-    （warmup 日剔除：只统计有持仓交易日）。
+    收益基期见 :func:`window_return_basis`：``return_base_nav`` 才是累计收益的
+    真实分母（continuous=该窗前收；reset=该窗重置 NAV），``start_close_nav`` 只是
+    首日收盘参考值。``ann_return``/``max_drawdown`` 为窗口内口径（年化用窗口内日收益
+    观测数；连续模式 MDD 从基期 NAV 起算）。
     """
     from ficc.research.exposure import active_exposure_metrics, tracking_error_bp
 
     days = list(window.days)
     strategy_total, benchmark_total, excess_bp = window_total_returns(result, window)
     active = window_active_returns(result, window)
-    ann_excess_bp = float(active.mean()) * float(annual_days) * 1e4 if len(active) else float("nan")
+    n_obs = len(active)
+    ann_excess_bp = float(active.mean()) * float(annual_days) * 1e4 if n_obs else float("nan")
+    base_date, base_nav, start_close_nav = window_return_basis(result, window)
+    final_nav = (
+        float(result.nav.loc[window.end]) if window.end in result.nav.index else float("nan")
+    )
+    ann_return = (
+        (1.0 + strategy_total) ** (float(annual_days) / n_obs) - 1.0
+        if n_obs > 0 and np.isfinite(strategy_total)
+        else float("nan")
+    )
+    nav_path = result.nav.loc[base_date : window.end]
+    max_drawdown = _max_drawdown(nav_path)
 
     costs = result.costs
     cost_dates = _date_column(costs, "date")
@@ -278,18 +338,22 @@ def window_metrics(
     exposure_slice = exposure.loc[exposure_dates.isin(days)].reset_index(drop=True)
     exposure_metrics = active_exposure_metrics(exposure_slice)
 
-    nav_slice = result.nav.reindex(days)
     metrics: dict[str, Any] = {
         "start": window.start,
         "end": window.end,
         "n_days": int(window.n_days),
-        "n_obs": len(active),
-        "initial_nav": float(nav_slice.iloc[0]) if len(nav_slice) else float("nan"),
-        "final_nav": float(nav_slice.iloc[-1]) if len(nav_slice) else float("nan"),
+        "partial": bool(window.partial),
+        "n_obs": n_obs,
+        "return_base_date": base_date,
+        "return_base_nav": base_nav,
+        "start_close_nav": start_close_nav,
+        "final_nav": final_nav,
         "strategy_total_return": strategy_total,
         "benchmark_total_return": benchmark_total,
         "excess_bp": excess_bp,
         "ann_excess_bp": ann_excess_bp,
+        "ann_return": ann_return,
+        "max_drawdown": max_drawdown,
         "tracking_error_bp": tracking_error_bp(active, annual_days=annual_days),
         "total_fee": float(cost_slice["fee"].sum()) if len(cost_slice) else 0.0,
         "total_funding": float(cost_slice["funding"].sum()) if len(cost_slice) else 0.0,

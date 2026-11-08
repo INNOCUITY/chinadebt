@@ -33,6 +33,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from run_strategies import (  # noqa: E402
     CarryRollStrategy,
+    ExactReplayStrategy,
     RelativeValueStrategy,
     SteepenerStrategy,
     ZeroTiltStrategy,
@@ -55,6 +56,8 @@ DEFAULT_START = date(2019, 1, 28)
 DEFAULT_END = date(2020, 12, 31)
 QUICK_START = date(2019, 1, 28)
 QUICK_END = date(2019, 3, 29)
+ROLLING_START = date(2019, 1, 28)
+ROLLING_END = date(2021, 12, 31)
 
 BRIDGE_ABS_TOL = 1e-5  # 元（真实 480 天实测 ≤3.6e-8）
 ZERO_TILT_EXCESS_TOL_BP = 1.0
@@ -201,17 +204,54 @@ def _run_one(name, strategy, panel, funding, calendar, cfg) -> None:
         f"有持仓日 {len(held)} 天，违规 {cv_fail} 天",
     )
 
+    if getattr(result, "roll_events", None) is not None and len(result.roll_events):
+        events = result.roll_events
+        missing = int((events["status"] == "missing_strategy_trade").sum())
+        rejected = events[events["status"] == "rejected_constraint"]
+        _add(
+            rows,
+            name,
+            "roll_event_same_day",
+            missing == 0,
+            f"滚动事件 {len(events)} 个，缺策略同日成交 {missing} 个，约束拒绝 {len(rejected)} 个",
+        )
+        unexplained = rejected[rejected["reason"].fillna("") == ""]
+        _add(
+            rows,
+            name,
+            "roll_event_rejection_audited",
+            len(unexplained) == 0,
+            f"约束拒绝 {len(rejected)} 个，缺原因 {len(unexplained)} 个",
+        )
+        bench_dates = set(pd.to_datetime(events["date"]).dt.date)
+        strat_dates = (
+            set(pd.to_datetime(result.trades["trade_date"]).dt.date)
+            if len(result.trades)
+            else set()
+        )
+        _add(
+            rows,
+            name,
+            "roll_event_dates",
+            bench_dates <= strat_dates,
+            f"基准换券日 {sorted(bench_dates)}，策略缺 {sorted(bench_dates - strat_dates)}",
+        )
+
     total_ret = result.nav.iloc[-1] / result.nav.iloc[0] - 1.0
     bench_ret = result.benchmark_nav.iloc[-1] / result.benchmark_nav.iloc[0] - 1.0
     excess_bp = (total_ret - bench_ret) * 1e4
-    if name == "zero_tilt":
+    if name.startswith("zero_tilt"):
+        tol = (
+            2.0
+            if getattr(result, "benchmark_version", "") == "rolling"
+            else ZERO_TILT_EXCESS_TOL_BP
+        )
         _add(
             rows,
             name,
             "zero_tilt_control",
-            abs(excess_bp) <= ZERO_TILT_EXCESS_TOL_BP,
-            f"excess={excess_bp:.4f}bp（阈值 ±{ZERO_TILT_EXCESS_TOL_BP:g}bp），"
-            f"成交 {len(result.trades)} 笔",
+            abs(excess_bp) <= tol,
+            f"excess={excess_bp:.4f}bp（阈值 ±{tol:g}bp），成交 {len(result.trades)} 笔",
         )
     return rows, result, attr
 
@@ -223,11 +263,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", type=date.fromisoformat, default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument(
+        "--rolling",
+        action="store_true",
+        help="滚动政策 roll_v1 + 滚动基准版本（2019–2021），覆盖长样本执行/滚动契约",
+    )
     args = parser.parse_args(argv)
 
     cfg = get_config(args.config)
-    START = args.start or (QUICK_START if args.quick else DEFAULT_START)
-    END = args.end or (QUICK_END if args.quick else DEFAULT_END)
+    if args.rolling:
+        from run_long_sample import rolling_config
+
+        cfg = rolling_config(cfg)
+    START = args.start or (
+        QUICK_START if args.quick else (ROLLING_START if args.rolling else DEFAULT_START)
+    )
+    END = args.end or (QUICK_END if args.quick else (ROLLING_END if args.rolling else DEFAULT_END))
 
     panel, funding, calendar = load_market(cfg)
     from ficc.curve.fitting import fit_panel
@@ -241,7 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     residual_bp.columns = [float(c) for c in residual_bp.columns]
 
-    strategies = [("zero_tilt", ZeroTiltStrategy())]
+    strategies = [
+        ("zero_tilt_exact", ExactReplayStrategy())
+        if args.rolling
+        else ("zero_tilt", ZeroTiltStrategy())
+    ]
     if not args.quick:
         strategies += [
             ("carry_roll", CarryRollStrategy()),
@@ -257,7 +312,10 @@ def main(argv: list[str] | None = None) -> int:
     summary = pd.DataFrame(rows)
     out = cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(out / "acceptance_summary.csv", index=False, encoding="utf-8-sig")
+    summary_path = out / (
+        "acceptance_summary_rolling.csv" if args.rolling else "acceptance_summary.csv"
+    )
+    summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
 
     print("\n=== 统一验收（策略 + 归因 + 独立估值 + 对账）===")
     with pd.option_context("display.width", 220):

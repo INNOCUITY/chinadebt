@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:  # 避免运行时循环导入
     import pandas as pd
 
@@ -86,6 +88,33 @@ class MarketContext:
     cash: float
     positions: tuple[PositionView, ...]
     cfg: Config
+
+
+@dataclass(frozen=True)
+class TargetFaces:
+    """策略输出的**目标面值**（元，按券代码）。用于"精确基准回放"控制组。
+
+    与 ``TargetKRD`` 不同，面值目标绕过 KRD 求解/整手映射，直接按基准逐腿面值下单，
+    用于把"执行调度/求解偏差"从策略行为中分离出来（审查 R37/R38 计划）。
+    """
+
+    as_of: date
+    faces: Mapping[str, float]
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.faces:
+            raise ValueError("TargetFaces.faces 不能为空")
+        for code, face in self.faces.items():
+            if not isinstance(code, str) or not code:
+                raise ValueError(f"TargetFaces 的券代码非法：{code!r}")
+            if not np.isfinite(face) or face < 0:
+                raise ValueError(f"TargetFaces 面值必须是非负有限数：{code}={face!r}")
+
+    @property
+    def total_dv01(self) -> float:
+        # 面值目标不携带 KRD；日志/审计只展示面值合计
+        return float(sum(self.faces.values()))
 
 
 @dataclass(frozen=True)

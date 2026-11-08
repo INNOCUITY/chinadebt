@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（593 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（608 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（593 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（608 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -129,14 +129,14 @@ make check    # = ruff check + ruff format --check + pytest（593 项离线，ex
 - 研究结论边界未放宽：10Y 残差只能称「持续的**模型相对**残差」，经济解释与交易性均标记 untested；2024–2025 已参与方法选择，不再称"未触碰测试集"。
 - 详细证据见 [code.md R12–R21](docs/code.md)、[方法论 §4.7/§4.8/§7.3/§8.3](docs/03_methodology.md)、[计划 §12.6](docs/01_project_plan.md)。
 
-**Phase 2 第十轮（2026-11-08）：滚动政策、长样本、多窗口与风险验收**
+**Phase 2 第十一轮（2026-11-08，R37–R41 修复）**：执行/滚动契约与风险口径已重做，验收范围仍分开报告。
 
-- **滚动政策（冻结）**：`roll_v1_trigger1y_parissue` —— 剩余期限 <1Y 时显式卖旧买新、平价发行；策略与基准共用；`benchmark_version` 区分 v1 买持（2019–2020 复现）与 v2 滚动（长样本），引擎强制校验，二者不可混比。
-- **长样本 2019-01-28→2025-12-31（1730 交易日，滚动基准 v2）**：零 tilt 控制 −1.10bp（基线漂移）；carry_roll −121.9bp、2s10s −29.8bp、rv −7.1bp；rv 有 1 天被动单券权重边界违规。成本/换手随换券显著上升。
-- **多窗口与区间估计（预注册 HAC lag=5、块 bootstrap 20/2000/固定 seed）**：4 个非重叠 2 年窗；carry_roll 各窗均负（pooled 年化 −13.5bp，HAC t=−3.16，CI [−21.9,−5.1]，bootstrap p=0.009）；2s10s/rv 区间覆盖 0（年化 −3.3/−0.8bp）。**只到"该规则在滚动政策下持续跑输基准"，不构成稳定负 alpha 证明**。
-- **lot=5M +33.45bp 解释**：来自不同主动风险暴露（2s10s 的 Δ市场因子 97%、|DV01 ratio−1| 1.59%→3.18%、TE 8.78→18.49bp、成交 71→10；rv 的 lot=5M 几乎未建主动 tilt）。lot 是整数手约束，不是可调参数。
-- **VaR/ES 与压力测试**：固定组合 95% 历史 VaR 35.67 万 vs KRD 37.47 万（−1.8bp）、ES 49.67 vs 51.65 万；KRD 近似在平行 ±100bp 误差 9.6%/7.2%（凸性）、蝶式 16.4%（曲率）、小幅陡平 <2%。**大幅平行/蝶式不可用 KRD 近似**；风险报告并列全重估与近似，且不消费未修正的归因分项。
-- **验证**：`make check` exit 0（593 项）；`make acceptance` 33/33 PASS；`make recon` 6 执行 + 1 not run；长样本/多窗口/lot/风险脚本均可复跑。
-- 详见 [方法论 §10.14–10.17](docs/03_methodology.md)、[计划 §12.14](docs/01_project_plan.md)、[code.md C-080~C-086](docs/code.md)。
+- **R37 闸门**：投影路径逐时点检查（成交日、各结算日、最晚结算后检查点），不再只看最后快照；T+2 + cash_floor=0 的建仓在成交前被拒；rv 长样本 2023-07-04 的主动单券超限消失（0 违规）。
+- **R38 滚动**：滚动日策略机械同日换券（卖光旧券 + 该腿滚动到基准新券面值，双方共用政策），pending 顺延并记录；`roll_events` 记录事件→成交、状态与拒单原因；新增 `TargetFaces` 精确基准回放控制组，长样本超额 **0.0000bp**，四组均 7/7 同日、0 缺失。
+- **R39 VaR**：改为冻结分析日组合 + 历史冲击（`analysis_as_of + frozen_positions + historical_shocks`）；95% VaR/ES **32.42/44.58 万元**（旧 aging 口径 35.67/49.67 万并列；审查的 YTM 冻结反例 31.82/43.33 万在测试中逐位复现）。
+- **R40 风险近似**：全重估与 KRD 统一 `price_from_spot` + `spot_shock`；小冲击收敛 8.3e-4 / 4.3e-6 / 4.3e-7；平行 ±100bp 8.2%/8.3%、陡平蝶 25bp ≈1.08%、历史 ~1%（旧"蝶式 16.4%"是不同源误差，已纠正）。
+- **R41 报告**：窗口契约改为 3×约 2 年 + 229 日尾窗；收益基期=前收 NAV；`pooled_cumulative_excess_bp`（全段 −120.58bp）与 `pooled_ann_excess_bp`（−13.37bp）、`mean_window_excess_bp`（−25.01bp）明确分列；carry 年化 **3.7358%**、MDD **−4.9915%**；`rolling_version` 填值；文档数字与 CSV 自动核对。
+- **验收**：默认 buyhold `make acceptance` **33/33 PASS**；滚动 `make acceptance-rolling` **45/45 PASS**；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
+- **边界**：主 VaR 用即期空间（与审查 YTM 冻结空间差 +1.9%/+2.9%，已并列）；price-only VaR 不含持有期 carry/现金事件；滚动基准为面值保持政策；重叠窗口不做推断。ML/RL 仅可先做 as-of/split 接口与零信号基线，绩效比较待 rolling/风险验收固定后。
 
 **历史轮次（R31–R36）**：执行状态、对偶因子基、独立估值、到期退出与统一验收——见方法论 §10.7–10.13 与 code.md C-071~C-079。

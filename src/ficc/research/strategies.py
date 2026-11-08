@@ -25,6 +25,7 @@ from ficc.strategy.relative_value import RelativeValueStrategy
 
 __all__ = [
     "STRATEGY_NAMES",
+    "ExactReplayStrategy",
     "ZeroTiltStrategy",
     "build_strategy_factories",
     "fit_residual_panel",
@@ -44,6 +45,24 @@ class ZeroTiltStrategy:
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD:
         return TargetKRD(as_of=ctx.as_of, krd=dict(ctx.benchmark.krd), notes="控制组：零 tilt")
+
+
+class ExactReplayStrategy:
+    """精确基准面值回放控制组（rolling 政策下替代 KRD 零 tilt）。
+
+    同政策、同成交下超额应为 0；用于把执行/求解偏差从控制组中分离（R37/R38 计划）。
+    """
+
+    name = "zero_tilt"
+
+    def target_krd(self, ctx: MarketContext) -> Any:
+        from ficc.portfolio.types import TargetFaces
+
+        return TargetFaces(
+            as_of=ctx.as_of,
+            faces={leg.bond.code: leg.face_value for leg in ctx.benchmark.legs},
+            notes="控制组：精确基准面值回放",
+        )
 
 
 def fit_residual_panel(panel: pd.DataFrame, cfg: Config, end: date | None = None) -> pd.DataFrame:
@@ -74,8 +93,13 @@ def build_strategy_factories(
     residuals: pd.DataFrame | None = None
     if "rv" in requested:
         residuals = fit_residual_panel(panel, cfg, end)
+    control = (
+        ExactReplayStrategy
+        if str(getattr(resolved := cfg.backtest.benchmark_version, "value", resolved)) == "rolling"
+        else ZeroTiltStrategy
+    )
     factories: dict[str, Callable[[], Any]] = {
-        "zero_tilt": ZeroTiltStrategy,
+        "zero_tilt": control,
         "carry_roll": CarryRollStrategy,
         "2s10s": SteepenerStrategy,
         "rv": lambda: RelativeValueStrategy(residuals=residuals),

@@ -3,7 +3,7 @@
 
 研究问题
 --------
-1. 把历史样本切成**多个独立窗口**（默认 2 年/窗），逐窗报告策略/基准收益、超额、
+1. 把历史样本切成多个窗口（默认标称 2 年/窗），逐窗报告策略/基准收益、超额、
    成本分项、换手、成交、主动 DV01/久期偏离、违规与拒单；
 2. 对日频主动收益 ``active_t = r_strategy,t − r_benchmark,t`` 做**考虑时间相关性**
    的区间估计：Newey-West HAC（lag=5）t 统计量/95% CI + 固定块 bootstrap
@@ -13,28 +13,35 @@
 ``HAC_LAG=5``、``BOOTSTRAP_BLOCK=20``、``BOOTSTRAP_REPS=2000``、
 ``BOOTSTRAP_SEED=20261108``、年化 250 交易日。``--quick`` 只把 bootstrap 次数降到
 200 以便测试（输出中记录 ``boot_reps``），其余统计口径不变。
+"固定常量"只表示不再按结果调参；若称"预注册"，须另行记录冻结提交/时间（R41）。
 
-**窗口是否独立/每窗重置（必须一起披露）**：
-- 当前买持基准（buyhold）的合成券宇宙在回测起点一次性生成、固定面值持有到期末；
-  若把一条长回测切成子区间，后段基准会因短券到期变成现金、失去可比性。因此
-  buyhold 默认 ``--mode reset``：**每个窗口独立跑一次引擎**（窗口起点重建宇宙与
-  基准），不把窗口拼成连续净值（计划 §12.12-B "每窗重置"要求）；并按最短期限券
-  的 T+1 结算日晚于到期日的问题，把每窗右端收缩到最后一个可估值交易日
-  （被裁掉的交易日顺延为下一窗起点，仍不重不漏）。
-- 滚动基准（``--benchmark-version rolling``，引擎已支持 ``portfolio.rolling`` 与
-  ``backtest.benchmark_version``）默认 ``--mode continuous``：一条长回测按日期切窗，
-  滚动政策保证短券到期/换券连续可比；脚本会自动在内存里开启滚动政策并记录
-  ``rolling_version``（不修改 config.yaml）。
-- 非重叠窗口之间也是**不同起点的独立回测**，不是同一路径的连续样本；窗口数少时
-  CI 只作描述，不能当显著性检验。
-- ``--overlap`` 追加**重叠窗口**（step=1 年）：重叠窗口不是独立样本，逐窗 CI/p
-  仅描述，禁止据此做显著性判断；``pooled`` 行只是把各窗主动收益按日拼接的展示。
+**窗口结构与模式（必须一起披露，R41）**
+- 实际窗口由 ``n_days`` + ``partial`` 两列披露：默认样本
+  2019-01-28→2025-12-31 为 **W1–W3 约两年整窗 + W4 229 日尾窗（partial=True）**，
+  不是"四个完整两年窗"。
+- ``--mode continuous``（rolling 基准默认）：**一条长回测按日期切窗，净值连续**；
+  后窗累计收益包含"前一交易日收盘→该窗首日"的边界收益，因此收益基期是
+  **该窗前收 NAV**（首个窗口为样本首日 NAV），CSV 用 ``return_base_date`` /
+  ``return_base_nav`` 显式导出；``start_close_nav`` 只是首日收盘参考值。
+- ``--mode reset``（buyhold 基准默认）：每窗独立跑一次引擎（窗口起点重建宇宙与
+  基准），收益基期 = **该窗重置 NAV**（=首日收盘 NAV）；窗口之间不是连续净值。
+  买持基准下还会按最短期限券的 T+1 到期日收缩窗口右端（被裁日顺延下一窗起点）。
+- ``--overlap`` 追加重叠窗口：**重叠窗口不是独立样本**，逐窗 CI/p 仅描述；
+  pooled 行不拼接重复日期、不做区间推断（R41）。
+
+**pooled 语义（R41）**
+- ``pooled_cumulative_excess_bp``：全段累计超额 = 策略日收益复利累计 − 基准日收益
+  复利累计（continuous 为真实连续路径；reset 为各独立窗日收益按日拼接的示意）
+- ``pooled_ann_excess_bp``：全段日频主动收益均值 × 250（bp，年化）
+- ``mean_window_excess_bp``：各窗累计超额（``excess_bp``）的**算术均值**（旧语义，
+  保留但明确命名，不再叫 pooled）
+- HAC / bootstrap 列统一标注 ``*_ann_bp``（年化口径）；窗口数少时区间只作描述。
 
 产物
 ----
-``reports/windows_summary.csv``   逐窗口描述统计；
+``reports/windows_summary.csv``   逐窗口描述统计（含 ``n_days``/``partial``/收益基期）；
 ``reports/windows_inference.csv`` 策略×窗口集合的 HAC/块 bootstrap 区间估计
-（逐窗 + ``pooled`` 描述行）。
+（逐窗 + ``pooled`` 行；rolling 基准时 ``rolling_version`` 必须非空）。
 
 用法::
 
@@ -74,9 +81,12 @@ from ficc.research import (  # noqa: E402
     annualized_inference,
     build_strategy_factories,
     build_windows,
+    daily_returns,
     resolve_benchmark_version,
+    tracking_error_bp,
     window_active_returns,
     window_metrics,
+    window_return_basis,
 )
 
 DEFAULT_START = date(2019, 1, 28)
@@ -95,13 +105,18 @@ WINDOWS_SUMMARY_COLUMNS: tuple[str, ...] = (
     "start",
     "end",
     "n_days",
+    "partial",
     "n_obs",
-    "initial_nav",
+    "return_base_date",
+    "return_base_nav",
+    "start_close_nav",
     "final_nav",
     "strategy_total_return",
     "benchmark_total_return",
     "excess_bp",
     "ann_excess_bp",
+    "ann_return",
+    "max_drawdown",
     "tracking_error_bp",
     "total_fee",
     "total_funding",
@@ -127,6 +142,7 @@ WINDOWS_SUMMARY_COLUMNS: tuple[str, ...] = (
     "krd_abs_dev_max",
     "krd_abs_dev_max_bucket",
     "config_hash",
+    "window_structure",
 )
 
 WINDOWS_INFERENCE_COLUMNS: tuple[str, ...] = (
@@ -139,10 +155,22 @@ WINDOWS_INFERENCE_COLUMNS: tuple[str, ...] = (
     "start",
     "end",
     "n_windows",
+    "n_days",
+    "partial",
+    "return_base_date",
+    "return_base_nav",
+    "start_close_nav",
     "n_obs",
     "excess_bp",
     "ann_excess_bp",
     "tracking_error_bp",
+    "pooled_cumulative_excess_bp",
+    "pooled_ann_excess_bp",
+    "mean_window_excess_bp",
+    "pooled_strategy_total_return",
+    "pooled_benchmark_total_return",
+    "ann_return",
+    "max_drawdown",
     "hac_lag",
     "hac_se_ann_bp",
     "hac_t",
@@ -157,15 +185,10 @@ WINDOWS_INFERENCE_COLUMNS: tuple[str, ...] = (
     "note",
 )
 
-NOTE_NONOVERLAP = (
-    "非重叠窗口（每窗独立重置的回测）；窗口数少时 HAC/bootstrap 区间只作描述，不能当显著性检验"
-)
-NOTE_OVERLAP = "重叠窗口不是独立样本：逐窗 CI/p 仅描述，禁止据此做显著性判断"
-NOTE_POOLED = (
-    "pooled=按日拼接各窗主动收益（窗口独立重置，不构成连续净值）；仅描述，不把窗口当 iid 样本"
-)
 
-
+# ---------------------------------------------------------------------------
+# 窗口/说明
+# ---------------------------------------------------------------------------
 def _parse_strategies(text: str | None, *, quick: bool) -> list[str]:
     if text:
         names = [name.strip() for name in text.split(",") if name.strip()]
@@ -179,6 +202,65 @@ def _parse_strategies(text: str | None, *, quick: bool) -> list[str]:
     return names
 
 
+def _window_structure(windows: list[WindowSpec], window_years: int) -> str:
+    """人类可读的窗口结构（R41：必须体现"约两年整窗 + 尾窗"）。"""
+    full = [window for window in windows if not window.partial]
+    partial = [window for window in windows if window.partial]
+    parts: list[str] = []
+    if full:
+        if len(full) == 1:
+            parts.append(f"{full[0].label} 为约 {window_years} 年整窗（{full[0].n_days} 日）")
+        else:
+            sizes = "/".join(str(window.n_days) for window in full)
+            parts.append(
+                f"{full[0].label}–{full[-1].label} 为约 {window_years} 年整窗（{sizes} 日）"
+            )
+    for window in partial:
+        parts.append(f"{window.label} 为 {window.n_days} 日尾窗（partial=True）")
+    return "；".join(parts)
+
+
+def _mode_phrase(mode: str) -> str:
+    if mode == "continuous":
+        return "连续回测按日期切窗（净值连续；逐窗收益基期=该窗前收 NAV，首个窗口=样本首日 NAV）"
+    return "非重叠窗口（每窗独立重置回测；逐窗收益基期=该窗重置 NAV）"
+
+
+def _window_note(mode: str, window_set: str, structure: str) -> str:
+    if window_set == "overlap":
+        return (
+            "重叠窗口不是独立样本：逐窗 CI/p 仅描述，禁止据此做显著性判断；"
+            f"{_mode_phrase(mode)}；窗口结构：{structure}"
+        )
+    return (
+        f"{_mode_phrase(mode)}；窗口结构：{structure}；"
+        "窗口数少时 HAC/bootstrap 区间只作描述，不能当显著性检验"
+    )
+
+
+def _pooled_note(mode: str, window_set: str, structure: str, valid: bool) -> str:
+    if window_set == "overlap" or not valid:
+        return (
+            "重叠/重复日期不拼接 pooled 序列，不对拼接序列做 HAC/bootstrap 推断"
+            "（R41）；仅列 mean_window_excess_bp 作描述；"
+            f"窗口结构：{structure}"
+        )
+    if mode == "continuous":
+        return (
+            "pooled=连续路径：策略/基准各自按日复利后相减得全段累计超额；"
+            "HAC/bootstrap 基于全段日频主动收益（年化口径，列名 *_ann_bp）；"
+            f"窗口结构：{structure}；仅描述，不把窗口当 iid 样本"
+        )
+    return (
+        "pooled=各独立重置窗口的日收益按日期拼接后复利（示意，不构成连续净值；"
+        "ann_return/max_drawdown 不可定义）；HAC/bootstrap 基于拼接日频主动收益；"
+        f"窗口结构：{structure}；仅描述"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 引擎与统计
+# ---------------------------------------------------------------------------
 def _run_engine(
     factory: Any,
     resolution: BenchmarkResolution,
@@ -226,6 +308,14 @@ def _inference_fields(active: pd.Series, *, reps: int, annual_days: int) -> dict
     }
 
 
+def _max_drawdown(nav: pd.Series) -> float:
+    values = nav.astype(float)
+    if len(values) == 0:
+        return float("nan")
+    peak = values.cummax()
+    return float((values / peak - 1.0).min())
+
+
 def _summary_row(
     strategy: str,
     window_set: str,
@@ -236,6 +326,7 @@ def _summary_row(
     benchmark_version: str,
     rolling_version: str,
     config_hash: str,
+    structure: str,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "strategy": strategy,
@@ -245,40 +336,11 @@ def _summary_row(
         "benchmark_version": benchmark_version,
         "rolling_version": rolling_version,
         "config_hash": config_hash,
+        "window_structure": structure,
     }
     row.update(metrics)
+    row["return_base_date"] = str(row["return_base_date"])
     return row
-
-
-def _inference_row(
-    strategy: str,
-    window_set: str,
-    *,
-    label: str,
-    start: date,
-    end: date,
-    n_windows: int,
-    excess_bp: float,
-    tracking_error: float,
-    fields: dict[str, float],
-    mode: str,
-    benchmark_version: str,
-    note: str,
-) -> dict[str, Any]:
-    return {
-        "strategy": strategy,
-        "window_set": window_set,
-        "window": label,
-        "mode": mode,
-        "benchmark_version": benchmark_version,
-        "start": str(start),
-        "end": str(end),
-        "n_windows": n_windows,
-        "excess_bp": excess_bp,
-        "tracking_error_bp": tracking_error,
-        **fields,
-        "note": note,
-    }
 
 
 def _collect_results(
@@ -314,6 +376,128 @@ def _collect_results(
     return results
 
 
+def _pooled_fields(
+    *,
+    strategy_returns: list[pd.Series],
+    benchmark_returns: list[pd.Series],
+    window_excess: list[float],
+    windows: list[WindowSpec],
+    mode: str,
+    continuous_result: Any | None,
+    sample_days: list[date],
+    annual_days: int,
+    bootstrap_reps: int,
+    window_set: str,
+    structure: str,
+) -> tuple[dict[str, Any], str]:
+    """计算 pooled 行字段（R41：全段累计超额 vs 窗口算术均值分开命名）。"""
+    nan = float("nan")
+    mean_window = float(np.nanmean(window_excess)) if window_excess else nan
+    fields: dict[str, Any] = {
+        "excess_bp": nan,
+        "ann_excess_bp": nan,
+        "tracking_error_bp": nan,
+        "n_obs": 0.0,
+        "pooled_cumulative_excess_bp": mean_window,
+        "pooled_ann_excess_bp": nan,
+        "mean_window_excess_bp": mean_window,
+        "pooled_strategy_total_return": nan,
+        "pooled_benchmark_total_return": nan,
+        "ann_return": nan,
+        "max_drawdown": nan,
+        "hac_lag": nan,
+        "hac_se_ann_bp": nan,
+        "hac_t": nan,
+        "hac_ci_low_bp": nan,
+        "hac_ci_high_bp": nan,
+        "boot_block": nan,
+        "boot_reps": nan,
+        "boot_seed": nan,
+        "boot_ci_low_bp": nan,
+        "boot_ci_high_bp": nan,
+        "boot_p_value": nan,
+    }
+    if window_set == "overlap":
+        fields["pooled_cumulative_excess_bp"] = nan
+        return fields, _pooled_note(mode, window_set, structure, valid=False)
+    if not strategy_returns or not benchmark_returns:
+        return fields, _pooled_note(mode, "nonoverlap", structure, valid=False)
+
+    strategy_rets = pd.concat(strategy_returns).sort_index()
+    benchmark_rets = pd.concat(benchmark_returns).sort_index()
+    if strategy_rets.index.has_duplicates or benchmark_rets.index.has_duplicates:
+        fields["pooled_cumulative_excess_bp"] = nan
+        return fields, _pooled_note(mode, "overlap", structure, valid=False)
+    if not strategy_rets.index.equals(benchmark_rets.index):
+        raise RuntimeError("pooled 策略/基准日收益索引不一致（实现错误）")
+
+    active = (strategy_rets - benchmark_rets).rename("active_return")
+    stats = _inference_fields(active, reps=bootstrap_reps, annual_days=annual_days)
+    pooled_strategy_total = float((1.0 + strategy_rets).prod() - 1.0)
+    pooled_benchmark_total = float((1.0 + benchmark_rets).prod() - 1.0)
+    pooled_cumulative = (pooled_strategy_total - pooled_benchmark_total) * 1e4
+    fields.update(
+        {
+            "pooled_cumulative_excess_bp": pooled_cumulative,
+            "pooled_ann_excess_bp": stats["ann_excess_bp"],
+            "mean_window_excess_bp": mean_window,
+            "pooled_strategy_total_return": pooled_strategy_total,
+            "pooled_benchmark_total_return": pooled_benchmark_total,
+            "tracking_error_bp": tracking_error_bp(active, annual_days=annual_days),
+            **stats,
+        }
+    )
+    if mode == "continuous" and continuous_result is not None:
+        full_nav = continuous_result.nav.reindex(sample_days)
+        fields["ann_return"] = (
+            (1.0 + pooled_strategy_total) ** (float(annual_days) / len(active)) - 1.0
+            if len(active) > 0
+            else nan
+        )
+        fields["max_drawdown"] = _max_drawdown(full_nav)
+    return fields, _pooled_note(mode, window_set, structure, valid=True)
+
+
+def _inference_row(
+    strategy: str,
+    window_set: str,
+    *,
+    label: str,
+    start: date,
+    end: date,
+    n_windows: int,
+    mode: str,
+    benchmark_version: str,
+    rolling_version: str,
+    partial: bool | None,
+    return_base_date: str,
+    return_base_nav: float,
+    start_close_nav: float,
+    n_days: int,
+    details: dict[str, Any],
+    note: str,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "strategy": strategy,
+        "window_set": window_set,
+        "window": label,
+        "mode": mode,
+        "benchmark_version": benchmark_version,
+        "rolling_version": rolling_version,
+        "start": str(start),
+        "end": str(end),
+        "n_windows": n_windows,
+        "n_days": n_days,
+        "partial": partial,
+        "return_base_date": return_base_date,
+        "return_base_nav": return_base_nav,
+        "start_close_nav": start_close_nav,
+        "note": note,
+    }
+    row.update(details)
+    return row
+
+
 def _run_strategy(
     strategy_name: str,
     factory: Any,
@@ -325,6 +509,7 @@ def _run_strategy(
     sample_days: list[date],
     window_sets: list[tuple[str, list[WindowSpec]]],
     mode: str,
+    window_years: int,
     bootstrap_reps: int,
     annual_days: int,
     config_hash: str,
@@ -356,8 +541,22 @@ def _run_strategy(
     summary_rows: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
     for window_set, windows in window_sets:
-        actives: list[pd.Series] = []
+        structure = _window_structure(windows, window_years)
+        strategy_returns: list[pd.Series] = []
+        benchmark_returns: list[pd.Series] = []
         window_excess: list[float] = []
+        first_window = windows[0] if windows else None
+        first_result = results[(first_window.start, first_window.end)] if first_window else None
+        if first_window is not None and first_result is not None:
+            pooled_base_date, pooled_base_nav, pooled_start_close = window_return_basis(
+                first_result, first_window
+            )
+        else:  # pragma: no cover - 窗口集不会为空
+            pooled_base_date, pooled_base_nav, pooled_start_close = (
+                sample_days[0],
+                float("nan"),
+                float("nan"),
+            )
         for window in windows:
             result = results[(window.start, window.end)]
             metrics = window_metrics(result, window, annual_days=annual_days)
@@ -371,12 +570,15 @@ def _run_strategy(
                     benchmark_version=resolution.effective,
                     rolling_version=resolution.rolling_version,
                     config_hash=config_hash,
+                    structure=structure,
                 )
             )
-            active = window_active_returns(result, window)
-            actives.append(active)
+            window_strategy_returns, window_benchmark_returns = daily_returns(result, window.days)
+            strategy_returns.append(window_strategy_returns)
+            benchmark_returns.append(window_benchmark_returns)
             window_excess.append(float(metrics["excess_bp"]))
-            note = NOTE_OVERLAP if window_set == "overlap" else NOTE_NONOVERLAP
+            active = window_active_returns(result, window)
+            window_note = _window_note(mode, window_set, structure)
             inference_rows.append(
                 _inference_row(
                     strategy_name,
@@ -385,42 +587,65 @@ def _run_strategy(
                     start=window.start,
                     end=window.end,
                     n_windows=len(windows),
-                    excess_bp=float(metrics["excess_bp"]),
-                    tracking_error=float(metrics["tracking_error_bp"]),
-                    fields=_inference_fields(active, reps=bootstrap_reps, annual_days=annual_days),
                     mode=mode,
                     benchmark_version=resolution.effective,
-                    note=note,
+                    rolling_version=resolution.rolling_version,
+                    partial=bool(window.partial),
+                    return_base_date=str(metrics["return_base_date"]),
+                    return_base_nav=float(metrics["return_base_nav"]),
+                    start_close_nav=float(metrics["start_close_nav"]),
+                    n_days=int(metrics["n_days"]),
+                    details={
+                        "excess_bp": float(metrics["excess_bp"]),
+                        "ann_excess_bp": float(metrics["ann_excess_bp"]),
+                        "tracking_error_bp": float(metrics["tracking_error_bp"]),
+                        **_inference_fields(active, reps=bootstrap_reps, annual_days=annual_days),
+                    },
+                    note=window_note,
                 )
             )
-        pooled = pd.concat(actives) if actives else pd.Series(dtype=float)
-        pooled = pooled.sort_index()
+
+        pooled_fields, pooled_note = _pooled_fields(
+            strategy_returns=strategy_returns,
+            benchmark_returns=benchmark_returns,
+            window_excess=window_excess,
+            windows=windows,
+            mode=mode,
+            continuous_result=continuous_result,
+            sample_days=sample_days,
+            annual_days=annual_days,
+            bootstrap_reps=bootstrap_reps,
+            window_set=window_set,
+            structure=structure,
+        )
         inference_rows.append(
             _inference_row(
                 strategy_name,
                 window_set,
                 label="pooled",
-                start=windows[0].start if windows else sample_days[0],
+                start=first_window.start if first_window else sample_days[0],
                 end=windows[-1].end if windows else sample_days[-1],
                 n_windows=len(windows),
-                excess_bp=float(np.nanmean(window_excess)) if window_excess else float("nan"),
-                tracking_error=float("nan"),
-                fields=_inference_fields(pooled, reps=bootstrap_reps, annual_days=annual_days),
                 mode=mode,
                 benchmark_version=resolution.effective,
-                note=NOTE_OVERLAP if window_set == "overlap" else NOTE_POOLED,
+                rolling_version=resolution.rolling_version,
+                partial=None,
+                return_base_date=str(pooled_base_date),
+                return_base_nav=float(pooled_base_nav),
+                start_close_nav=float(pooled_start_close),
+                n_days=sum(window.n_days for window in windows),
+                details=pooled_fields,
+                note=pooled_note,
             )
         )
     return summary_rows, inference_rows
 
 
+# ---------------------------------------------------------------------------
+# 买持窗口右端上限 / long_sample 核对 / 输出
+# ---------------------------------------------------------------------------
 def _buyhold_end_cap(cfg: Any, calendar: Any) -> Any:
-    """买持基准的窗口右端上限：最后一天 T+1 结算必须早于最早到期券。
-
-    固定面值基准在窗口起点发行合成券，最短期限券（如 2Y）会在「窗口起点 + 期限」
-    到期；引擎按 T+1 结算日估值，因此窗口最后一天的结算日必须严格早于到期日，
-    否则 ``mark_faces`` 会因"已到期无法估值"报错。返回 ``cap(start) -> date``。
-    """
+    """买持基准的窗口右端上限：最后一天 T+1 结算必须早于最早到期券。"""
     tenors = [float(tenor) for tenor in cfg.portfolio.universe]
     if not tenors:
         return None
@@ -447,37 +672,80 @@ def _buyhold_end_cap(cfg: Any, calendar: Any) -> Any:
     return cap
 
 
+def _crosscheck_long_sample(
+    out: Path,
+    *,
+    strategy: str,
+    ann_return: float,
+    max_drawdown: float,
+    pooled_cumulative_excess_bp: float,
+    benchmark_version: str,
+    rolling_version: str,
+) -> str | None:
+    """与 ``reports/long_sample_summary.csv`` 核对 ann/MDD/全段超额（R41 数值一致性）。"""
+    path = out / "long_sample_summary.csv"
+    if not path.exists():
+        return None
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.ParserError):  # pragma: no cover - 产物损坏时不阻断
+        return None
+    if "strategy" not in frame.columns or "ann_return" not in frame.columns:
+        return None
+    mask = frame["strategy"].astype(str) == strategy
+    if "benchmark_version" in frame.columns:
+        mask &= frame["benchmark_version"].astype(str) == benchmark_version
+    if "rolling_version" in frame.columns and rolling_version:
+        mask &= frame["rolling_version"].astype(str) == rolling_version
+    rows = frame.loc[mask]
+    if len(rows) != 1:
+        return None
+    row = rows.iloc[0]
+    delta_ann = float(row["ann_return"]) - ann_return
+    delta_mdd = float(row["max_drawdown"]) - max_drawdown
+    message = f"  long_sample 核对 {strategy}: Δann={delta_ann:+.2e}, ΔMDD={delta_mdd:+.2e}"
+    if "excess_bp" in frame.columns and np.isfinite(pooled_cumulative_excess_bp):
+        delta_excess = float(row["excess_bp"]) - pooled_cumulative_excess_bp
+        message += f", Δ全段超额={delta_excess:+.2e}bp"
+    return message
+
+
 def _print_tables(summary: pd.DataFrame, inference: pd.DataFrame) -> None:
     if len(summary):
-        print("\n=== 逐窗口描述统计 ===")
+        print("\n=== 逐窗口描述统计（收益基期见 return_base_*）===")
         columns = [
             "strategy",
             "window_set",
             "window",
             "n_days",
+            "partial",
+            "return_base_nav",
+            "strategy_total_return",
             "excess_bp",
+            "ann_return",
+            "max_drawdown",
             "ann_excess_bp",
             "tracking_error_bp",
             "total_cost",
-            "total_turnover",
             "n_trades",
-            "avg_abs_dv01_dev",
-            "max_abs_dv01_dev",
-            "avg_abs_duration_dev",
             "n_violation_days",
         ]
-        with pd.option_context("display.width", 300):
+        with pd.option_context("display.width", 320):
             print(
                 summary[columns].to_string(index=False, float_format=lambda value: f"{value:.4f}")
             )
     if len(inference):
-        print("\n=== 区间估计（HAC lag=5；块 bootstrap block=20）===")
+        print("\n=== 区间估计（HAC lag=5；块 bootstrap block=20；*_ann_bp 为年化）===")
         columns = [
             "strategy",
             "window_set",
             "window",
             "n_obs",
-            "ann_excess_bp",
+            "mean_window_excess_bp",
+            "pooled_cumulative_excess_bp",
+            "pooled_ann_excess_bp",
+            "ann_return",
+            "max_drawdown",
             "hac_se_ann_bp",
             "hac_t",
             "hac_ci_low_bp",
@@ -487,12 +755,15 @@ def _print_tables(summary: pd.DataFrame, inference: pd.DataFrame) -> None:
             "boot_p_value",
             "boot_reps",
         ]
-        with pd.option_context("display.width", 300):
+        with pd.option_context("display.width", 340):
             print(
                 inference[columns].to_string(index=False, float_format=lambda value: f"{value:.4f}")
             )
 
 
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="多窗口 + HAC/块 bootstrap 区间估计")
     parser.add_argument("--start", type=date.fromisoformat, default=None)
@@ -504,7 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         help="逗号分隔策略名（zero_tilt/carry_roll/2s10s/rv）",
     )
     parser.add_argument(
-        "--window-years", type=int, default=None, help="每窗年数（默认 2；quick 默认 1）"
+        "--window-years", type=int, default=None, help="每窗标称年数（默认 2；quick 默认 1）"
     )
     parser.add_argument(
         "--mode",
@@ -587,16 +858,21 @@ def main(argv: list[str] | None = None) -> int:
     annual_days = int(resolution.cfg.backtest.annual_days)
     factories = build_strategy_factories(strategy_names, panel, resolution.cfg, end)
 
+    main_structure = _window_structure(window_sets[0][1], window_years)
+    policy_text = f"（政策 {resolution.rolling_version}）" if resolution.rolling_version else ""
+    print(
+        f"\n[windows] 样本 {sample_days[0]} → {sample_days[-1]}（{len(sample_days)} 交易日）；"
+        f"mode={mode}；benchmark={resolution.effective}{policy_text}"
+    )
+    print(f"[windows] 窗口结构：{main_structure}")
+
     summary_rows: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
     config_hash = resolution.cfg.hash()
+    crosscheck_messages: list[str] = []
     for strategy_name, factory in factories:
         n_windows = sum(len(windows) for _set, windows in window_sets)
-        print(
-            f"\n[windows] 策略 {strategy_name}: {len(window_sets)} 个窗口集 / {n_windows} 个窗口 "
-            f"（{start} → {end}，每窗 {window_years} 年，mode={mode}，"
-            f"benchmark={resolution.effective}）"
-        )
+        print(f"\n[windows] 策略 {strategy_name}: {len(window_sets)} 个窗口集 / {n_windows} 个窗口")
         strategy_summary, strategy_inference = _run_strategy(
             strategy_name,
             factory,
@@ -607,12 +883,33 @@ def main(argv: list[str] | None = None) -> int:
             sample_days=sample_days,
             window_sets=window_sets,
             mode=mode,
+            window_years=window_years,
             bootstrap_reps=bootstrap_reps,
             annual_days=annual_days,
             config_hash=config_hash,
         )
         summary_rows.extend(strategy_summary)
         inference_rows.extend(strategy_inference)
+        if mode == "continuous":
+            pooled_rows = [
+                row
+                for row in strategy_inference
+                if row["window_set"] == "nonoverlap" and row["window"] == "pooled"
+            ]
+            if pooled_rows:
+                message = _crosscheck_long_sample(
+                    cfg.paths.abs("reports"),
+                    strategy=strategy_name,
+                    ann_return=float(pooled_rows[0]["ann_return"]),
+                    max_drawdown=float(pooled_rows[0]["max_drawdown"]),
+                    pooled_cumulative_excess_bp=float(
+                        pooled_rows[0]["pooled_cumulative_excess_bp"]
+                    ),
+                    benchmark_version=resolution.effective,
+                    rolling_version=resolution.rolling_version,
+                )
+                if message:
+                    crosscheck_messages.append(message)
 
     summary = pd.DataFrame(summary_rows, columns=list(WINDOWS_SUMMARY_COLUMNS))
     inference = pd.DataFrame(inference_rows, columns=list(WINDOWS_INFERENCE_COLUMNS))
@@ -622,9 +919,15 @@ def main(argv: list[str] | None = None) -> int:
     inference.to_csv(out / "windows_inference.csv", index=False, encoding="utf-8-sig")
 
     _print_tables(summary, inference)
+    if crosscheck_messages:
+        print("\n=== 与 long_sample_summary.csv 的数值核对（R41）===")
+        for message in crosscheck_messages:
+            print(message)
     print(
-        "\n口径提醒：非重叠窗口也是不同起点的独立回测；窗口数少时 CI 只作描述。"
-        "重叠窗口不是独立样本，禁止据此做显著性判断。"
+        "\n口径提醒：逐窗收益基期见 return_base_nav（continuous=该窗前收 NAV、"
+        "reset=该窗重置 NAV）；pooled_cumulative_excess_bp=全段复利累计超额、"
+        "mean_window_excess_bp=各窗累计超额算术均值；窗口数少时 CI 仅描述；"
+        "重叠窗口不做独立样本推断。"
     )
     print(f"\n产物目录: {out}")
     print(f"  - {out / 'windows_summary.csv'}")
