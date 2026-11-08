@@ -145,7 +145,15 @@
 | C-106 | 2026-11-08 | [feat] | ML | 线性基线（Ridge vs 零基线，22 split）与 walk-forward 评估 |
 | C-107 | 2026-11-08 | [feat] | RL | 动作/终止契约 + O(n) rollout 训练路径 |
 | C-108 | 2026-11-08 | [feat] | 验收 | 多日风险契约检查 + 完整七年被动超限披露（92/92） |
-| C-109 | 2026-11-08 | [test] | 测试 | 测试基线 640 → **663 项全绿** |
+| C-109 | 2026-11-08 | [test] | 测试 | 测试基线 640 → 663 项全绿 |
+| C-112 | 2026-11-09 | [fix] | RL | R47：rollout 奖励按相邻估值日 NAV，累计=末−初 |
+| C-113 | 2026-11-09 | [fix] | RL | R48：step/rollout 共用轨迹构造器；动作/缩放/policy 逐字段一致 |
+| C-114 | 2026-11-09 | [fix] | RL | R49：Rollout 返回 TerminalState；新/复用 env 可 terminate |
+| C-115 | 2026-11-09 | [fix] | ML | R50：train_mean/literal_zero 基线命名、重叠实测、holding 定义明确 |
+| C-116 | 2026-11-09 | [feat] | 协议 | protocol_v1 冻结 + 逐档 attempts_detail + 成本后评估器 |
+| C-117 | 2026-11-09 | [test] | 测试 | 测试基线 663 → **673 项全绿** |
+| C-110 | 2026-11-08 | [docs] | 独立审查 | R47–R50：RL 快速路径奖励/动作/终止缺口，ML 基线及重叠口径 |
+| C-111 | 2026-11-08 | [docs] | 计算资源规划 | Mac 示例验证；单卡/8 卡 A800 40GB 正式训练与验收分工 |
 | C-098 | 2026-11-08 | [docs] | 独立审查 | 复核 R37–R41 修复与 ML/RL 原型；登记 R42–R46，多日风险/逐行因果性/动作语义/成本边界 |
 | C-087 | 2026-11-08 | [docs] | 独立审查 | 登记 R37–R41；复核执行/滚动/风险与报告，修订 B 包验收和 ML/RL 推进条件 |
 | C-070 | 2026-11-08 | [docs] | 独立审查 | 复核执行边界、归因与成本对照，登记 R31–R36 并调整下一轮验收顺序 |
@@ -161,7 +169,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：663 passed / 0 failed / 1 deselected（network）/ 约 10 分钟（含真实数据回归与回测）
+基线：673 passed / 0 failed / 1 deselected（network）/ 约 11 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1199,8 +1207,10 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前新增阻塞项（2026-11-08）**：R37（事件路径闸门）、R38（共同滚动执行政策）、
-R39（快照 VaR）和 R40（同源风险近似）须在 ML/RL 绩效验收前关闭；R41 为报告契约修正。
+**当前新增阻塞项（2026-11-08，审查 HEAD `329ff8b`）**：R47（rollout Hold 奖励为 NaN）、
+R48（快速路径动作/政策审计不等价）、R49（rollout 未接终止义务）须在 RL 训练前关闭；
+R50 为 ML 基线名称及标签重叠披露修正。R37–R46 的既有修复按后续复验记录读取，
+不要把历史未修状态当作当前状态。C-110 记录本轮证据与范围。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -2131,6 +2141,165 @@ rolling 2019–2021 **92/92**、延到 2025-12-31 **92/92**。测试 663。
 
 ---
 
+### C-110 [docs] 监督学习与 RL 快速路径独立审查（R47–R50）
+
+- **日期 / 范围**：2026-11-08，HEAD `329ff8b`，同时复查父提交 `86cfad3` 的 R42–R46 修复。
+- **变更**：只维护 README、方法论、推进计划及本审查记录；没有修改业务代码、测试或提交产物。
+- **结论**：ML 数据集与线性基线可复现；规则历史研究可继续。RL 单次引擎回放存在训练轨迹缺陷，
+  尚不能宣称动作/奖励/终止协议整体通过；NAV/成交一致不足以证明接口等价。
+- **复验记录**：见本节末尾；隔离输出至 `/tmp/debt_r13`，不覆盖仓库 reports。
+
+**R47 [P1 / RL 奖励] Hold 日没有 signal_date，rollout 因而生成 NaN reward**
+
+- **位置**：`src/ficc/rl/env.py:880–884`；引擎 no_action 的 gate_decision.signal_date 为 None。
+- **反例**：默认配置、2019-01-28→01-31，首日提交基准 KRD，之后 Hold。rollout 与 step 的 NAV
+  最大差 **0**；01-30 的 step reward **78,259.79899677634 元**、01-31 为
+  **103,616.45750927925 元**，对应 rollout reward 都是 **NaN**；Hold 还被标作 executed。
+- **原因 / 影响**：奖励基期错误地依赖订单 signal_date。没有主动订单并不等于没有市场、费用或票息收益，
+  NaN 将污染训练回报；不能通过删除 Hold 行绕过。
+- **修复验收**：奖励一律用相邻轨迹估值时点的 NAV 差，信号时间另列；所有 reward 有限，
+  总和等于末 NAV−初 NAV。覆盖空仓 Hold、建仓后 Hold、结算/付息、weekly 非调仓日与政策日，
+  逐条对齐 step，不能只比最终 NAV。
+
+**R48 [P1 / RL 动作] rollout 自行拼装记录，丢失真实动作并重新混入政策目标**
+
+- **位置**：`src/ficc/rl/env.py:833–835, 888–934`。
+- **反例一**：policy 按公开接口返回原生 TargetKRD，2019-01-29 实际 4 笔建仓，
+  但 original_action 被记为 Hold，substitution_detail 为 `{}`。
+- **反例二**：沿用契约测试的加速滚动条件 trigger=1.99，01-28→02-15 每日基准 KRD；
+  02-02、02-11 的 outcome 虽为 cancelled_by_policy，projected_target 仍非空且是机械目标。
+  PolicyAction.strategy_trade_ids 实际是 str，而 step 路径与声明类型是 tuple[str, ...]。
+- **其他同源缺口**：快速路径未填 substitution_detail，交易 scale 固定为 1，action_scale 默认 1；
+  正常闸门缩放、风险替代也没有复用 step 的判定逻辑。不能拿这些记录评价策略原动作的效果。
+- **缩放复验**：min_cash_fraction=0，四腿各请求 25M 的 TargetFaces，最终各成交 22M；
+  step 正确记录 scale=**0.88 / scaled**，rollout 却记录 **1.0 / executed**，实际成交总额同为 88M。
+- **修复验收**：共用一个轨迹构造器，原生 TargetKRD/TargetFaces 无损规范化成 ActionSpec；
+  原动作、政策动作、实际成交按 ID 关联，取消时清空原 projected_target；覆盖三种动作、缩放、
+  拒单、熔断与滚动，逐字段比对两路径（运行耗时及策略名除外）。
+
+**R49 [P2 / RL 终止] 单次 rollout 未返回终止义务，也没有更新可终止的环境状态**
+
+- **位置**：`src/ficc/rl/env.py:937–950`，以及 Rollout 定义。
+- **复现**：新 env 调用 rollout 完成 episode 后，terminate() 抛
+  `RuntimeError: 必须先 reset/step 后再 terminate`；Rollout 只有 records/result，没有 TerminalState。
+  若复用已有 step 环境，则可能继续读取旧 episode 的状态，而非刚完成的 rollout。
+- **影响**：快速训练路径无法沿公开终止契约取得本次未结算成交、现金和费用；现有 terminate 测试只覆盖 step。
+- **修复验收**：从 BacktestResult 共用构造 TerminalState，并直接随 Rollout 返回，或完整同步环境生命周期；
+  新 env、复用 env、末日成交/T+1 结算均覆盖。默认不强平可保留，但费用是已发生而未支付的义务，
+  正式训练需明确净终值如何扣除/结转，避免利用 episode 末端少计费用；价差不得重复扣。
+
+**R50 [P2 / 结果契约] 默认 ML 标签并不重叠，“零预测”实际是训练均值预测**
+
+- **位置**：`scripts/run_ml_baseline.py:356–358` 与 manifest limitations（约 518 行）。
+- **核对**：默认 decision_step=5、标签区间 (t+1,t+5]；344 行相邻区间交集数 **0**。
+  前两行分别为 (2019-02-03, 02-14]、(2019-02-15, 02-21]。
+  将每日采样时的重叠问题直接套给当前结果，会误导后续修复优先级。
+- **基线**：r2_zero=−0.05566395、mae_zero=0.001996715 来自每窗 y_train.mean()，
+  应命名 train_mean/intercept-only。对相同 277 条 OOS 标签，真正全零预测的 R² 为
+  **−0.04509567**、MAE **0.002047642**。Ridge 仍差于两者，负结果方向不变。
+- **修复验收**：基线名称/输出字段准确命名，可同时保留真零与训练均值；重叠数量按实际审计日期计算，
+  limitations 随 holding/decision_step 生成，不硬编码。alpha 实际用验证窗 MAE 选，
+  标准化和回归系数用训练窗拟合，应避免笼统说“alpha 只在训练窗拟合”。
+
+**本轮复验与验收边界**
+
+- `make check` 实跑 **exit 0**（lint/format/test 全部通过，当前 663 项测试基线）；这些测试未覆盖本轮 RL 反例。
+- 七年滚动统一验收实跑 **92/92 PASS、exit 0**（2019-01-28→2025-12-31）。除隔离报告路径导致的
+  config_hash 不同外，CSV 与已提交 extended 报告完全相等；carry 2022-03-21 的
+  single_bond_weight 被动超限仍单独披露。h=5 carry/一日 carry=**5.001**，n_obs=**246/250**。
+  本轮未另重跑默认 buyhold 验收及独立 make recon，不能把它们的既往结果写成本轮实跑。
+- 全量 ML 从原始输入重建完成，dataset 与 metrics CSV 读取后逐值完全相等（最大数值差 **0**）；
+  另从提交数据集独立重算 22 split / 277 OOS 行：
+  IC **0.0198059101**、R² **−0.1197755837**、MAE **0.0020883310**，与提交 metrics
+  数值最大差 **2.94e-14**。未见默认路径的训练/验证/测试混用；不据此声称所有自定义 FeatureSpec 都安全。
+- R42 当前实现先对历史 spot 冲击取 h 日差，再重估一次，脚本以 pre_aggregated=True 消费；
+  R46 forced 路径按 final_face 重算 spread_cost。独立复验四腿 25M→22M 的取整缩放，
+  最终面值与执行价差公式的逐笔成本最大差 **7.28e-12 元**，该旧反例已修复。
+- `spread_cost_from_final_face` 当前只核对 trades.spread_cost.sum 与 costs.spread.sum，
+  不是独立按执行价、中间价和最终面值复算。下一轮应加
+  `abs(clean_price-mid_clean_price)*face_value/100` 的逐笔断言及 forced 非整手缩放反例；
+  同源两列都错时仍会通过，不能用该项名称代替独立证明。
+- 单次 run_backtest 消除了反复重放，但 rollout 后处理每天重新扫描全成交/滚动表，
+  不是已证明的严格 O(n) 全路径；先按日期分组，再实测吞吐。该性能问题不优先于 R47–R49。
+
+### C-111 [docs] 本地示例与 A800 服务器训练规划
+
+- **日期 / 输入**：2026-11-08；用户本地 MacBook Air M2 / 16GB，要求单卡 A800 40GB 与
+  8×A800 40GB 两种方案，服务器 CPU/内存未知。
+- **文件**：计划 §12.20、方法论 §12.5、README；保留 R47–R49 训练前置与上轮审查记录。
+- **现状核实**：Ridge 9 系数+1 截距；加标准化统计为 28 个 float64 / 224 字节数值载荷。
+  提交数据集 344 行 / 80,841 字节；RL 仅环境接口，尚无神经网络/训练依赖/权重。
+- **规划**：本地 example + fast checks + checkpoint 冒烟；服务器同账本正式评估、训练。
+  单卡先 profile/1 seed 再 5 seeds；8 卡按 seed/窗口/消融分配独立任务，CPU/RAM 实测后增加并发。
+  建议 64×64 主网络、128×128 容量对照；按 32 维观测/4 维动作的独立 actor/critic 估算为
+  12,873 / 42,121 参数（仅设计示例，真实维度待冻结），不因硬件充裕扩大学习容量。
+- **验收**：核对当前依赖、模型代码、CSV 大小并用 Python 复算参数；`git diff --check`。
+  仅文档变更，未重跑完整测试、未安装依赖、未连接服务器、未启动训练；拟议 make/config 入口尚未实现。
+- **遗留**：CPU 核数/RAM/驱动待核实；训练用时、显存、worker 并行度需基准测试，不提供未经实测的耗时承诺。
+
+### R47–R50 修复对照与共同协议（2026-11-09 第十五轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R47 | P1 | payoff/reward 改为相邻估值日 NAV 差（与 signal_date 无关）；hold 无订单日 reward 有限 | C-112；rollout 11 条 reward 合计 283,560.8215=末−初 NAV（差 0） |
+| R48 | P1 | step/rollout 共用 `_build_step_record`；原生 TargetKRD/Faces 无损规范化；policy 目标不混入原动作；真实 scale/outcome | C-113；hold/KRD/Faces/拒单/缩放/滚动逐字段一致；25M→22M 记 scale=0.88/scaled；滚动日 cancelled_by_policy 且 projected_target=None |
+| R49 | P2 | `Rollout.terminal` 与 env 生命周期同步；新/复用 env 均可 terminate；未结算现金/费用单列、不强平 | C-114；末日 4 笔 T+1，unsettled_cash=-100,477,891.50、fees=2,548.87、net=nav−fees |
+| R50 | P2 | 基线更名 train_mean、另报 literal_zero；重叠按真实审计日期实测；holding 定义明确（decision+5=4 个交易日） | C-115；OOS R² Ridge −0.120 vs train_mean −0.056、literal_zero −0.0451；默认 344 行相邻重叠=0 |
+| 协议 | — | protocol_v1_2026-11-08：ML/RL 时钟对齐、市场基准净收益目标、固定 10% KRD 倾斜映射、同一引擎成本后评估；逐档 `attempts_detail` 暴露 | C-116；zero 预测 active=0.0bp、成本 8.56 万（仅映射验证）；673 项测试 |
+
+**边界**：只完成第 1、2 步；未做树模型/RL 训练/多 seed/消融/A800 部署。主动超额协议版本未冻结；
+TargetFaces 最终提交面值已由 `gate_decisions.projected_faces` 暴露；风控熔断替代的原动作已通过
+`proposed_target` 记录。
+
+### C-112 [fix] R47：rollout 奖励闭合
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：StepRecord.reward 一律 `nav_after − nav_before`（前一交易日 NAV），与订单 signal_date 无关；hold/无订单日同样有限。
+- **验证方式**：rollout 11 条记录 reward 合计 283,560.821480706 与末−初 NAV 完全相等；逐日与 step 一致。
+- **风险/遗留**：reward 是账本 NAV 变化（含市场/费用/票息），不含终止清算；终止义务另列。
+
+### C-113 [fix] R48：step/rollout 共用轨迹构造器
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：抽出 `_build_step_record`，两路径共用；`_normalise_action` 无损转换原生 TargetKRD/TargetFaces；滚动日 policy 目标不进入原动作 projected_target；action_scale/outcome 按真实闸门结果；PolicyAction.strategy_trade_ids 统一 tuple。
+- **验证方式**：hold/KRD/Faces/拒单/缩放/滚动 11 条逐字段一致（仅 trade_id 前缀/replay 耗时不同）；四腿 25M→22M 记 scale=0.88、scaled。
+- **风险/遗留**：risk_off 被替代原动作现由 `proposed_target` 记录；未实现真实延期队列（明确取消）。
+
+### C-114 [fix] R49：Rollout 终止义务
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：`Rollout.terminal: TerminalState`；rollout 同步 env 状态，新 env/复用 env 的 terminate() 返回同一快照；`net_terminal_value = NAV − accrued_fees`，注明不强平、费用已发生未支付、价差不重复扣。
+- **验证方式**：末日 T+1 四笔未结算，unsettled_cash=-100,477,891.50、fees=2,548.87；NAV 对账通过。
+- **风险/遗留**：终止不强制平仓；未结算费用进入 net_terminal_value，需在训练 reward 约定中显式处理。
+
+### C-115 [fix] R50：ML 基线命名/重叠/持有期定义
+
+- **日期**：2026-11-09
+- **文件**：`scripts/run_ml_baseline.py`、`tests/test_ml_dataset.py`
+- **变更内容**：旧 zero 基线更名 train_mean，新增 literal_zero；按真实 execution/label_end 计算相邻重叠（manifest 输出 n_adjacent_overlaps/overlap_rate）；limitations/metadata 由 args（holding/step）生成；明确 holding=decision+5（执行后 4 个交易日）。
+- **验证方式**：全量 22 split、n=277：Ridge R² −0.1198、train_mean −0.0557、literal_zero −0.0451；相邻重叠=0；全量重建一致。
+- **风险/遗留**：未做成本后组合回测；主动超额目标另需协议版本。
+
+### C-116 [feat] 共同实验协议 protocol_v1 与逐档 GateDecision
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/research/protocol.py`、`scripts/run_protocol_smoke.py`、`tests/test_protocol.py`、`src/ficc/backtest/engine.py`
+- **变更内容**：冻结信息时钟（lag=1/next-close/decision+5/5 日步长）、市场基准净收益目标、预测→KRD 映射（10% DV01 倾斜）、同一引擎成本后评估器；`gate_decisions.attempts_detail` 暴露每档 level/policy-scale、order_faces、feasible、violation_codes；引擎记录 `proposed_target` 与 TargetFaces 最终 `projected_faces`。
+- **验证方式**：`run_protocol_smoke.py` 零预测 active excess=0.0bp、成本 8.56 万；协议 5 项测试；RL 测试用 attempts_detail。
+- **风险/遗留**：协议只验证映射/成本口径，不是模型研究；未做树模型/RL 训练；A800 部署未开始。
+
+### C-117 [test] 测试基线 663 → 673
+
+- **日期**：2026-11-09
+- **变更内容**：新增 RL 契约 5 + 协议 5 项。
+- **验证方式**：`make check`（673 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 11 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -2138,7 +2307,7 @@ rolling 2019–2021 **92/92**、延到 2025-12-31 **92/92**。测试 663。
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **663** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **673** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

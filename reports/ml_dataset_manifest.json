@@ -137,21 +137,33 @@
       ],
       "preprocessing": "train_window_standardize_zscore",
       "selection": "inner_valid_mae_only_test_never_used",
-      "zero_baseline": "train_label_mean"
+      "baselines": {
+        "train_mean": "训练窗标签均值（旧称 zero 基线，已更名）",
+        "literal_zero": "预测恒为 0"
+      }
+    },
+    "label_window": {
+      "holding_days_from_decision": 5,
+      "return_window_trading_days": 4,
+      "decision_step_days": 5,
+      "n_adjacent_overlaps": 0,
+      "overlap_rate": 0.0
     },
     "pooled_oos": {
       "n": 277.0,
       "ic": 0.019805910098479054,
       "r2": -0.1197755837259673,
-      "r2_zero": -0.05566394995362911,
+      "r2_train_mean": -0.05566394995362911,
+      "r2_literal_zero": -0.04509567458751307,
       "mae": 0.002088331013670809,
-      "mae_zero": 0.0019967147334208246
+      "mae_train_mean": 0.0019967147334208246,
+      "mae_literal_zero": 0.0020476420714321012
     },
     "limitations": [
       "单一历史：2019–2025 已被本项目研究，不是 untouched holdout",
       "标签是基准市场净收益（含成本/票息/融资/滚动），不是策略超额收益",
       "只报告 OOS 预测力；未做成本后的组合回测，不构成可交易 alpha 证据",
-      "标签 5 日持有、每 5 交易日决策，相邻标签仍有部分重叠，IC 独立性有限",
+      "标签窗口为 (execution, label_end]：holding=5 自决策日起算，实际执行后 4 个交易日；决策步长 5 个交易日，相邻标签窗口重叠数=0（按真实审计日期计算，非默认假设）",
       "Ridge/标准化只在训练窗拟合；测试窗不参与 alpha 选择或任何拟合"
     ]
   }

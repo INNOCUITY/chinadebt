@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 from dataclasses import dataclass
@@ -304,7 +305,8 @@ def evaluate_splits(
     rows: list[dict[str, Any]] = []
     pooled_y: list[np.ndarray] = []
     pooled_pred: list[np.ndarray] = []
-    pooled_zero: list[np.ndarray] = []
+    pooled_train_mean: list[np.ndarray] = []
+    pooled_literal_zero: list[np.ndarray] = []
     skipped = 0
 
     for split in splits:
@@ -353,9 +355,11 @@ def evaluate_splits(
         valid_pred = model.predict(x_valid)
         test_pred = model.predict(x_test)
 
-        zero = float(y_train.mean())
-        zero_valid = np.full_like(y_valid, zero)
-        zero_test = np.full_like(y_test, zero)
+        train_mean = float(y_train.mean())
+        mean_valid = np.full_like(y_valid, train_mean)
+        mean_test = np.full_like(y_test, train_mean)
+        literal_zero_test = np.zeros_like(y_test)
+        literal_zero_valid = np.zeros_like(y_valid)
 
         rows.append(
             {
@@ -372,20 +376,24 @@ def evaluate_splits(
                 "n_test": len(test),
                 "alpha": best_alpha,
                 "valid_mae_ridge": best_valid_mae,
-                "valid_mae_zero": _mae(y_valid, zero_valid),
+                "valid_mae_train_mean": _mae(y_valid, mean_valid),
+                "valid_mae_literal_zero": _mae(y_valid, literal_zero_valid),
                 "valid_ic_ridge": _rank_ic(y_valid, valid_pred),
                 "test_ic_ridge": _rank_ic(y_test, test_pred),
                 "test_r2_ridge": _r2(y_test, test_pred),
-                "test_r2_zero": _r2(y_test, zero_test),
+                "test_r2_train_mean": _r2(y_test, mean_test),
+                "test_r2_literal_zero": _r2(y_test, literal_zero_test),
                 "test_mae_ridge": _mae(y_test, test_pred),
-                "test_mae_zero": _mae(y_test, zero_test),
+                "test_mae_train_mean": _mae(y_test, mean_test),
+                "test_mae_literal_zero": _mae(y_test, literal_zero_test),
                 "test_label_mean": float(y_test.mean()),
                 "test_pred_mean": float(test_pred.mean()),
             }
         )
         pooled_y.append(y_test)
         pooled_pred.append(test_pred)
-        pooled_zero.append(zero_test)
+        pooled_train_mean.append(mean_test)
+        pooled_literal_zero.append(literal_zero_test)
 
     if not rows:
         raise ValueError("没有任何 split 满足最小样本要求，无法评估")
@@ -394,9 +402,11 @@ def evaluate_splits(
         "n": float(sum(len(item) for item in pooled_y)),
         "ic": _rank_ic(np.concatenate(pooled_y), np.concatenate(pooled_pred)),
         "r2": _r2(np.concatenate(pooled_y), np.concatenate(pooled_pred)),
-        "r2_zero": _r2(np.concatenate(pooled_y), np.concatenate(pooled_zero)),
+        "r2_train_mean": _r2(np.concatenate(pooled_y), np.concatenate(pooled_train_mean)),
+        "r2_literal_zero": _r2(np.concatenate(pooled_y), np.concatenate(pooled_literal_zero)),
         "mae": _mae(np.concatenate(pooled_y), np.concatenate(pooled_pred)),
-        "mae_zero": _mae(np.concatenate(pooled_y), np.concatenate(pooled_zero)),
+        "mae_train_mean": _mae(np.concatenate(pooled_y), np.concatenate(pooled_train_mean)),
+        "mae_literal_zero": _mae(np.concatenate(pooled_y), np.concatenate(pooled_literal_zero)),
     }
     return metrics, pooled, skipped
 
@@ -484,6 +494,12 @@ def main(argv: list[str] | None = None) -> int:
     summary = dataset_summary(dataset, feature_names)
 
     manifest = dataset_manifest(dataset)
+    # R50：按真实标签窗口计算相邻重叠（默认 step=5、窗口 4 日 → 0），不再默认假设重叠
+    label_windows = list(zip(dataset["execution_date"], dataset["label_end_date"], strict=True))
+    overlaps = 0
+    for (_s1, e1), (s2, _e2) in itertools.pairwise(label_windows):
+        if s2 <= e1:
+            overlaps += 1
     manifest["run"] = {
         "script": "scripts/run_ml_baseline.py",
         "quick": bool(args.quick),
@@ -509,14 +525,27 @@ def main(argv: list[str] | None = None) -> int:
             "alpha_grid": list(ALPHA_GRID),
             "preprocessing": "train_window_standardize_zscore",
             "selection": "inner_valid_mae_only_test_never_used",
-            "zero_baseline": "train_label_mean",
+            "baselines": {
+                "train_mean": "训练窗标签均值（旧称 zero 基线，已更名）",
+                "literal_zero": "预测恒为 0",
+            },
+        },
+        "label_window": {
+            "holding_days_from_decision": int(args.holding_days),
+            "return_window_trading_days": int(args.holding_days) - 1,
+            "decision_step_days": int(args.decision_step),
+            "n_adjacent_overlaps": overlaps,
+            "overlap_rate": overlaps / max(len(label_windows) - 1, 1),
         },
         "pooled_oos": pooled,
         "limitations": [
             "单一历史：2019–2025 已被本项目研究，不是 untouched holdout",
             "标签是基准市场净收益（含成本/票息/融资/滚动），不是策略超额收益",
             "只报告 OOS 预测力；未做成本后的组合回测，不构成可交易 alpha 证据",
-            "标签 5 日持有、每 5 交易日决策，相邻标签仍有部分重叠，IC 独立性有限",
+            f"标签窗口为 (execution, label_end]：holding={args.holding_days} 自决策日起算，"
+            f"实际执行后 {args.holding_days - 1} 个交易日；"
+            f"决策步长 {args.decision_step} 个交易日，相邻标签窗口重叠数={overlaps}"
+            f"（按真实审计日期计算，非默认假设）",
             "Ridge/标准化只在训练窗拟合；测试窗不参与 alpha 选择或任何拟合",
         ],
     }
@@ -543,17 +572,19 @@ def main(argv: list[str] | None = None) -> int:
         "alpha",
         "test_ic_ridge",
         "test_r2_ridge",
-        "test_r2_zero",
+        "test_r2_train_mean",
+        "test_r2_literal_zero",
         "test_mae_ridge",
-        "test_mae_zero",
+        "test_mae_train_mean",
+        "test_mae_literal_zero",
     ]
     with pd.option_context("display.width", 220):
         print(metrics[cols].to_string(index=False, float_format=lambda x: f"{x:.6f}"))
     print(
         "\n=== Pooled OOS（不同 split 的测试窗不重叠）===\n"
         f"n={pooled['n']:.0f}  IC={pooled['ic']:.4f}  "
-        f"R²={pooled['r2']:.4f}（零基线 {pooled['r2_zero']:.4f}）  "
-        f"MAE={pooled['mae']:.2e}（零基线 {pooled['mae_zero']:.2e}）"
+        f"R²={pooled['r2']:.4f}（train_mean {pooled['r2_train_mean']:.4f}；literal_zero {pooled['r2_literal_zero']:.4f}）  "
+        f"MAE={pooled['mae']:.2e}（train_mean {pooled['mae_train_mean']:.2e}；literal_zero {pooled['mae_literal_zero']:.2e}）"
     )
     print(
         "\n结论边界：以上是基准市场收益的样本外预测力，不是可交易 alpha；"

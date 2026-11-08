@@ -6,7 +6,10 @@
 - 拒单/缩放的 attempted/scale/action_outcome；
 - 滚动日原动作 cancelled_by_policy、policy_actions 与 roll_events 一一对应；
 - terminate() 的未结算成交/待结算现金/未结算费用与 NAV 对账；
-- replay_days/replay_cost_seconds 性能披露。
+- replay_days/replay_cost_seconds 性能披露；
+- R47/R48：rollout 与 step 共用轨迹构造器，reward 按相邻估值日 NAV 差闭合，
+  三种动作/原生目标/拒单/缩放/滚动的记录逐字段等价；
+- R49：rollout 返回 TerminalState 并同步环境生命周期（新 env/复用 env、末日 T+1）。
 
 全部断言针对接口纪律，不评价策略好坏；2019–2025 是已研究样本，不称 holdout。
 """
@@ -21,9 +24,12 @@ import pytest
 
 from ficc.backtest.engine import run_backtest
 from ficc.config import Config, get_config
+from ficc.curve.curve import Curve
 from ficc.data.loader import load_curve_long, load_funding_series
 from ficc.data.schema import CANONICAL_TENORS
-from ficc.portfolio.types import MarketContext, TargetKRD
+from ficc.portfolio.benchmark import build_benchmark
+from ficc.portfolio.rolling import RollingUniverse
+from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
 from ficc.rl import (
     ActionSpec,
     PolicyAction,
@@ -132,7 +138,7 @@ def test_hold_records_no_trade_outcome(market) -> None:
     assert record.projected_target is None
     assert record.projected_faces == ()
     assert record.policy_actions == ()
-    assert record.action_outcome == "no_trade_deadband"
+    assert record.action_outcome == "hold"  # hold 是"持仓不动"，不是成交/死区
     assert record.action_scale == 1.0
     assert "零动作" in record.notes
 
@@ -295,7 +301,14 @@ def test_roll_day_cancels_original_action_and_records_policy_actions(market) -> 
     assert record.pending_status == "cancelled_by_roll"
     assert record.action_outcome == "cancelled_by_policy"
     assert record.projected_target is None  # policy roll 不挂到原动作下
-    assert record.projected_faces == ()
+    # 机械换券实际提交的逐腿面值只出现在 projected_faces（披露用途），不伪造原动作目标
+    assert record.projected_faces
+    submitted_codes = {code for code, _face in record.projected_faces}
+    policy_codes = {action.retired_code for action in record.policy_actions} | {
+        action.issued_code for action in record.policy_actions
+    }
+    assert submitted_codes <= policy_codes
+    assert all(isinstance(code, str) and face > 0.0 for code, face in record.projected_faces)
     assert "policy_actions" in record.notes
 
     # policy_actions 与 result.roll_events 一一对应
@@ -315,6 +328,8 @@ def test_roll_day_cancels_original_action_and_records_policy_actions(market) -> 
             part for part in str(row.get("strategy_trade_ids", "")).split(";") if part
         )
         assert action.strategy_trade_ids == expected_ids
+        assert isinstance(action.strategy_trade_ids, tuple)
+        assert all(isinstance(trade_id, str) for trade_id in action.strategy_trade_ids)
 
     # 当日成交属于机械换券（若执行），trade_id 出现在 policy_actions 中
     policy_ids = {
@@ -425,3 +440,352 @@ def test_performance_stats_and_replay_consistency(market) -> None:
         env.result.nav.to_numpy(), direct.nav.to_numpy(), rtol=0.0, atol=1e-9
     )
     assert env.result.nav.index.equals(direct.nav.index)
+
+
+# ---------------------------------------------------------------------------
+# R47/R48/R49：共用轨迹构造器、逐字段等价、缩放/滚动反例、终止状态
+# ---------------------------------------------------------------------------
+def _benchmark_faces(
+    panel: pd.DataFrame, calendar: TradingCalendar, cfg: Config, day: date
+) -> dict[str, float]:
+    """起点基准的逐腿面值（构造精确面值/25M 反例用）。"""
+    row = panel.loc[pd.Timestamp(day)].reindex(list(CANONICAL_TENORS))
+    curve = Curve(
+        as_of=day,
+        tenors=np.asarray(CANONICAL_TENORS),
+        rates=tuple(row.values),
+        method="hermite",
+    )
+    universe = RollingUniverse.build(curve, day, cfg=cfg).active()
+    benchmark = build_benchmark(curve, day, bonds=universe, calendar=calendar, cfg=cfg)
+    return {leg.bond.code: float(leg.face_value) for leg in benchmark.legs}
+
+
+def _native_policy(schedule: dict[date, ActionSpec]):
+    """测试策略：把 ActionSpec 转成原生 TargetKRD/TargetFaces（hold 返回 None）。"""
+
+    def policy(ctx: MarketContext) -> TargetKRD | TargetFaces | None:
+        action = schedule.get(ctx.as_of, ActionSpec())
+        if action.is_hold:
+            return None
+        if action.action_type == "target_faces":
+            return TargetFaces(
+                as_of=ctx.as_of,
+                faces=dict(action.target_faces or {}),
+                notes=action.notes,
+            )
+        return TargetKRD(
+            as_of=ctx.as_of,
+            krd=dict(action.target_krd or {}),
+            notes=action.notes,
+        )
+
+    return policy
+
+
+def _step_records(
+    market: tuple[Config, pd.DataFrame, pd.Series, TradingCalendar],
+    cfg: Config,
+    schedule: dict[date, ActionSpec],
+    start: date = START,
+    end: date = END,
+) -> tuple[RebalanceEnv, list[StepRecord]]:
+    """按 schedule 逐步 step，返回 env 与逐日记录。"""
+    _cfg, panel, funding, calendar = market
+    env = RebalanceEnv(panel, calendar, funding, cfg)
+    env.reset(start, end)
+    days = calendar.trading_days_between(start, end)
+    records = [env.step(schedule.get(day, ActionSpec()))[1] for day in days[:-1]]
+    return env, records
+
+
+def _policy_signature(
+    actions: tuple[PolicyAction, ...], strategy_name: str
+) -> tuple[tuple[object, ...], ...]:
+    """策略名是成交 ID 的一部分；等价比较时把前缀归一化。"""
+    prefix = f"{strategy_name}-"
+    return tuple(
+        (
+            item.day,
+            item.tenor,
+            item.retired_code,
+            item.issued_code,
+            item.pending_status,
+            tuple(trade_id.replace(prefix, "X-") for trade_id in item.strategy_trade_ids),
+            item.status,
+            item.reason,
+            item.gate_attempts,
+            item.bench_trade_ids,
+        )
+        for item in actions
+    )
+
+
+def _assert_records_equivalent(
+    step_records: list[StepRecord], rollout_records: tuple[StepRecord, ...]
+) -> None:
+    """除策略名/耗时外逐字段等价（R48 验收）。"""
+    assert len(step_records) == len(rollout_records)
+    for step, rollout in zip(step_records, rollout_records, strict=True):
+        assert step.date == rollout.date
+        assert step.original_action == rollout.original_action
+        assert step.projected_target == rollout.projected_target
+        assert step.projected_faces == rollout.projected_faces
+        assert step.rejected == rollout.rejected
+        assert step.reject_reason == rollout.reject_reason
+        assert step.gate_level == pytest.approx(rollout.gate_level)
+        assert step.risk_off == rollout.risk_off
+        assert step.nav_before == pytest.approx(rollout.nav_before, abs=1e-9)
+        assert step.nav_after == pytest.approx(rollout.nav_after, abs=1e-9)
+        assert step.reward == pytest.approx(rollout.reward, abs=1e-9)
+        assert step.executed_face == pytest.approx(rollout.executed_face, abs=1e-9)
+        assert step.gate_attempts == rollout.gate_attempts
+        assert step.policy_source == rollout.policy_source
+        assert step.pending_status == rollout.pending_status
+        assert step.action_outcome == rollout.action_outcome
+        assert step.action_scale == pytest.approx(rollout.action_scale, abs=1e-12)
+        assert step.notes == rollout.notes
+        assert _policy_signature(step.policy_actions, "rl_env") == _policy_signature(
+            rollout.policy_actions, "rl_rollout"
+        )
+        step_trades = [
+            {key: value for key, value in trade.items() if key != "trade_id"}
+            for trade in step.executed_trades
+        ]
+        roll_trades = [
+            {key: value for key, value in trade.items() if key != "trade_id"}
+            for trade in rollout.executed_trades
+        ]
+        assert step_trades == roll_trades
+        step_detail = {
+            key: value
+            for key, value in step.substitution_detail.items()
+            if key != "executed_trade_ids"
+        }
+        roll_detail = {
+            key: value
+            for key, value in rollout.substitution_detail.items()
+            if key != "executed_trade_ids"
+        }
+        assert step_detail == roll_detail
+
+
+def test_rollout_reward_closes_and_matches_step(market) -> None:
+    """R47：reward 一律是相邻估值日 NAV 差；空仓 hold/建仓后 hold/结算日均有有限值。"""
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(START, END)
+    probe = RebalanceEnv(panel, calendar, funding, cfg)
+    obs0 = probe.reset(START, END)
+    bench = dict(obs0.benchmark_krd)
+    schedule = {days[0]: ActionSpec(), days[1]: ActionSpec(target_krd=bench, notes="建仓")}
+    for day in days[2:]:
+        schedule[day] = ActionSpec()
+
+    _env_step, step_records = _step_records(market, cfg, schedule)
+    env_roll = RebalanceEnv(panel, calendar, funding, cfg)
+    rollout = env_roll.rollout(_native_policy(schedule), START, END)
+
+    assert len(step_records) == len(rollout.records) == len(days) - 1
+    rewards = [record.reward for record in rollout.records]
+    assert all(np.isfinite(value) for value in rewards)
+    nav = rollout.result.nav
+    assert sum(rewards) == pytest.approx(float(nav.loc[days[-1]] - nav.loc[days[0]]), abs=1e-9)
+    for step, rolled in zip(step_records, rollout.records, strict=True):
+        assert step.reward == pytest.approx(rolled.reward, abs=1e-9)
+        assert step.nav_before == pytest.approx(rolled.nav_before, abs=1e-9)
+        assert step.nav_after == pytest.approx(rolled.nav_after, abs=1e-9)
+        assert rolled.reward == pytest.approx(rolled.nav_after - rolled.nav_before, abs=0.0)
+
+    # 空仓 hold：无成交、reward 仍有限；建仓后 hold；结算日也是 hold 记录
+    assert step_records[0].original_action.is_hold
+    assert step_records[0].executed_trades == ()
+    assert step_records[0].action_outcome == "hold"
+    build = step_records[1]
+    assert build.original_action.action_type == "target_krd"
+    assert build.executed_trades
+    settlement_day = build.executed_trades[0]["settlement_date"]
+    assert settlement_day == step_records[2].date
+    assert step_records[2].original_action.is_hold
+    assert any(
+        record.original_action.is_hold and record.date > build.date for record in rollout.records
+    )
+
+
+def test_rollout_matches_step_across_action_types(market) -> None:
+    """R48：hold/原生 TargetKRD/TargetFaces 逐字段等价；原生目标不得记成 hold。"""
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(START, END)
+    probe = RebalanceEnv(panel, calendar, funding, cfg)
+    obs0 = probe.reset(START, END)
+    bench = dict(obs0.benchmark_krd)
+    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0])
+    face_target = dict(bench_faces)
+    face_target[sorted(face_target)[0]] += 1_000_000.0
+    huge = {tenor: 1000.0 * value for tenor, value in bench.items()}
+    schedule = {
+        days[0]: ActionSpec(),  # 空仓 hold
+        days[1]: ActionSpec(target_krd=bench, notes="R48 KRD"),
+        days[2]: ActionSpec(target_faces=face_target, notes="R48 FACES"),
+        days[3]: ActionSpec(target_krd=huge, notes="R48 REJECT"),
+        days[4]: ActionSpec(),  # 建仓后 hold
+    }
+    for day in days[5:]:
+        schedule[day] = ActionSpec()
+
+    _env_step, step_records = _step_records(market, cfg, schedule)
+    env_roll = RebalanceEnv(panel, calendar, funding, cfg)
+    rollout = env_roll.rollout(_native_policy(schedule), START, END)
+    _assert_records_equivalent(step_records, rollout.records)
+
+    kinds = [record.original_action.action_type for record in rollout.records[:5]]
+    assert kinds == ["hold", "target_krd", "target_faces", "target_krd", "hold"]
+    assert rollout.records[1].original_action.target_krd == bench
+    assert rollout.records[2].original_action.target_faces == face_target
+    assert rollout.records[1].action_outcome in {"executed", "scaled"}
+    assert rollout.records[2].action_outcome in {"executed", "scaled"}
+    assert rollout.records[2].projected_target is None
+    assert dict(rollout.records[2].projected_faces) == face_target
+    rejected = rollout.records[3]
+    assert rejected.rejected is True
+    assert rejected.action_outcome == "rejected"
+    assert rejected.reject_reason
+    assert rejected.executed_trades == ()
+    assert rejected.projected_target is not None
+    assert rejected.action_scale < 1.0
+    assert rollout.records[4].action_outcome == "hold"
+
+
+def test_rollout_scaled_faces_matches_step(market) -> None:
+    """R48 缩放反例：min_cash_fraction=0，四腿各 25M → 各成交 22M、scale=0.88。"""
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(START, date(2019, 1, 29))
+    tight = cfg.model_copy(
+        update={"constraints": cfg.constraints.model_copy(update={"min_cash_fraction": 0.0})}
+    )
+    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0])
+    requested = {code: 25_000_000.0 for code in sorted(bench_faces)}
+    assert len(requested) == 4
+    schedule = {days[0]: ActionSpec(target_faces=requested, notes="25M x4")}
+
+    _env_step, step_records = _step_records(market, tight, schedule, START, days[-1])
+    env_roll = RebalanceEnv(panel, calendar, funding, tight)
+    rollout = env_roll.rollout(_native_policy(schedule), START, days[-1])
+    _assert_records_equivalent(step_records, rollout.records)
+
+    for record in (step_records[0], rollout.records[0]):
+        assert record.action_outcome == "scaled"
+        assert record.action_scale == pytest.approx(0.88, abs=1e-12)
+        assert len(record.executed_trades) == 4
+        assert {trade["face_value"] for trade in record.executed_trades} == {22_000_000.0}
+        assert all(trade["attempted"] == 2 for trade in record.executed_trades)
+        assert all(
+            trade["scale"] == pytest.approx(0.88, abs=1e-12) for trade in record.executed_trades
+        )
+        detail = record.substitution_detail
+        assert detail["projected_delta_faces"] == requested
+        assert detail["executed_faces"] == pytest.approx(
+            {code: 22_000_000.0 for code in requested}, abs=1e-9
+        )
+
+
+def test_rollout_roll_cancellation_matches_step(market) -> None:
+    """R48 滚动反例：滚动日原动作 cancelled_by_policy、projected_target=None。"""
+    cfg, panel, funding, calendar = market
+    rolling = cfg.portfolio.rolling.model_copy(update={"enabled": True, "roll_trigger_years": 1.99})
+    cfg_roll = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(update={"rolling": rolling}),
+            "backtest": cfg.backtest.model_copy(update={"benchmark_version": "rolling"}),
+        }
+    )
+    days = calendar.trading_days_between(START, END)
+    probe = RebalanceEnv(panel, calendar, funding, cfg_roll)
+    bench = dict(probe.reset(START, END).benchmark_krd)
+    schedule = {day: ActionSpec(target_krd=bench, notes="每日基准 KRD") for day in days[:-1]}
+
+    _env_step, step_records = _step_records(market, cfg_roll, schedule)
+    env_roll = RebalanceEnv(panel, calendar, funding, cfg_roll)
+    rollout = env_roll.rollout(_native_policy(schedule), START, END)
+    _assert_records_equivalent(step_records, rollout.records)
+
+    roll_records = [record for record in rollout.records if record.policy_actions]
+    assert roll_records, "短窗口内应出现机械换券（roll_trigger_years=1.99）"
+    roll_dates = {record.date for record in roll_records}
+    assert {date(2019, 2, 2), date(2019, 2, 11)} <= roll_dates
+    for record in roll_records:
+        assert record.policy_source == "policy_roll"
+        assert record.pending_status == "cancelled_by_roll"
+        assert record.action_outcome == "cancelled_by_policy"
+        assert record.projected_target is None
+        assert record.projected_faces  # 机械换券提交面值单独披露
+        policy_codes = {action.retired_code for action in record.policy_actions} | {
+            action.issued_code for action in record.policy_actions
+        }
+        assert {code for code, _face in record.projected_faces} <= policy_codes
+        for action in record.policy_actions:
+            assert isinstance(action, PolicyAction)
+            assert isinstance(action.strategy_trade_ids, tuple)
+            assert all(isinstance(trade_id, str) for trade_id in action.strategy_trade_ids)
+
+
+def test_rollout_terminal_state_and_lifecycle(market) -> None:
+    """R49：rollout 返回 TerminalState 并同步生命周期；新 env/复用 env 均可 terminate。"""
+    cfg, panel, funding, calendar = market
+    end = date(2019, 1, 31)
+    days = calendar.trading_days_between(START, end)
+    probe = RebalanceEnv(panel, calendar, funding, cfg)
+    bench = dict(probe.reset(START, end).benchmark_krd)
+    schedule = {day: ActionSpec() for day in days[:-1]}
+    schedule[days[-2]] = ActionSpec(target_krd=bench, notes="末日建仓（T+1 未结算）")
+
+    env_step, _step_records_unused = _step_records(market, cfg, schedule, START, end)
+    assert env_step.done is True
+    step_terminal = env_step.terminate()
+
+    # 新 env：rollout 后无需 step 即可 terminate
+    env_roll = RebalanceEnv(panel, calendar, funding, cfg)
+    rollout = env_roll.rollout(_native_policy(schedule), START, end)
+    assert env_roll.done is True
+    assert env_roll.current_date == end
+    assert env_roll.result is rollout.result
+    assert env_roll.observation.nav == pytest.approx(float(rollout.result.nav.loc[end]))
+    state = rollout.terminal
+    assert isinstance(state, TerminalState)
+    assert env_roll.terminate() is state  # 已缓存的本次 rollout 终止状态
+    nav = float(rollout.result.nav.loc[end])
+    assert state.nav_mark_to_market == pytest.approx(nav, abs=1e-12)
+    assert state.nav_mark_to_market == pytest.approx(step_terminal.nav_mark_to_market, abs=1e-9)
+
+    # 末日成交留在 unsettled_trades；买入的待结算现金为负、费用已发生未支付
+    assert state.unsettled_trades
+    assert all(item["settlement_date"] > end for item in state.unsettled_trades)
+    assert all(item["trade_date"] <= end for item in state.unsettled_trades)
+    assert state.unsettled_cash == pytest.approx(
+        sum(item["signed_cash"] for item in state.unsettled_trades)
+    )
+    assert state.unsettled_cash < 0.0
+    assert state.accrued_fees == pytest.approx(sum(item["fee"] for item in state.unsettled_trades))
+    assert state.accrued_fees > 0.0
+    assert state.net_terminal_value == pytest.approx(nav - state.accrued_fees)
+    assert "已发生未支付费用" in state.notes
+    assert "价差" in state.notes and "不重复扣" in state.notes
+    assert state.liquidation_assumption == "mark_to_market_no_forced_liquidation"
+
+    exposure = rollout.result.exposure
+    exposure_row = exposure.loc[pd.to_datetime(exposure["date"]).dt.date == end]
+    assert state.unsettled_cash == pytest.approx(float(exposure_row["pending_cash"].iloc[0]))
+    nav_identity = state.cash + float(state.positions["market_value"].sum()) + state.unsettled_cash
+    assert nav_identity == pytest.approx(nav, abs=1e-5)
+    assert sum(record.reward for record in rollout.records) == pytest.approx(
+        nav - float(rollout.result.nav.loc[days[0]]), abs=1e-9
+    )
+
+    # 复用 env：先 reset/step 再 rollout，生命周期与终止状态必须切到本次 rollout
+    reused = RebalanceEnv(panel, calendar, funding, cfg)
+    reused.reset(START, end)
+    reused.step(ActionSpec())
+    rollout2 = reused.rollout(_native_policy(schedule), START, end)
+    assert reused.current_date == end
+    assert reused.result is rollout2.result
+    assert reused.terminate() is rollout2.terminal
+    assert rollout2.terminal.nav_mark_to_market == pytest.approx(state.nav_mark_to_market, abs=1e-9)

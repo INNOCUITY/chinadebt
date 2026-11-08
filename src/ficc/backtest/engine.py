@@ -251,6 +251,7 @@ def run_backtest(
     nav_high = float(cfg.backtest.init_cash)
     risk_off = False
     pending: TargetKRD | None = None
+    pending_proposed: Any = None
     last_snapshot = None
     bench_snapshot = None
 
@@ -422,6 +423,7 @@ def run_backtest(
         risk_off: bool = False,
         force_min_lot: bool = False,
         forced_orders: tuple[Any, ...] | None = None,
+        attempts_log: list[dict[str, Any]] | None = None,
     ) -> tuple[tuple[Any, ...] | None, list[TargetKRD], str, bool, float]:
         """成交前完整校验（R31/R32 修复版）。
 
@@ -486,7 +488,21 @@ def run_backtest(
                 except ValueError:
                     continue
                 reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
-                if all(report.ok for report in reports):
+                feasible = all(report.ok for report in reports)
+                if attempts_log is not None:
+                    attempts_log.append(
+                        {
+                            "stage": "policy_roll",
+                            "scale": scale,
+                            "target_total_dv01": float(sum(o.face_value for o in scaled)),
+                            "order_faces": {o.bond.code: float(o.face_value) for o in scaled},
+                            "feasible": bool(feasible),
+                            "violation_codes": sorted(
+                                {v.code for report in reports for v in report.violations}
+                            ),
+                        }
+                    )
+                if feasible:
                     return scaled, attempted, "", False, 1.0
                 last_violation_codes = ";".join(
                     sorted({v.code for report in reports for v in report.violations})
@@ -532,7 +548,23 @@ def run_backtest(
                     # 历史成交已推进到 d（重复调用）等边界：显式失败而不是静默成交
                     return None, attempted, "投影失败：账本状态不允许模拟该候选", False, level
                 reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
-                if all(report.ok for report in reports):
+                feasible = all(report.ok for report in reports)
+                if attempts_log is not None:
+                    attempts_log.append(
+                        {
+                            "stage": "tilt",
+                            "level": float(level),
+                            "target_total_dv01": float(cand_target.total_dv01),
+                            "order_faces": {
+                                order.bond.code: float(order.face_value) for order in orders
+                            },
+                            "feasible": bool(feasible),
+                            "violation_codes": sorted(
+                                {v.code for report in reports for v in report.violations}
+                            ),
+                        }
+                    )
+                if feasible:
                     return orders, attempted, "", False, level
 
                 cand_codes, cand_severity = _path_action_profile(reports)
@@ -780,6 +812,9 @@ def run_backtest(
         gate_target: TargetKRD | None = None
         active_target = pending if pending is not None else policy_roll_target
         face_target = active_target if isinstance(active_target, TargetFaces) else None
+        attempts_log: list[dict[str, Any]] = []
+        active_proposed = pending_proposed if pending is not None else None
+        gate_projected_faces: tuple[tuple[str, float], ...] = ()
         if face_target is not None:
             # 精确基准回放：按目标面值直接构造订单（不经 KRD 求解），仍走同一成交前闸门
             face_orders = _orders_from_faces(face_target.faces, last_snapshot, curve_d, d)
@@ -799,6 +834,7 @@ def run_backtest(
                 risk_off=risk_off,
                 force_min_lot=policy_roll_target is not None,
                 forced_orders=policy_orders,
+                attempts_log=attempts_log,
             )
             if accepted_orders is None:
                 rejected_reason = reason or "成交前约束不可行"
@@ -816,6 +852,9 @@ def run_backtest(
                 )
             else:
                 gate_target = attempted[-1] if attempted else active_target
+                gate_projected_faces = tuple(
+                    (order.bond.code, float(order.face_value)) for order in accepted_orders
+                )
                 settle = settlement_for(calendar, d, cfg=cfg)
                 for order in accepted_orders:
                     ledger.submit(
@@ -863,6 +902,8 @@ def run_backtest(
             "reject_reason": rejected_reason,
             "gate_level": gate_level,
             "risk_off": risk_off,
+            "attempts_detail": tuple(attempts_log),
+            "proposed_target": active_proposed,
         }
         if policy_roll_target is not None:
             gate_decision.update(
@@ -883,6 +924,7 @@ def run_backtest(
                 source="signal",
                 signal_date=active_target.as_of,
                 projected_target=attempted[-1] if attempted else active_target,
+                projected_faces=gate_projected_faces,
                 status=(
                     "partial_de_risk"
                     if partial_de_risk
@@ -895,6 +937,7 @@ def run_backtest(
                 pending_status="executed" if submitted_ids else "none",
             )
         gate_decisions.append(gate_decision)
+        pending_proposed = None
 
         # ---- 3) 记账与记录 ----
         snapshot = ledger.process_day(d, curve_d)
@@ -1019,11 +1062,13 @@ def run_backtest(
             positions=snapshot.positions,
             cfg=cfg,
         )
+        proposed_target = strategy.target_krd(ctx)
         if risk_off:
             target = TargetKRD(as_of=d, krd=dict(benchmark_d.krd), notes="风控熔断：回到基准中性")
         else:
-            target = strategy.target_krd(ctx)
+            target = proposed_target
         pending = target
+        pending_proposed = proposed_target
         if target is None:
             # 零动作（RL hold）：不产生 pending，也不触发主动交易；滚动政策仍照常执行。
             signal_rows.append(

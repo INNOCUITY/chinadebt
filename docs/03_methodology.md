@@ -843,7 +843,7 @@ $$\text{总收益}=\text{Carry}+\text{Roll-down}+\text{Level}+\text{Slope}+\text
 |------|----------|--------|
 | **Purge** | 训练集与验证集之间，剔除标签窗口重叠的样本 | 预测未来 5 日收益时，相邻样本标签重叠，随机切分等于泄漏 |
 | **Embargo** | 在验证集前额外留出 $h$ 天缓冲 | 特征工程若用了滚动窗口，仍有边界泄漏 |
-| **样本外锁定** | 2024–2025 只跑一次 | 反复看测试集 = 隐式调参 |
+| **样本外评估** | 2019–2025 标记为已研究样本；选择只用训练/验证窗 | 反复看外层测试再调参会泄漏，不能重新称 untouched holdout |
 
 时间序列切分示意：
 
@@ -883,6 +883,21 @@ $$\text{总收益}=\text{Carry}+\text{Roll-down}+\text{Level}+\text{Slope}+\text
 | Random | 随机仓位（下界） |
 
 五个策略必须在**同一成本、同一约束、同一测试期**下比较，否则没有意义。
+
+### 12.5 本地示例与服务器训练的边界
+
+- MacBook Air M2 / 16GB 负责 example 数据的功能、契约和少量更新验证；正式数据、
+  walk-forward、多 seed 与消融在单卡 A800 40GB 或 8×40GB 服务器执行。example 不产生研究绩效结论。
+- 同一引擎执行账本/滚动/约束/成本。CPU 环境与 GPU 网络分工；模型建议先用小 MLP，
+  GPU 数量不决定网络容量。8 卡优先跑独立 seed/窗口任务，CPU 配额与内存实测决定采样并行数。
+- 随机 seed 衡量优化稳定性，不生成独立历史；重复 episode 不增加独立市场信息。
+  多卡允许更多实验，也必须记录全部尝试，超参选择不能读取外层测试结果。
+- 各任务独立训练窗归一化与预处理，完整记录数据/split/config/代码 hash、设备与依赖；
+  跨硬件首先回放固定动作序列验证金融输出，再核对网络前向和训练恢复，不能要求跨设备训练权重逐位相同。
+- rollout 原始采样动作/log_prob、闸门候选、最终执行动作分别记录；奖励、终止未结算义务及
+  terminated/truncated 的处理通过契约验收后再正式训练。此前 R47–R49 不因迁移到服务器而关闭。
+
+完整硬件分工、模型参数估算、迁移门槛和交付顺序见计划 §12.20；该节是规划，不代表训练程序或部署已完成。
 
 ---
 
@@ -1162,7 +1177,7 @@ buyhold 两年 62 项与 rolling 2019-01-28→2021-12-31 的 79 项分别报告�
   2019–2025 已研究，绩效比较前不得重新命名测试集。
 
 **RL 接口**（`src/ficc/rl/`）：`RebalanceEnv` 每步调用**同一个** `run_backtest`（账本/闸门/滚动/成本
-不重写），`ActionSpec()`（`target_krd=None`）是 **hold=持仓不动**：引擎不生成 pending、不主动成交（滚动/结算等外生事件仍发生）；"保持当前 KRD"是另一动作，整手/约束下仍可能交易，不能当零动作。`StepRecord` 记录 `original_action`（策略原始目标）、`projected_target`（引擎 `gate_decisions` 的真实提交目标，含 policy roll）、`projected_faces`、
+不重写），`ActionSpec()`（`target_krd=None`）是 **hold=持仓不动**：引擎不生成 pending、不主动成交（滚动/结算等外生事件仍发生）；"保持当前 KRD"是另一动作，整手/约束下仍可能交易，不能当零动作。`StepRecord` 记录 `original_action`（策略原始目标）、`projected_target`（原动作的提交目标；政策目标须另列，快速路径缺口见 §10.22）、`projected_faces`、
 `executed_trades`、`rejected/reject_reason`、`gate_level/risk_off`、`nav_before/after` 与
 `reward = nav_after − nav_before`（同一账本净收益，价差不重复扣）；`events` 按
 signal→project→execute→reject/roll→settle 排序（**展示顺序**，真实决策以 `gate_decisions` 为准），换券事件来自 `roll_events`。
@@ -1173,18 +1188,20 @@ signal→project→execute→reject/roll→settle 排序（**展示顺序**，�
 label_end_date, label_available_after, label + 9 特征`，标签 = **同引擎一次全区间回放**的
 `benchmark_nav[label_end]/benchmark_nav[execution]−1`（成本/票息/融资/滚动已入 NAV），
 与直接引擎复算 rel 1e-9 一致；特征仍逐决策时点 `build_training_matrix` + 逐行因果性。
-**线性基线（全量 22 split、n=277）**：OOS IC **0.020**、R² **−0.120**（零基线 −0.056）、
-MAE **2.09e-3**（零基线 2.00e-3）→ **线性 Ridge 未跑赢零基线**；quick n=75 IC −0.109、
+**线性基线（全量 22 split、n=277）**：OOS IC **0.020**、R² **−0.120**（训练均值常数基线 −0.056）、
+MAE **2.09e-3**（常数基线 2.00e-3）→ **线性 Ridge 未跑赢训练均值常数基线**；quick n=75 IC −0.109、
 R² −0.179。这是负结果，不构成 alpha 证据；限制：单一已研究历史、标签是基准市场净收益而非策略
-超额、未做成本后组合回测、相邻 5 日标签重叠（区间 (t+1,t+5] 实为 4 个交易日）。
+超额、未做成本后组合回测。默认每 5 个交易日采样，区间 (t+1,t+5] 实为 4 个交易日，
+实际 344 行相邻标签区间不重叠；改为每日采样才会重叠。不重叠也不保证收益独立。
 
-**RL 动作/终止契约（2026-11-08 完成）**：`ActionSpec` 显式 `hold|target_krd|target_faces`；
+**RL 动作/终止契约（2026-11-08 实现，快速路径待修复）**：`ActionSpec` 显式 `hold|target_krd|target_faces`；
 `StepRecord.action_outcome ∈ executed|scaled|rejected|cancelled_by_policy|no_trade_deadband`，
 `policy_actions` 与 `roll_events` 一一对应，机械换券不混入 `projected_target`；
 `terminate()` 返回 `TerminalState`（`nav_mark_to_market/cash/positions/unsettled_trades/
 unsettled_cash/accrued_fees/liquidation_assumption`），默认**不强制平仓**、未结算义务单列；
-`rollout(policy, start, end)` 用**一次** `run_backtest` 产出整段轨迹（O(n) 训练路径），
-与逐步 `step`（O(n²) 调试路径）逐位一致。
+`rollout(policy, start, end)` 用**一次** `run_backtest` 产出整段 NAV/成交，
+但不能据此宣称 StepRecord/终止义务与 `step` 等价：本轮复现 Hold 奖励 NaN、
+政策动作混入原目标和终止接口未接通（§10.22，R47–R49）。
 
 ### 10.21 第十二轮独立审查：一日研究路径与新接口边界（2026-11-08）
 
@@ -1228,7 +1245,7 @@ unsettled_cash/accrued_fees/liquidation_assumption`），默认**不强制平仓
 无需因多日分支错误否定已通过的一日验收。完整证据见 `docs/code.md` R42–R46。
 
 
-### 10.21 第十二轮修复结果（R42–R46，2026-11-08）
+### 10.21.1 第十二轮修复结果（R42–R46，2026-11-08）
 
 | 编号 | 修复 | 证据 |
 |------|------|------|
@@ -1243,5 +1260,47 @@ unsettled_cash/accrued_fees/liquidation_assumption`），默认**不强制平仓
 不再被误报成执行失败。`make acceptance` **71/71 PASS**；`make acceptance-rolling`（2019–2021）
 **92/92 PASS**；延到 2025-12-31 同口径 **92/92 PASS**（`acceptance_summary_rolling_extended.csv`）。
 
-**仍保留**：h>1 样本重叠、只作描述；ML 标签一阶代理；RL env 逐日重放 O(n²) 且闸门内部缩放档位
+**仍保留**：h>1 风险样本重叠、只作描述；旧 `forward_returns` 为一阶代理，正式 ML 数据集已用账本基准标签；RL env 逐日重放 O(n²) 且闸门内部缩放档位
 仍未暴露（仅 `gate_attempts`）；h=5 风险数字是 2020-12-31 固定组合，不是全历史滚动 VaR。
+
+### 10.22 监督学习与 RL 快速路径独立审查（2026-11-08）
+
+审查版本 `329ff8b`。正式数据集已落到账本基准市场净收益，线性基线全量重跑可复现，
+这构成 C 阶段的离线预测基线；不构成策略超额或可交易 alpha 的验证。RL 尚未训练，
+且快速路径仍有 R47–R49 阻塞，不能将“同引擎 NAV/成交一致”扩展成“训练轨迹协议验收”。
+
+1. **奖励契约**：每日奖励由相邻估值 NAV 差决定，不能依赖是否存在订单 signal_date。
+   现 rollout 在建仓后 Hold 日输出 NaN；01-30/01-31 实际 NAV 增量分别为 78,259.80/103,616.46 元。
+   验收必须覆盖所有日点 reward 有限、逐日等价、累计奖励闭合。
+2. **动作契约**：原生 TargetKRD/TargetFaces、ActionSpec、政策替代需无损转换与统一记录。
+   快速路径目前把原生目标记成 Hold，并在取消日把机械目标放进 projected_target；不得用于动作归因。
+   逐档 candidate 暴露应在这项语义修复之上实现，不能替代它。
+3. **终止契约**：单次 rollout 需随结果返回本次 TerminalState。当前 terminate 仅与 step 生命周期相连，
+   rollout 后新环境调用会报错。默认不强平可以保留，但未付费用与 reward 的净终值口径需明确统一。
+4. **ML 结果口径**：默认每 5 交易日决策、收益区间长 4 交易日，344 行相邻标签不重叠；
+   “零基线”实际是训练均值预测。真零 OOS R²=−0.04510、MAE=0.00204764，
+   Ridge R²=−0.11978、MAE=0.00208833，仍差于真零及训练均值两种对照。
+   不重叠不等于统计独立；22 个 split 是一条历史的滚动评估，不是 22 次独立试验。
+
+本轮仅更新文档；业务修复与回归测试待下一轮。详细反例、修复验收及复跑范围见 code.md C-110/R47–R50，
+顺序见计划 §12.19。ML lag=1 与规则/RL 同日收盘后观察仍是不同政策信息集，公平比较前必须显式对齐。
+
+
+### 10.23 共同实验协议（protocol_v1_2026-11-08，冻结）
+
+ML 与 RL 的跨模型比较必须先冻结同一协议；本模块只做协议与评估器，**不做模型研究**。
+
+| 项目 | ML（监督学习） | RL（轨迹） | 共同约定 |
+|------|----------------|------------|----------|
+| 信息时钟 | 中债 t 日收盘估值、lag=1；决策 t 只看 ≤t−1 | 同一引擎 `MarketContext`（≤as_of）；每交易日决策 | 样本外比较采样到同一 `decision_step_days=5` 的决策日；RL 非决策日 hold |
+| 执行 | next-close（t+1） | next-close（t+1） | 同一成交价/闸门/成本 |
+| 持有/标签窗口 | 标签 `(t+1, t+5]`，实际 **4 个交易日** | reward=相邻估值日 NAV 差 | 选择**维持 decision+5** 定义；不混用"执行+5 日"旧结果 |
+| 目标 | 基准市场净收益（含成本/票息/融资/滚动） | 同一账本 NAV reward | 主动超额目标是**另一个版本**，不得混比 |
+| 预测→仓位 | 预先固定：`target_krd[t]=bench_krd[t]×(1+0.10×clip(z,−1,1))` | 同一映射（z 来自策略） | 映射冻结后才做样本外评估，不按结果调参 |
+| 成本/风险 | 同一引擎账本（价差/费用/融资/滚动） | 同一引擎 | 价差只扣一次 |
+| 样本 | `researched_sample`（2019–2025） | 同 | 不得改称 untouched holdout |
+
+**评估器**：`evaluate_predictions(predictions, panel, funding, calendar, cfg, protocol)` 把冻结
+预测映射成仓位、用同一 `run_backtest` 跑 rolling 基准，报告净收益、active excess、TE、成本、
+换手、暴露、拒单率；`run_protocol_smoke.py` 只用零/常数预测验证映射与成本口径
+（`reports/protocol_smoke.csv`、`protocol_manifest.json`），**不是模型研究**。

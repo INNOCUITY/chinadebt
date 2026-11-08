@@ -66,6 +66,7 @@ __all__ = [
     "Observation",
     "PolicyAction",
     "RebalanceEnv",
+    "Rollout",
     "StepRecord",
     "TerminalState",
     "hold_target_krd",
@@ -78,7 +79,9 @@ ActionOutcome = Literal[
     "scaled",
     "rejected",
     "cancelled_by_policy",
+    "replaced_by_risk_off",
     "no_trade_deadband",
+    "hold",
 ]
 PolicySource = Literal["none", "signal", "policy_roll"]
 _EVENT_ORDER: dict[str, int] = {
@@ -237,10 +240,12 @@ class TerminalState:
     - ``unsettled_cash``：待结算现金义务，**买入为负、卖出为正**，按结算日全价
       （净价 + 应计利息）× 面值/100 计算；
     - ``accrued_fees``：上述未结算成交在结算日将扣除但尚未进入 NAV 的费用
-      （``cfg.costs.fee_bp`` + 每笔结算费 + ``TradeRecord.fee``）；
+      （``cfg.costs.fee_bp`` + 每笔结算费 + ``TradeRecord.fee``）；**已发生未支付**，
+      单列披露、不计入 ``nav_mark_to_market``，净终值见 :attr:`net_terminal_value`；
     - ``liquidation_assumption``：默认按市价估值、**不强制平仓**。reward 只取账本
       NAV 的逐日变化（含持仓按市价重估的未实现变动），不因终止变现追加收益/成本；
-      未结算成交、待结算现金与费用作为义务单独披露。
+    - **价差不重复扣**：成交日半价差已由账本计入 NAV/成本表，终止估值不再扣一次；
+    - 未结算成交、待结算现金与费用作为义务单独披露。
     """
 
     nav_mark_to_market: float
@@ -251,6 +256,14 @@ class TerminalState:
     accrued_fees: float
     liquidation_assumption: str
     notes: str
+
+    @property
+    def net_terminal_value(self) -> float:
+        """净终值 = NAV − 已发生未支付费用（未结算现金义务已包含在 NAV 内）。
+
+        默认不强平，因此不含任何变现价差/资本利得调整；价差已在成交日按账本扣一次。
+        """
+        return float(self.nav_mark_to_market) - float(self.accrued_fees)
 
 
 @dataclass(frozen=True)
@@ -281,13 +294,20 @@ class StepRecord:
 
     ``original_action`` 是策略提出的目标；``projected_target`` 是**原动作提交给
     闸门的目标**（引擎内部还会按档位缩放/重试，本接口记录提交值/最后尝试）。
-    滚动日的机械换券不写入 ``projected_target``：它单独记在 ``policy_actions``，
-    原动作若被取消则 ``action_outcome="cancelled_by_policy"``。
+    滚动日的机械换券不写入 ``projected_target``（滚动日恒为 ``None``）：它单独记在
+    ``policy_actions``；当日机械换券实际提交的面值另记在 ``projected_faces``（仅作
+    披露，不属于原动作），原动作若被取消则 ``action_outcome="cancelled_by_policy"``。
 
-    ``executed_trades`` 是账本实际提交的成交（可能为空）。``substitution_detail``
+    ``executed_trades`` 是账本实际提交的成交（可能为空），每条带当日闸门尝试次数
+    ``attempted`` 与动作规模比 ``scale``（与 ``action_scale`` 相同）。``substitution_detail``
     记录原始动作、提交目标与实际成交的 face/dv01 差异；``action_scale`` 是提交
-    目标相对原始动作的规模比（KRD 用 total_dv01；faces 用执行买入/请求买入）。
-    ``reward = nav_after - nav_before``，同一账本、同一成本口径，价差不重复扣。
+    目标相对原始动作的规模比（KRD 用 ``attempted[-1]`` 的 total_dv01 / 原始 total_dv01；
+    faces 用实际买入面值 / 请求买入面值）。
+    ``reward = nav_after - nav_before``：``nav_before`` 是**该交易日的前一交易日 NAV**
+    （step 中即上一记录 NAV），与订单 ``signal_date`` 无关，因此 hold/无订单日也有
+    有限 reward；同一账本、同一成本口径，价差不重复扣。
+    动作结果：cancelled_by_policy > rejected > hold（持仓不动）> no_trade_deadband
+    （非 hold 且无成交）> scaled（``action_scale`` 明显小于 1）> executed。
     """
 
     date: date
@@ -315,6 +335,8 @@ class StepRecord:
     # 性能披露：本步从 episode 起点重放的交易日数与耗时（O(n²) 接口原型的证据）
     replay_days: int = 0
     replay_cost_seconds: float = 0.0
+    # 引擎逐档 candidate（R45 后续）：level/scale、order_faces、feasible、violation_codes
+    attempts_detail: tuple[dict[str, Any], ...] = ()
 
     @property
     def attempted(self) -> int:
@@ -326,13 +348,16 @@ class StepRecord:
 class Rollout:
     """一次 ``run_backtest`` 生成的整段轨迹（**O(n)** 训练路径，替代逐步 O(n²) 重放）。
 
-    ``records`` 与 ``step`` 的 :class:`StepRecord` 同契约；``result`` 是完整
-    :class:`BacktestResult`（NAV/成交/约束/归因输入）。policy 在引擎的每个信号日
-    （收盘后）被调用，只看到该日及之前的 ``MarketContext``；执行仍按 t+1 成交与同一闸门。
+    ``records`` 与 ``step`` 的 :class:`StepRecord` 同契约（共用同一轨迹构造器）；
+    ``result`` 是完整 :class:`BacktestResult`（NAV/成交/约束/归因输入）；``terminal``
+    是本次 episode 的 :class:`TerminalState`（与随后 ``env.terminate()`` 返回同一快照）。
+    policy 在引擎的每个信号日（收盘后）被调用，只看到该日及之前的 ``MarketContext``；
+    执行仍按 t+1 成交与同一闸门。
     """
 
     records: tuple[StepRecord, ...]
     result: BacktestResult
+    terminal: TerminalState
 
 
 class Event(NamedTuple):
@@ -377,6 +402,42 @@ def _to_date(value: Any) -> date:
 
 def _empty_frame() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _normalise_action(raw: Any) -> ActionSpec:
+    """把策略返回值**无损**规范化为 :class:`ActionSpec`（R48）。
+
+    原生 ``TargetKRD`` / ``TargetFaces`` 必须保留完整的目标向量/面值，不能退化成
+    hold；``None`` 按 hold（引擎的"零动作"）。``TargetKRD.krd`` 为空时引擎语义是
+    "缺失 tenor 取基准"，``ActionSpec`` 无法无损表达（空映射会被当成 hold），因此
+    显式报错而不是静默改变动作含义。StepRecord 的 ``original_action`` 与 ``step``
+    路径使用同一动作语义。
+    """
+    if isinstance(raw, ActionSpec):
+        return raw
+    if isinstance(raw, TargetKRD):
+        if not raw.krd:
+            raise ValueError("TargetKRD.krd 为空，无法无损规范化为 ActionSpec")
+        return ActionSpec(action_type="target_krd", target_krd=dict(raw.krd), notes=raw.notes)
+    if isinstance(raw, TargetFaces):
+        return ActionSpec(action_type="target_faces", target_faces=dict(raw.faces), notes=raw.notes)
+    if raw is None:
+        return ActionSpec()
+    raise TypeError(f"policy 返回类型非法：{type(raw).__name__}")
+
+
+def _trade_dict(item: Any) -> dict[str, Any]:
+    """成交行 → StepRecord 的成交字典（step 与 rollout 共用，保证逐字段一致）。"""
+    return {
+        "trade_id": str(item["trade_id"]),
+        "bond_code": str(item["bond_code"]),
+        "side": str(item["side"]),
+        "face_value": float(item["face_value"]),
+        "clean_price": float(item["clean_price"]),
+        "signal_date": _to_date(item["signal_date"]),
+        "trade_date": _to_date(item["trade_date"]),
+        "settlement_date": _to_date(item["settlement_date"]),
+    }
 
 
 def hold_target_krd(ctx: MarketContext, *, calendar: TradingCalendar, cfg: Config) -> TargetKRD:
@@ -479,6 +540,7 @@ class RebalanceEnv:
         self._schedule: dict[date, ActionSpec] = {}
         self._records: list[StepRecord] = []
         self._result: BacktestResult | None = None
+        self._terminal: TerminalState | None = None
         self._events: tuple[Event, ...] = ()
         self._last_nav = float(self._cfg.backtest.init_cash)
         # 性能披露：累计重放交易日数与耗时（O(n²) 接口原型；正式训练需单步接口）
@@ -564,6 +626,7 @@ class RebalanceEnv:
         self._schedule = {}
         self._records = []
         self._result = None
+        self._terminal = None
         self._events = ()
         self._last_nav = float(self._cfg.backtest.init_cash)
         self._replay_days = 0
@@ -620,156 +683,14 @@ class RebalanceEnv:
                 f"上一步记录={self._last_nav}（逐日重放必须确定性）"
             )
 
-        decision = self._gate_decision(result, trade_date)
-        if decision is not None:
-            decision_pending = str(decision.get("pending_status", "none"))
-            gate_attempts = int(decision.get("gate_attempts", 0))
-            policy_source = str(decision.get("source", "none"))
-            decision_risk_off = bool(decision.get("risk_off", False))
-        else:  # 兼容旧结果（无决策日志）
-            decision_pending = "none"
-            gate_attempts = 0
-            policy_source = "none"
-            decision_risk_off = False
-
-        trades = result.trades
-        trades_on = (
-            trades.loc[_dates_of(trades["trade_date"]) == trade_date] if len(trades) else trades
-        )
-        rejected_frame = result.rejected
-        rejected_on = (
-            rejected_frame.loc[_dates_of(rejected_frame["date"]) == trade_date]
-            if len(rejected_frame)
-            else rejected_frame
-        )
-        constraints = result.constraints
-        row = constraints.loc[_dates_of(constraints["date"]) == trade_date]
-        gate_level = float(row["gate_level"].iloc[0]) if len(row) else 1.0
-        risk_off = bool(row["risk_off"].iloc[0]) if len(row) else False
-        gate_rejected = len(rejected_on) > 0
-        gate_reject_reason = str(rejected_on["reason"].iloc[0]) if gate_rejected else ""
-
-        executed_trades = tuple(
-            {
-                "trade_id": str(item["trade_id"]),
-                "bond_code": str(item["bond_code"]),
-                "side": str(item["side"]),
-                "face_value": float(item["face_value"]),
-                "clean_price": float(item["clean_price"]),
-                "signal_date": _to_date(item["signal_date"]),
-                "trade_date": _to_date(item["trade_date"]),
-                "settlement_date": _to_date(item["settlement_date"]),
-            }
-            for _, item in trades_on.iterrows()
-        )
-        executed_face = float(sum(item["face_value"] for item in executed_trades))
-
-        roll_on_day = self._roll_rows(result, trade_date)
-        policy_actions = self._policy_actions(result, trade_date)
-
-        # 政策替代：滚动日机械换券优先（旧 pending 被取消）或风控熔断强制目标。
-        cancelled_by_policy = False
-        if not action.is_hold and policy_source == "policy_roll":
-            cancelled_by_policy = True
-        if decision_risk_off:
-            # 引擎在 risk_off 信号日直接以基准中性目标替代策略动作；原动作未提交。
-            cancelled_by_policy = True
-
-        projected_target, projected_faces = self._projected_action_target(
-            action,
-            decision=decision,
-            cancelled_by_policy=cancelled_by_policy,
-            strategy=strategy,
-            signal_date=signal_date,
-        )
-        rejected = bool(
-            gate_rejected
-            and not cancelled_by_policy
-            and action.action_type in ("target_krd", "target_faces")
-        )
-        reject_reason = gate_reject_reason if rejected else ""
-
-        action_scale = self._action_scale(
-            action,
-            projected_target=projected_target,
-            projected_faces=projected_faces,
-            executed_trades=executed_trades,
-            previous_faces=previous_faces,
-        )
-        # 每笔成交同时带上当日闸门尝试次数与动作规模比（审计可独立读取）。
-        executed_trades = tuple(
-            {
-                **item,
-                "attempted": gate_attempts,
-                "scale": action_scale,
-            }
-            for item in executed_trades
-        )
-        if action.action_type == "hold":
-            action_outcome: ActionOutcome = (
-                "cancelled_by_policy" if cancelled_by_policy else "no_trade_deadband"
-            )
-        elif cancelled_by_policy:
-            action_outcome = "cancelled_by_policy"
-        elif rejected:
-            action_outcome = "rejected"
-        elif not executed_trades:
-            action_outcome = "no_trade_deadband"
-        elif abs(action_scale - 1.0) > 1e-9:
-            action_outcome = "scaled"
-        else:
-            action_outcome = "executed"
-
-        notes = self._step_notes(
+        record = self._build_step_record(
+            result=result,
+            day=trade_date,
             action=action,
-            action_outcome=action_outcome,
-            cancelled_by_policy=cancelled_by_policy,
-            policy_source=policy_source,
-            decision_pending=decision_pending,
-            roll_on_day=roll_on_day,
-            rejected=rejected,
-            reject_reason=reject_reason,
-            executed_trades=executed_trades,
-            gate_attempts=gate_attempts,
-            action_scale=action_scale,
-            risk_off=risk_off,
-        )
-        substitution_detail = self._substitution_detail(
-            action=action,
-            action_outcome=action_outcome,
-            policy_source=policy_source,
-            projected_target=projected_target,
-            projected_faces=projected_faces,
-            executed_trades=executed_trades,
-            previous_faces=previous_faces,
-            action_scale=action_scale,
-            gate_attempts=gate_attempts,
-            reject_reason=reject_reason,
-            cancelled_by_policy=cancelled_by_policy,
-        )
-
-        record = StepRecord(
-            date=trade_date,
-            original_action=action,
-            projected_target=projected_target,
-            projected_faces=projected_faces,
-            executed_trades=executed_trades,
-            rejected=rejected,
-            reject_reason=reject_reason,
-            gate_level=gate_level,
-            risk_off=risk_off,
             nav_before=self._last_nav,
             nav_after=replay_nav,
-            reward=replay_nav - self._last_nav,
-            executed_face=executed_face,
-            gate_attempts=gate_attempts,
-            policy_source=policy_source,
-            pending_status=decision_pending,
-            notes=notes,
-            action_outcome=action_outcome,
-            action_scale=action_scale,
-            policy_actions=policy_actions,
-            substitution_detail=substitution_detail,
+            previous_faces=previous_faces,
+            emitted=strategy.emitted.get(signal_date),
             replay_days=step_replay_days,
             replay_cost_seconds=replay_seconds,
         )
@@ -777,6 +698,7 @@ class RebalanceEnv:
         self._records.append(record)
         self._cursor = trade_date
         self._result = result
+        self._terminal = None  # 新的 step 结果使上一终止快照失效
         self._last_nav = replay_nav
         self._events = _build_events(result)
         self._replay_days += step_replay_days
@@ -796,8 +718,17 @@ class RebalanceEnv:
 
         ``policy``：``Callable[[MarketContext], ActionSpec | TargetKRD | TargetFaces | None]``，
         在引擎每个信号日收盘后调用；返回值语义与 :class:`ActionSpec` 相同（None=hold）。
-        与逐步 ``step`` 使用同一引擎/闸门/滚动/成本；返回的记录按执行日构造，便于与
-        ``step`` 对照。交互式调试仍可用 ``step``（O(n²)）。
+        原生 ``TargetKRD`` / ``TargetFaces`` 会**无损规范化**为 :class:`ActionSpec` 并记入
+        ``original_action``（不再退化成 hold）。与逐步 ``step`` 使用同一引擎/闸门/滚动/
+        成本，并共用 :meth:`_build_step_record` 构造记录，故逐字段等价（仅性能字段不同）。
+
+        完成后同步环境生命周期（``_result/_cursor/_start/_end/_records``），因此随后
+        ``terminate()`` 可调用并返回与 ``Rollout.terminal`` 相同的 :class:`TerminalState`。
+        交互式调试仍可用 ``step``（O(n²)）；rollout 始终只运行一次引擎。
+
+        限制：引擎在风控熔断日**不调用策略**（直接以基准中性目标替代），rollout 因此
+        无法观测被替代的原始动作，该日 ``original_action`` 回落为 hold；要逐字段对齐
+        该类日期，需要引擎暴露被替代动作或在熔断日仍调用策略（与逐档 candidate 一并）。
         """
         start = _coerce_date(start, name="start")
         end = _coerce_date(end, name="end")
@@ -814,31 +745,24 @@ class RebalanceEnv:
                 return rollout_name
 
             def target_krd(self, ctx: MarketContext) -> TargetKRD | TargetFaces | None:
-                raw = policy(ctx)
-                if isinstance(raw, ActionSpec):
-                    actions[ctx.as_of] = raw
-                    if raw.action_type == "hold":
-                        return None
-                    if raw.action_type == "target_faces":
-                        return TargetFaces(
-                            as_of=ctx.as_of,
-                            faces=dict(raw.target_faces or {}),
-                            notes=raw.notes or "RL rollout faces",
-                        )
-                    return TargetKRD(
-                        as_of=ctx.as_of,
-                        krd=dict(raw.target_krd or {}),
-                        notes=raw.notes or "RL rollout KRD",
-                    )
-                if isinstance(raw, (TargetKRD, TargetFaces)):
-                    actions[ctx.as_of] = ActionSpec()
-                    return raw
-                if raw is None:
-                    actions[ctx.as_of] = ActionSpec()
+                action = _normalise_action(policy(ctx))
+                actions[ctx.as_of] = action
+                if action.is_hold:
                     return None
-                raise TypeError(f"policy 返回类型非法：{type(raw).__name__}")
+                if action.action_type == "target_faces":
+                    return TargetFaces(
+                        as_of=ctx.as_of,
+                        faces=dict(action.target_faces or {}),
+                        notes=action.notes or "RL 环境动作（目标面值）",
+                    )
+                return TargetKRD(
+                    as_of=ctx.as_of,
+                    krd=dict(action.target_krd or {}),
+                    notes=action.notes or "RL 环境动作",
+                )
 
         strategy = _PolicyStrategy()
+        replay_start = time.perf_counter()
         result = run_backtest(
             strategy,
             panel=self._panel,
@@ -848,109 +772,74 @@ class RebalanceEnv:
             start=start,
             end=end,
         )
-        records: list[StepRecord] = []
+        replay_seconds = time.perf_counter() - replay_start
         decisions = {item["date"]: item for item in getattr(result, "gate_decisions", [])}
-        trades = result.trades
-        for day in days[1:]:
+        records: list[StepRecord] = []
+        for index, day in enumerate(days[1:], start=1):
             decision = decisions.get(day)
-            if decision is None:
-                continue
-            signal_date = decision.get("signal_date")
+            signal_date = decision.get("signal_date") if decision is not None else None
             action = actions.get(signal_date) if signal_date is not None else None
+            if action is None and decision is not None and decision.get("source") == "policy_roll":
+                # 滚动政策目标以 pending.as_of 为信号日；无 pending 时引擎回落到前一交易日。
+                action = actions.get(self._calendar.prev_trading_day(day, 1))
             if action is None:
                 action = ActionSpec()
-            trades_on = (
-                trades.loc[_dates_of(trades["trade_date"]) == day] if len(trades) else trades
+            prior_day = days[index - 1]
+            previous_faces = self._positions_in(
+                result, signal_date if signal_date is not None else prior_day
             )
-            executed_trades = tuple(
-                {
-                    "trade_id": str(item["trade_id"]),
-                    "bond_code": str(item["bond_code"]),
-                    "side": str(item["side"]),
-                    "face_value": float(item["face_value"]),
-                    "clean_price": float(item["clean_price"]),
-                    "signal_date": _to_date(item["signal_date"]),
-                    "trade_date": _to_date(item["trade_date"]),
-                    "settlement_date": _to_date(item["settlement_date"]),
-                    "attempted": int(decision.get("gate_attempts", 0)),
-                    "scale": 1.0,
-                }
-                for _, item in trades_on.iterrows()
-            )
-            nav_before = (
-                float(result.nav.loc[signal_date])
-                if signal_date in result.nav.index
-                else float("nan")
-            )
-            nav_after = float(result.nav.loc[day])
-            status = str(decision.get("status", "no_action"))
-            source = str(decision.get("source", "none"))
-            if source == "policy_roll" and action.action_type != "hold":
-                outcome = "cancelled_by_policy"
-            elif status == "rejected":
-                outcome = "rejected"
-            elif status == "partial_de_risk":
-                outcome = "scaled"
-            elif not executed_trades and action.action_type != "hold":
-                outcome = "no_trade_deadband"
-            else:
-                outcome = "executed"
-            rolls = result.roll_events
-            policy_rows = rolls.loc[_dates_of(rolls["date"]) == day] if len(rolls) else rolls
-            policy_actions = tuple(
-                PolicyAction(
-                    day=day,
-                    tenor=float(row["tenor"]),
-                    retired_code=str(row["retired_code"]),
-                    issued_code=str(row["issued_code"]),
-                    pending_status=str(row.get("pending_status", "")),
-                    strategy_trade_ids=str(row.get("strategy_trade_ids", "")),
-                    status=str(row.get("status", "")),
-                )
-                for _, row in policy_rows.iterrows()
-            )
+            # R47：reward 一律取相邻估值日 NAV 差，与订单 signal_date 无关。
             records.append(
-                StepRecord(
-                    date=day,
-                    original_action=action,
-                    projected_target=decision.get("projected_target"),
-                    projected_faces=tuple(decision.get("projected_faces") or ()),
-                    executed_trades=executed_trades,
-                    rejected=bool(decision.get("rejected", False)),
-                    reject_reason=str(decision.get("reject_reason", "")),
-                    gate_level=float(decision.get("gate_level", 1.0)),
-                    risk_off=bool(decision.get("risk_off", False)),
-                    nav_before=nav_before,
-                    nav_after=nav_after,
-                    reward=nav_after - nav_before,
-                    executed_face=float(sum(t["face_value"] for t in executed_trades)),
-                    gate_attempts=int(decision.get("gate_attempts", 0)),
-                    policy_source=source,
-                    pending_status=str(decision.get("pending_status", "none")),
-                    action_outcome=outcome,
-                    policy_actions=policy_actions,
+                self._build_step_record(
+                    result=result,
+                    day=day,
+                    action=action,
+                    nav_before=float(result.nav.loc[prior_day]),
+                    nav_after=float(result.nav.loc[day]),
+                    previous_faces=previous_faces,
+                    decision=decision,
                     replay_days=len(days),
                     replay_cost_seconds=0.0,
-                    notes="rollout：单次引擎运行（O(n) 训练路径）",
                 )
             )
-        return Rollout(records=tuple(records), result=result)
+        terminal = self._terminal_state(result, days[-1])
+        # R49：同步环境生命周期，使 rollout 后可直接 terminate()/读取观测。
+        self._start = days[0]
+        self._end = days[-1]
+        self._days = tuple(days)
+        self._cursor = days[-1]
+        self._strategy_name = name
+        self._schedule = dict(actions)
+        self._records = list(records)
+        self._result = result
+        self._terminal = terminal
+        self._events = _build_events(result)
+        self._last_nav = float(result.nav.loc[days[-1]])
+        self._replay_days = len(days)
+        self._replay_cost_seconds = replay_seconds
+        return Rollout(records=tuple(records), result=result, terminal=terminal)
 
     def terminate(self) -> TerminalState:
         """返回 episode 终止时的估值与未结算义务（**不强制平仓**）。
 
-        只有在 episode 结束（``cursor >= end``）且已有回放结果时可调用。NAV 与
-        ``result.nav`` 末值逐位一致；reward 只取账本 NAV 的逐日变化（含市价重估），
-        不通过"强制平仓"制造期末收益；未结算成交/现金/费用单独披露。
+        ``reset/step`` 与 ``rollout`` 完成后都可调用；``rollout`` 已同步环境生命周期，
+        因此新 env 直接 rollout 后无需再 step。返回的 :class:`TerminalState` 与
+        ``Rollout.terminal`` 相同（同一估值/义务口径）。NAV 与 ``result.nav`` 末值
+        逐位一致；reward 只取账本 NAV 的逐日变化（含市价重估），不通过"强制平仓"
+        制造期末收益；未结算成交/现金/费用单独披露，价差不重复扣。
         """
         if self._end is None or self._result is None:
-            raise RuntimeError("必须先 reset/step 后再 terminate")
+            raise RuntimeError("必须先 reset/step/rollout 后再 terminate")
         if not self.done:
             raise RuntimeError(
                 f"episode 尚未结束（cursor={self._cursor}, end={self._end}），不能 terminate"
             )
-        result = self._result
-        end = self._end
+        if self._terminal is None:
+            self._terminal = self._terminal_state(self._result, self._end)
+        return self._terminal
+
+    def _terminal_state(self, result: BacktestResult, end: date) -> TerminalState:
+        """由 ``BacktestResult`` 构造终止义务快照（step/rollout 共用同一口径）。"""
         nav = float(result.nav.loc[end])
         exposure = result.exposure
         exposure_row = exposure.loc[_dates_of(exposure["date"]) == end]
@@ -1007,14 +896,15 @@ class RebalanceEnv:
         pending_gap = unsettled_cash - pending_cash
         note_parts = [
             "终止口径：按市价 mark-to-market，不强制平仓；reward 取账本 NAV 逐日变化，"
-            "不追加终止变现收益/成本",
+            "不追加终止变现收益/成本；半价差已在成交日按账本扣一次，终止时不重复扣",
             (
                 f"未结算成交 {len(unsettled)} 笔，待结算现金 {unsettled_cash:,.2f} 元"
-                "（买入为负、卖出为正）"
+                "（买入为负、卖出为正；已含在期末 NAV 的 pending_cash 内）"
             ),
             (
-                f"未结算费用 {accrued_fees:,.2f} 元按 cfg.costs.fee_bp + 每笔结算费 + "
-                "TradeRecord.fee 估算；引擎在结算日才扣费，故未计入期末 NAV"
+                f"已发生未支付费用 {accrued_fees:,.2f} 元按 cfg.costs.fee_bp + 每笔结算费 + "
+                "TradeRecord.fee 估算；引擎在结算日才扣费，故未计入期末 NAV；"
+                f"净终值 = NAV − 未支付费用 = {nav - accrued_fees:,.2f} 元"
             ),
             (
                 f"NAV 对账：cash({cash:,.2f}) + ΣMV({market_value:,.2f}) + "
@@ -1042,14 +932,183 @@ class RebalanceEnv:
                 return item
         return None
 
+    def _build_step_record(
+        self,
+        *,
+        result: BacktestResult,
+        day: date,
+        action: ActionSpec,
+        nav_before: float,
+        nav_after: float,
+        previous_faces: Mapping[str, float],
+        emitted: TargetKRD | TargetFaces | None = None,
+        decision: dict[str, Any] | None = None,
+        replay_days: int = 0,
+        replay_cost_seconds: float = 0.0,
+    ) -> StepRecord:
+        """共用轨迹构造器（R47/R48）：gate decision + trades + rolls + nav → StepRecord。
+
+        ``step``（逐日重放）与 ``rollout``（单次回放）**都调用本函数**，因此 record 的
+        语义逐项相同；唯一允许不同的是 ``replay_days/replay_cost_seconds``（性能披露）
+        以及成交 ``trade_id``（含策略名）。
+        """
+        decision = self._gate_decision(result, day) if decision is None else decision
+        constraints = result.constraints
+        constraint_row = constraints.loc[_dates_of(constraints["date"]) == day]
+        rejected_frame = result.rejected
+        rejected_on = (
+            rejected_frame.loc[_dates_of(rejected_frame["date"]) == day]
+            if len(rejected_frame)
+            else rejected_frame
+        )
+        if decision is not None:
+            pending_status = str(decision.get("pending_status", "none"))
+            gate_attempts = int(decision.get("gate_attempts", 0))
+            policy_source = str(decision.get("source", "none"))
+            risk_off = bool(decision.get("risk_off", False))
+            gate_level = float(decision.get("gate_level", 1.0))
+            gate_rejected = bool(decision.get("rejected", False))
+            gate_reject_reason = str(decision.get("reject_reason", "") or "")
+        else:  # 兼容旧结果（无决策日志）
+            pending_status = "none"
+            gate_attempts = 0
+            policy_source = "none"
+            risk_off = bool(constraint_row["risk_off"].iloc[0]) if len(constraint_row) else False
+            gate_level = float(constraint_row["gate_level"].iloc[0]) if len(constraint_row) else 1.0
+            gate_rejected = len(rejected_on) > 0
+            gate_reject_reason = str(rejected_on["reason"].iloc[0]) if gate_rejected else ""
+
+        trades = result.trades
+        trades_on = trades.loc[_dates_of(trades["trade_date"]) == day] if len(trades) else trades
+        executed_trades = tuple(_trade_dict(item) for _, item in trades_on.iterrows())
+        executed_face = float(sum(item["face_value"] for item in executed_trades))
+        roll_on_day = self._roll_rows(result, day)
+        policy_actions = self._policy_actions(result, day)
+
+        # 政策替代：滚动日机械换券优先（旧 pending 被取消）或风控熔断强制目标。
+        cancelled_by_policy = bool(
+            (not action.is_hold and policy_source == "policy_roll") or risk_off
+        )
+        projected_target, projected_faces = self._projected_action_target(
+            action,
+            decision=decision,
+            cancelled_by_policy=cancelled_by_policy,
+            emitted=emitted,
+        )
+        rejected = bool(gate_rejected and not cancelled_by_policy and not action.is_hold)
+        reject_reason = gate_reject_reason if rejected else ""
+        action_scale = (
+            1.0
+            if cancelled_by_policy
+            else self._action_scale(
+                action,
+                projected_target=projected_target,
+                projected_faces=projected_faces,
+                executed_trades=executed_trades,
+                previous_faces=previous_faces,
+            )
+        )
+        # 每笔成交同时带上当日闸门尝试次数与动作规模比（审计可独立读取）。
+        executed_trades = tuple(
+            {**item, "attempted": gate_attempts, "scale": action_scale} for item in executed_trades
+        )
+        if risk_off and policy_source != "policy_roll":
+            action_outcome: ActionOutcome = "replaced_by_risk_off"
+        elif cancelled_by_policy:
+            action_outcome = "cancelled_by_policy"
+        elif rejected:
+            action_outcome = "rejected"
+        elif action.is_hold:
+            action_outcome = "hold"
+        elif not executed_trades:
+            action_outcome = "no_trade_deadband"
+        elif action_scale < 0.999 or action_scale > 1.001:
+            action_outcome = "scaled"
+        else:
+            action_outcome = "executed"
+
+        notes = self._step_notes(
+            action=action,
+            action_outcome=action_outcome,
+            cancelled_by_policy=cancelled_by_policy,
+            policy_source=policy_source,
+            decision_pending=pending_status,
+            roll_on_day=roll_on_day,
+            rejected=rejected,
+            reject_reason=reject_reason,
+            executed_trades=executed_trades,
+            gate_attempts=gate_attempts,
+            action_scale=action_scale,
+            risk_off=risk_off,
+        )
+        substitution_detail = self._substitution_detail(
+            action=action,
+            action_outcome=action_outcome,
+            policy_source=policy_source,
+            projected_target=projected_target,
+            projected_faces=projected_faces,
+            executed_trades=executed_trades,
+            previous_faces=previous_faces,
+            action_scale=action_scale,
+            gate_attempts=gate_attempts,
+            reject_reason=reject_reason,
+            cancelled_by_policy=cancelled_by_policy,
+        )
+        return StepRecord(
+            date=day,
+            original_action=action,
+            projected_target=projected_target,
+            projected_faces=projected_faces,
+            executed_trades=executed_trades,
+            rejected=rejected,
+            reject_reason=reject_reason,
+            gate_level=gate_level,
+            risk_off=risk_off,
+            nav_before=float(nav_before),
+            nav_after=float(nav_after),
+            reward=float(nav_after) - float(nav_before),
+            executed_face=executed_face,
+            gate_attempts=gate_attempts,
+            policy_source=policy_source,
+            pending_status=pending_status,
+            notes=notes,
+            action_outcome=action_outcome,
+            action_scale=action_scale,
+            policy_actions=policy_actions,
+            substitution_detail=substitution_detail,
+            replay_days=replay_days,
+            replay_cost_seconds=replay_cost_seconds,
+            attempts_detail=tuple(decision.get("attempts_detail") or ()) if decision else (),
+        )
+
     def _positions_at(self, day: date) -> dict[str, float]:
         """上一个已回放结果在 ``day`` 的持仓面值（用于 faces 动作的执行 scale）。"""
         result = self._result
-        if result is None or len(result.positions) == 0:
+        if result is None:
             return {}
+        return self._positions_in(result, day)
+
+    @staticmethod
+    def _positions_in(result: BacktestResult, day: date) -> dict[str, float]:
+        """``result`` 在 ``day`` 的持仓面值（step 与 rollout 共用）。
+
+        空仓日的快照是占位行（``bond_code=None``、面值 NaN），必须过滤掉，否则两路径
+        的 ``previous_faces``/faces scale 会出现差异。
+        """
         frame = result.positions
+        if frame is None or len(frame) == 0:
+            return {}
         rows = frame.loc[_dates_of(frame["as_of"]) == day]
-        return {str(item["bond_code"]): float(item["face_value"]) for _, item in rows.iterrows()}
+        out: dict[str, float] = {}
+        for _, item in rows.iterrows():
+            code = item["bond_code"]
+            if code is None or (isinstance(code, float) and np.isnan(code)):
+                continue
+            face = float(item["face_value"])
+            if not np.isfinite(face):
+                continue
+            out[str(code)] = face
+        return out
 
     def _projected_action_target(
         self,
@@ -1057,30 +1116,34 @@ class RebalanceEnv:
         *,
         decision: dict[str, Any] | None,
         cancelled_by_policy: bool,
-        strategy: _ScriptedStrategy,
-        signal_date: date,
+        emitted: TargetKRD | TargetFaces | None = None,
     ) -> tuple[TargetKRD | None, tuple[tuple[str, float], ...]]:
-        """只返回**原动作**经闸门后的提交目标；政策换券不混入。"""
-        if cancelled_by_policy or action.action_type == "hold":
-            return None, ()
+        """只返回**原动作**经闸门后的提交目标；政策换券目标不写入 projected_target。
+
+        滚动日（``source == "policy_roll"``）``projected_target`` 恒为 ``None``；当日机械
+        换券实际提交的逐腿面值记入 ``projected_faces``（披露用途，不属于原动作），
+        政策目标本身只通过 ``policy_actions`` / ``projected_faces`` 可见。
+        """
+        source = str(decision.get("source", "none")) if decision is not None else "none"
+        policy_faces = tuple(
+            (str(code), float(face))
+            for code, face in ((decision.get("projected_faces") if decision else None) or ())
+        )
+        if cancelled_by_policy:
+            return None, (policy_faces if source == "policy_roll" else ())
+        if action.is_hold:
+            return None, (policy_faces if source == "policy_roll" else ())
         if action.action_type == "target_faces":
             # 面值动作绕过 KRD 求解；提交的“目标”就是逐券面值，而不是引擎内部
             # 为复用闸门而构造的基准 KRD。引擎决策日志不保存 signal 分支的 faces，
             # 这里用原动作面值（它正是 _orders_from_faces 的输入）。
             faces = tuple((str(k), float(v)) for k, v in (action.target_faces or {}).items())
-            if decision is None:
-                emitted = strategy.emitted.get(signal_date)
-                if isinstance(emitted, TargetFaces):
-                    faces = tuple((str(k), float(v)) for k, v in emitted.faces.items())
+            if decision is None and isinstance(emitted, TargetFaces):
+                faces = tuple((str(k), float(v)) for k, v in emitted.faces.items())
             return None, faces
         if decision is not None:
             raw = decision.get("projected_target")
-            target = raw if isinstance(raw, TargetKRD) else None
-            faces = tuple(
-                (str(code), float(face)) for code, face in (decision.get("projected_faces") or ())
-            )
-            return target, faces
-        emitted = strategy.emitted.get(signal_date)
+            return (raw if isinstance(raw, TargetKRD) else None), ()
         if isinstance(emitted, TargetKRD):
             return emitted, ()
         return None, ()
@@ -1094,8 +1157,13 @@ class RebalanceEnv:
         executed_trades: tuple[dict[str, Any], ...],
         previous_faces: Mapping[str, float],
     ) -> float:
-        """提交/执行规模相对原始动作的比例（>1 表示向基准回撤时被放大）。"""
-        if action.action_type == "hold":
+        """提交/执行规模相对原始动作的比例（>1 表示向基准回撤时被放大）。
+
+        KRD：``attempted[-1]``（gate_decision.projected_target）的 total_dv01 / 原始
+        动作 total_dv01；faces：机械闸门只缩放买入腿，用实际成交买入面值 / 请求买入
+        面值（闸门取整后提交，成交即提交值）。
+        """
+        if action.is_hold:
             return 1.0
         if action.action_type == "target_krd":
             original = float(sum((action.target_krd or {}).values()))

@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（663 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（673 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（663 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（673 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -141,11 +141,13 @@ make check    # = ruff check + ruff format --check + pytest（663 项离线，ex
 
 **第十二轮（R42–R46）**：多日 VaR 改为"先聚合 h 日冲击、carry 只计一次"（平 3% h=5 carry 58,967.64/样本，旧 5× 已消除；3%→4%→3% 净冲击 PnL=0）；ML 增加逐决策时点训练矩阵与逐行因果性校验（`shift(-1)` 反例 2019-02-11 行不变）；RL 零动作改为 **hold（不主动成交）**，`projected_target` 取引擎 `gate_decisions` 真实决策，pending 取消语义显式化；forced 缩放按最终整数面值重算价差成本。验收：buyhold 71/71、rolling 92/92（2019–2021 与 2025 延长样本同口径），carry 2022-03-21 被动超限单独披露。
 
-**监督学习数据集与线性基线（2026-11-08）**：信息时钟 lag=1 / next-close / h=5 / label_lag=1；账本口径标签（同引擎一次回放 benchmark_nav，成本/票息/融资/滚动已入）；逐决策时点特征 + 逐行因果性；线性 Ridge vs 零基线 22 split、n=277：OOS IC **0.020**、R² **−0.120**（零 −0.056）、MAE 2.09e-3（零 2.00e-3）——**未跑赢零基线**，负结果保留，不构成 alpha 证据。产物 `reports/ml_dataset*.csv/json`、`reports/ml_baseline_metrics.csv`；`make ml-baseline`。
+**监督学习数据集与线性基线（2026-11-08）**：lag=1 / next-close / h=5 / label_lag=1；正式标签已换成同引擎账本基准净收益。全量重跑 22 split、n=277：OOS IC **0.020**、R² **−0.120**、MAE **2.09e-3**，差于训练均值常数基线（R² −0.056、MAE 2.00e-3），也差于真正零预测（R² −0.045、MAE 2.05e-3）。默认每 5 交易日决策，收益区间实际为 4 交易日，344 行相邻标签**不重叠**。负结果保留；标签是市场收益，尚未做成本后组合比较。
 
-**RL 动作契约（2026-11-08）**：`ActionSpec` 显式 Hold/TargetKRD/TargetFaces；`StepRecord` 记录 action_outcome/substitution/policy_actions；`terminate()` 返回未结算义务（默认不强制平仓）；`rollout` 单次引擎 O(n) 训练路径，与 step O(n²) 逐位一致。
+**本轮独立审查（HEAD `329ff8b`）**：ML 数据集/基线可复现；RL 快速路径尚不能进入正式训练。发现 **R47** Hold 日 reward=NaN、**R48** 原生目标被记成 Hold/机械目标混入原动作、**R49** rollout 未接 TerminalState；**R50** 修正基线命名与重叠披露。NAV/成交相同不等于训练轨迹相同。业务代码仍待修复，本轮只维护文档。
 
-**C 阶段接口（仅接口，未做绩效比较）**：`src/ficc/ml/`（`build_current_features` 当前决策工作表；`build_training_matrix` 逐决策时点构造；`assert_per_row_causality` 逐行因果性；`available_after` 标签；walk-forward purge/embargo；`researched_sample` 标注）；`src/ficc/rl/`（`RebalanceEnv` 复用同一引擎/账本/闸门，记录原动作→提交目标→实际成交/拒单、gate_level、reward=账本 NAV 差）。已知限制：env 每步重放 O(n²)、闸门内部重试档位未暴露（仅有 gate_attempts）、ML 标签为曲线一阶代理；绩效比较等 rolling/风险验收固定后再做。
+**C 阶段状态**：监督学习首个离线基线已完成；交互式 step 已有动作/终止接口，单次引擎 rollout 还需统一奖励、动作审计与终止义务。先关闭 R47–R49，再暴露逐档 GateDecision、冻结共同信息时钟/标签/成本后评估，最后进入多 seed RL。旧 `forward_returns` 是一阶代理，正式 `build_supervised_dataset` 已用账本标签；2019–2025 始终是已研究样本。详见[方法论 §10.22](docs/03_methodology.md#1022-监督学习与-rl-快速路径独立审查2026-11-08)、[计划 §12.19](docs/01_project_plan.md#1219-监督学习与-rl-快速路径审查后的推进顺序2026-11-08)、[C-110 / R47–R50](docs/code.md)。
+
+**计算资源规划（2026-11-08，尚未实现训练部署）**：MacBook Air M2 / 16GB 用 example 数据验证全 pipeline；正式 ML/RL 实验放服务器。分别支持单卡 A800 40GB 与 8×A800 40GB，8 卡优先按 seed/窗口/消融分配独立任务，CPU/内存未知时先低并发实测。当前 Ridge 只有 10 个拟合参数，RL 尚无已训练网络；拟议 64×64 / 128×128 小型 actor/critic，不因 GPU 多而增加模型容量。两端共用账本/协议，详细交付顺序见[计划 §12.20](docs/01_project_plan.md#1220-mac-本地示例--a800-正式实验的执行方案2026-11-08)。
 
 **第十二轮独立审查（2026-11-08）**：默认 check、62 项 buyhold 和 79 项 rolling 验收实跑通过，
 一日风险 CSV 复现；79 项默认范围是 2019-01-28→2021-12-31、2 次换券。

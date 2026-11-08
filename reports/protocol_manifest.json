@@ -1,0 +1,46 @@
+{
+  "protocol": {
+    "version": "protocol_v1_2026-11-08",
+    "information_lag_days": 1,
+    "execution": "next_close",
+    "holding_days_from_decision": 5,
+    "decision_step_days": 5,
+    "label_target": "market_benchmark_net_return",
+    "tilt_strength": 0.1,
+    "benchmark_version": "rolling",
+    "rolling_policy_version": "roll_v1_trigger1y_parissue",
+    "sample_tag": "researched_sample",
+    "cost_model": "engine_ledger_default",
+    "metadata": {
+      "script": "scripts/run_protocol_smoke.py",
+      "quick": true
+    },
+    "return_window_trading_days": 4,
+    "clocks": {
+      "ml": {
+        "observation_lag_days": 1,
+        "decision_step_days": 5,
+        "execution": "next_close",
+        "holding_days_from_decision": 5,
+        "label_available_after": "decision + 5 交易日（+1 可得滞后）"
+      },
+      "rl": {
+        "decision_frequency": "每个交易日收盘后（训练时可采样为 step 日）",
+        "observation": "同一引擎 MarketContext（≤ as_of）",
+        "execution": "next_close",
+        "reward": "同一账本 NAV 的相邻估值日变化（价差只扣一次）"
+      },
+      "comparison_rule": "跨模型比较时把所有策略采样到 decision_step_days 的同一决策日；RL 非决策日返回 hold（不主动交易）"
+    }
+  },
+  "start": "2019-01-28",
+  "end": "2019-06-28",
+  "n_decision_days": 21,
+  "scenarios": [
+    "zero",
+    "const_plus_half",
+    "const_minus_half",
+    "const_plus_one"
+  ],
+  "note": "冒烟评估只验证协议映射/成本口径，不是模型研究或 alpha 结论"
+}
