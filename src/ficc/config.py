@@ -180,12 +180,33 @@ class SyntheticConfig(_Model):
     maturities: list[float]
 
 
+class RollingConfig(_Model):
+    """合成券滚动政策（§12.12-B 冻结版，roll_v1）。
+
+    - 触发：任一腿**剩余期限 < roll_trigger_years** 时，在该交易日显式卖出旧券并
+      平价发行新券（票面=当日该期限曲线 YTM、起息=触发日、到期=起息+票面期限）；
+    - 版本号写入报告，滚动前后基准不可混比（新的滚动基准单独版本化）。
+    """
+
+    enabled: bool = False
+    roll_trigger_years: float = 1.0
+    version: str = "roll_v1_trigger1y_parissue"
+
+    @field_validator("roll_trigger_years")
+    @classmethod
+    def _check_trigger(cls, v: float) -> float:
+        if not (v > 0.0):
+            raise ValueError("roll_trigger_years 必须为正数")
+        return float(v)
+
+
 class PortfolioConfig(_Model):
     short_leg_mode: Literal["over_under_weight", "futures", "irs"] = "over_under_weight"
     allow_short_cash_bond: bool = False
     max_single_bond_weight: float = 0.3
     # 可交易合成券期限（与 synthetic.maturities 对应；基准与策略共用同一宇宙）
     universe: list[float] = Field(default_factory=lambda: [2.0, 5.0, 10.0, 30.0])
+    rolling: RollingConfig = Field(default_factory=RollingConfig)
     synthetic: SyntheticConfig
 
     @field_validator("universe")
@@ -240,6 +261,8 @@ class BacktestConfig(_Model):
     init_cash: float = 1e8
     max_leverage: float = 2.0
     rebalance: Literal["daily", "weekly"] = "daily"
+    # 基准版本：buyhold（原买入持有固定面值）| rolling（滚动阶梯，单独版本化）
+    benchmark_version: Literal["buyhold", "rolling"] = "buyhold"
     roll_down_step_years: float = 1.0
 
     @field_validator("end_date")

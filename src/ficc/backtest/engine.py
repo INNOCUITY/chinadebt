@@ -59,6 +59,8 @@ class BacktestResult:
     strategy: str
     start: date
     end: date
+    benchmark_version: str
+    rolling_version: str
     nav: pd.Series
     benchmark_nav: pd.Series
     exposure: pd.DataFrame
@@ -103,10 +105,11 @@ def _curve_at(panel: pd.DataFrame, tenors: list[float], d: date) -> Curve:
 
 def _funding_map(funding: pd.Series | None, days: list[date], cfg: Config) -> dict[date, float]:
     fallback = cfg.costs.repo_rate_fallback_const * 100.0
+    series = funding.dropna() if funding is not None else None
     out: dict[date, float] = {}
     for d in days:
-        if funding is not None and not funding.empty:
-            prior = funding.loc[:d]
+        if series is not None and not series.empty:
+            prior = series.loc[:d]
             out[d] = float(prior.iloc[-1]) if len(prior) else fallback
         else:
             out[d] = fallback
@@ -149,6 +152,16 @@ def allows_partial_de_risk(current_report: Any, candidate_report: Any) -> bool:
     return current_sev > 0.0 and action_severity(candidate_report) < current_sev * 0.999
 
 
+def _per_100_dv01(bond: Any, curve: Any, settlement: date, *, calendar: Any, cfg: Config) -> float:
+    """券在给定结算日的每 100 面值 DV01（元/bp/100 面值），用于滚动基准保持腿 DV01。"""
+    from ficc.portfolio.dates import remaining_years
+    from ficc.pricing.analytics import dv01 as analytics_dv01
+
+    remaining = remaining_years(bond, settlement)
+    ytm = float(curve.rate(remaining))
+    return float(analytics_dv01(bond, settlement, ytm, cfg=cfg))
+
+
 def _fee_estimate(face: float, clean_price: float, cfg: Config) -> float:
     """与账本 ``_trade_fee`` 同式的手续费/结算费估算（成交前现金预算用）。"""
     notional = face / 100.0 * clean_price
@@ -165,9 +178,10 @@ def run_backtest(
     start: date | None = None,
     end: date | None = None,
 ) -> BacktestResult:
-    from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds, mark_benchmark
+    from ficc.portfolio.benchmark import build_benchmark, mark_faces
     from ficc.portfolio.constraints import check_constraints, portfolio_risk
     from ficc.portfolio.construction import build_orders, execution_price
+    from ficc.portfolio.rolling import RollingUniverse, RollPolicy
 
     cfg = cfg or get_config()
     start = start or cfg.backtest.start_date
@@ -180,8 +194,25 @@ def run_backtest(
 
     curve_tenors = list(CANONICAL_TENORS)
     curve0 = _curve_at(panel, curve_tenors, days[0])
-    universe = build_universe_bonds(curve0, days[0], cfg=cfg)
+    roll_policy = RollPolicy.from_config(cfg)
+    benchmark_version = str(cfg.backtest.benchmark_version)
+    if roll_policy.enabled and benchmark_version != "rolling":
+        raise ValueError(
+            "portfolio.rolling.enabled=True 时 benchmark_version 必须为 'rolling'"
+            "（滚动策略不能与买入持有基准混比）"
+        )
+    if (not roll_policy.enabled) and benchmark_version == "rolling":
+        raise ValueError(
+            "benchmark_version='rolling' 需要 portfolio.rolling.enabled=True"
+            "（滚动基准必须有明确的滚动政策）"
+        )
+    rolling_universe = RollingUniverse.build(curve0, days[0], cfg=cfg)
+    universe = rolling_universe.active()
     benchmark0 = build_benchmark(curve0, days[0], bonds=universe, calendar=calendar, cfg=cfg)
+    bench_faces: dict[str, float] = dict(benchmark0.faces)
+    bench_weights: dict[float, float] = dict(benchmark0.weights)
+    bench_notional = float(benchmark0.notional or benchmark0.market_value)
+    bench_spread_day = 0.0
     funding_map = _funding_map(funding, days, cfg)
 
     def _ledger() -> Ledger:
@@ -207,7 +238,6 @@ def run_backtest(
     rejected_rows: list[dict[str, Any]] = []
     # 价差成本按"每次真实成交"累计（基准买入与策略成交分开，避免污染策略成本）
     order_spread: dict[str, float] = {bond.code: 0.0 for bond in universe}
-    bench_spread_cost = 0.0
     bench_trade_rows: list[dict[str, Any]] = []
     trade_spread_rows: list[dict[str, Any]] = []
 
@@ -360,15 +390,112 @@ def run_backtest(
 
     for d in days:
         curve_d = _curve_at(panel, curve_tenors, d)
-        benchmark_d = mark_benchmark(
-            benchmark0, bonds=universe, curve=curve_d, as_of=d, calendar=calendar, cfg=cfg
+        roll_events = rolling_universe.roll(curve_d, d)
+        if roll_events:
+            universe = rolling_universe.active()
+            if bench_bought and benchmark_version == "rolling":
+                settle = settlement_for(calendar, d, cfg=cfg)
+                roll_signal = calendar.prev_trading_day(d, 1)
+                for event in roll_events:
+                    old_face = float(bench_faces.pop(event.retired.code, 0.0))
+                    if old_face > 0.0:
+                        clean_exec, mid, _bp, per100 = execution_price(
+                            event.retired, curve_d, side="sell", calendar=calendar, cfg=cfg
+                        )
+                        bench_ledger.submit(
+                            TradeRecord(
+                                trade_id=f"bench-roll-{d:%Y%m%d}-{event.retired.code}-sell",
+                                bond=event.retired,
+                                side="sell",
+                                face_value=old_face,
+                                clean_price=clean_exec,
+                                signal_date=roll_signal,
+                                trade_date=d,
+                                settlement_date=settle,
+                            )
+                        )
+                        bench_spread_day += per100 * old_face / 100.0
+                        bench_trade_rows.append(
+                            {
+                                "trade_id": f"bench-roll-{d:%Y%m%d}-{event.retired.code}-sell",
+                                "bond_code": event.retired.code,
+                                "side": "sell",
+                                "face_value": old_face,
+                                "clean_price": clean_exec,
+                                "mid_clean_price": mid,
+                                "spread_cost": per100 * old_face / 100.0,
+                                "signal_date": roll_signal,
+                                "trade_date": d,
+                                "settlement_date": settle,
+                                "fee": 0.0,
+                                "coupon_pct": float(event.retired.coupon_pct),
+                                "freq": int(event.retired.freq),
+                                "issue_date": event.retired.issue_date,
+                                "maturity_date": event.retired.maturity_date,
+                                "accrual": event.retired.accrual,
+                                "market": event.retired.market,
+                            }
+                        )
+                    # 滚动基准：用**旧券面值**买入新券（滚动政策保持腿面值；权重随价格
+                    # 自然漂移，不做额外的权重再平衡，避免基准自身变成主动策略）。
+                    face = old_face
+                    clean_exec, mid, _bp, per100 = execution_price(
+                        event.issued, curve_d, side="buy", calendar=calendar, cfg=cfg
+                    )
+                    if face > 0.0:
+                        bench_ledger.submit(
+                            TradeRecord(
+                                trade_id=f"bench-roll-{d:%Y%m%d}-{event.issued.code}-buy",
+                                bond=event.issued,
+                                side="buy",
+                                face_value=float(face),
+                                clean_price=clean_exec,
+                                signal_date=roll_signal,
+                                trade_date=d,
+                                settlement_date=settle,
+                            )
+                        )
+                        bench_faces[event.issued.code] = float(face)
+                        bench_spread_day += per100 * face / 100.0
+                        bench_trade_rows.append(
+                            {
+                                "trade_id": f"bench-roll-{d:%Y%m%d}-{event.issued.code}-buy",
+                                "bond_code": event.issued.code,
+                                "side": "buy",
+                                "face_value": float(face),
+                                "clean_price": clean_exec,
+                                "mid_clean_price": mid,
+                                "spread_cost": per100 * face / 100.0,
+                                "signal_date": roll_signal,
+                                "trade_date": d,
+                                "settlement_date": settle,
+                                "fee": 0.0,
+                                "coupon_pct": float(event.issued.coupon_pct),
+                                "freq": int(event.issued.freq),
+                                "issue_date": event.issued.issue_date,
+                                "maturity_date": event.issued.maturity_date,
+                                "accrual": event.issued.accrual,
+                                "market": event.issued.market,
+                            }
+                        )
+            elif roll_events and bench_bought:
+                raise ValueError("滚动政策与买入持有基准不兼容，请在配置中选择 rolling 基准")
+        benchmark_d = mark_faces(
+            bench_faces,
+            bonds=universe,
+            curve=curve_d,
+            as_of=d,
+            calendar=calendar,
+            cfg=cfg,
+            weights=bench_weights,
+            notional=bench_notional,
         )
 
         # ---- 1) 基准买入持有（与策略同成本/价差/日期口径）----
         if not bench_bought and d == days[1]:
             settle = settlement_for(calendar, d, cfg=cfg)
             for bond in universe:
-                face = float(benchmark0.faces.get(bond.code, 0.0))
+                face = float(bench_faces.get(bond.code, 0.0))
                 if face <= 0:
                     continue
                 clean_exec, _mid, _spread_bp, per100 = execution_price(
@@ -386,7 +513,7 @@ def run_backtest(
                         settlement_date=settle,
                     )
                 )
-                bench_spread_cost += per100 * face / 100.0
+                bench_spread_day += per100 * face / 100.0
                 bench_trade_rows.append(
                     {
                         "trade_id": f"bench-{bond.code}",
@@ -527,11 +654,12 @@ def run_backtest(
                 "fee": fee,
                 "funding": funding_cost,
                 "spread": spread_cost,
-                "bench_spread": bench_spread_cost if d == days[1] else 0.0,
+                "bench_spread": bench_spread_day,
                 "total": fee + funding_cost + spread_cost,
             }
         )
         order_spread = {bond.code: 0.0 for bond in universe}
+        bench_spread_day = 0.0
 
         constraint_rows.append(
             {
@@ -602,6 +730,8 @@ def run_backtest(
         strategy=strategy.name,
         start=days[0],
         end=days[-1],
+        benchmark_version=benchmark_version,
+        rolling_version=roll_policy.version if roll_policy.enabled else "",
         nav=pd.Series(nav_rows, name="nav").sort_index(),
         benchmark_nav=pd.Series(bench_nav_rows, name="benchmark_nav").sort_index(),
         exposure=pd.DataFrame(exposure_rows),

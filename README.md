@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（551 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（593 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（551 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（593 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -129,14 +129,14 @@ make check    # = ruff check + ruff format --check + pytest（551 项离线，ex
 - 研究结论边界未放宽：10Y 残差只能称「持续的**模型相对**残差」，经济解释与交易性均标记 untested；2024–2025 已参与方法选择，不再称"未触碰测试集"。
 - 详细证据见 [code.md R12–R21](docs/code.md)、[方法论 §4.7/§4.8/§7.3/§8.3](docs/03_methodology.md)、[计划 §12.6](docs/01_project_plan.md)。
 
-**Phase 2 第九轮（2026-11-08，R31–R36 修复）**：执行状态、经济归因与统一验收已打通，仍不宣称金融验收全部完成。
+**Phase 2 第十轮（2026-11-08）：滚动政策、长样本、多窗口与风险验收**
 
-- **R31 熔断**：`risk_off` 真正传入闸门；熔断按 `[1.0..0.0]×基准` 阶梯降档并记录 `gate_level`；降风险偏序只看可行动项（历史回撤允许仍在）；熔断时按最小整手交易。回撤场景实测 gate_level=0.8、4 笔卖出、DV01 0.85×→0.80×。
-- **R32 现金预算**：`Ledger.clone/simulate` 统一状态推进（今日结算/票息/费用 + 候选成交 + 长假逐日融资），资金利率截断到 ≤as_of；闸门不再手写"一天融资"近似。审查反例（平 3%、5% 融资、跨春节）复跑：现金最低 −8,020,926.79 元、下限余量 +275.58 元，**无 cash_floor 违规**。
-- **R33 因子基**：观测矩阵 F × 形状基 B=F⁻¹，断言 `F@B=I`；2/5/7/10/30Y 不同剩余期限的纯因子场景 other≈0。
-- **R34 独立估值**：从条款+观察日+曲线独立重估 `dirty_model`，`valuation_basis` 单列并设阈值；真实 480 天 basis=0、breach=0；快照价格/市值/NAV 同步 +10,000 元的反例被捕获，不再进入 other_curve。
-- **R35 到期退出**：到期按赎回价值 100 + 末期票息现金处理，桥接扣除本金赎回；平曲线到期市场曲线分项=0。
-- **统一验收（R36/§12.12）**：`make acceptance` 在同一入口实跑策略/基准/归因/独立估值/对账 7 项（归因不再是 not run）/约束/零 tilt 控制；全量 **33 项 PASS / 0 FAIL**，缺检查即 FAIL。
-- **成本对照报告更正**：按 CSV 修正费用/融资归零的超额变化（RV 费用归零 +4.14bp、融资归零 +2.99bp；carry −2.63/−5.38；2s10s −0.76/−1.75）；2s10s 全部成本归零后重跑与固定路径相差 1,612.64 元、去价差 77 vs 71 笔、换手 +3.32%，不再写"≤2 元/<0.4%"；固定路径与重跑的手续费计价基数已分别说明。
-- **结论边界**：去价差使 carry/2s10s 历史超额由负转正、RV 超额上升 → 价差对该窗口影响大；但成本前历史超额为正**不等于**存在稳定预测信号；lot/死区能明显改变符号，需检查实际主动风险暴露，不能只看收益符号。因子 `other_curve` 仍约 −21bp（2 年），是三因子未覆盖期限变化的真实量，与 carry/roll、估值基差分开报告。
-- 详见 [方法论 §10.7–10.13](docs/03_methodology.md)、[计划 §12.12–12.13](docs/01_project_plan.md)、[code.md C-071~C-079](docs/code.md)。
+- **滚动政策（冻结）**：`roll_v1_trigger1y_parissue` —— 剩余期限 <1Y 时显式卖旧买新、平价发行；策略与基准共用；`benchmark_version` 区分 v1 买持（2019–2020 复现）与 v2 滚动（长样本），引擎强制校验，二者不可混比。
+- **长样本 2019-01-28→2025-12-31（1730 交易日，滚动基准 v2）**：零 tilt 控制 −1.10bp（基线漂移）；carry_roll −121.9bp、2s10s −29.8bp、rv −7.1bp；rv 有 1 天被动单券权重边界违规。成本/换手随换券显著上升。
+- **多窗口与区间估计（预注册 HAC lag=5、块 bootstrap 20/2000/固定 seed）**：4 个非重叠 2 年窗；carry_roll 各窗均负（pooled 年化 −13.5bp，HAC t=−3.16，CI [−21.9,−5.1]，bootstrap p=0.009）；2s10s/rv 区间覆盖 0（年化 −3.3/−0.8bp）。**只到"该规则在滚动政策下持续跑输基准"，不构成稳定负 alpha 证明**。
+- **lot=5M +33.45bp 解释**：来自不同主动风险暴露（2s10s 的 Δ市场因子 97%、|DV01 ratio−1| 1.59%→3.18%、TE 8.78→18.49bp、成交 71→10；rv 的 lot=5M 几乎未建主动 tilt）。lot 是整数手约束，不是可调参数。
+- **VaR/ES 与压力测试**：固定组合 95% 历史 VaR 35.67 万 vs KRD 37.47 万（−1.8bp）、ES 49.67 vs 51.65 万；KRD 近似在平行 ±100bp 误差 9.6%/7.2%（凸性）、蝶式 16.4%（曲率）、小幅陡平 <2%。**大幅平行/蝶式不可用 KRD 近似**；风险报告并列全重估与近似，且不消费未修正的归因分项。
+- **验证**：`make check` exit 0（593 项）；`make acceptance` 33/33 PASS；`make recon` 6 执行 + 1 not run；长样本/多窗口/lot/风险脚本均可复跑。
+- 详见 [方法论 §10.14–10.17](docs/03_methodology.md)、[计划 §12.14](docs/01_project_plan.md)、[code.md C-080~C-086](docs/code.md)。
+
+**历史轮次（R31–R36）**：执行状态、对偶因子基、独立估值、到期退出与统一验收——见方法论 §10.7–10.13 与 code.md C-071~C-079。

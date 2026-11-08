@@ -48,6 +48,8 @@ reports/strategy_*_constraints.csv
 # 逐券日快照/逐券归因是中间大表（make strategies / make attribution 可重建）
 reports/strategy_*_positions.csv
 reports/attribution_*_bonds.csv
+# 长样本逐日大表（可由 make long-sample 重建）
+reports/long_sample_*_constraints.csv
 
 # ---------- 系统 ----------
 .DS_Store

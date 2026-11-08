@@ -152,6 +152,12 @@ portfolio:
   max_single_bond_weight: 0.3
   # 可交易合成券期限（基准与策略共用的投资宇宙）
   universe: [2.0, 5.0, 10.0, 30.0]
+  # 滚动政策（roll_v1，冻结）：剩余期限 < trigger 时显式卖旧买新（平价发行）。
+  # 延长样本/滚动研究时开启，并把 backtest.benchmark_version 设为 rolling。
+  rolling:
+    enabled: false
+    roll_trigger_years: 1.0
+    version: "roll_v1_trigger1y_parissue"
   # 合成债券（无个券估值数据时的替代方案，见 plan 决策 1b）
   synthetic:
     face_value: 100.0
@@ -184,6 +190,7 @@ backtest:
   init_cash: 100_000_000.0
   max_leverage: 2.0
   rebalance: "daily"                   # daily | weekly
+  benchmark_version: "buyhold"          # buyhold | rolling（滚动基准单独版本化）
   # 骑乘目标：10Y 持仓的 roll-down 目标是 9Y（不是 7Y！）
   roll_down_step_years: 1.0
 

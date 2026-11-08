@@ -67,7 +67,7 @@ def load_market(cfg: Config) -> tuple[pd.DataFrame, pd.Series, TradingCalendar]:
         .sort_index()
         .reindex(columns=list(CANONICAL_TENORS))
     )
-    funding = load_funding_series(cfg=cfg).set_index("date")["FDR007"].sort_index()
+    funding = load_funding_series(cfg=cfg).set_index("date")["FDR007"].dropna().sort_index()
     return panel, funding, TradingCalendar.from_dates(panel.index)
 
 
