@@ -1195,14 +1195,16 @@ R39/R40 修正前不标为风险模型金融验收通过；详见方法论 §10.
 | 编号 | 修复 | 关键证据 |
 |------|------|----------|
 | **R37** | 闸门逐时点检查投影路径（含成交日/各结算日），默认 horizon 覆盖最晚结算后检查点 | T+2 + cash_floor=0 建仓被拒；rv 2023-07-04 主动超限消失（长样本 0 违规）；R32 长假改为区分执行违规与被动融资违规 |
-| **R38** | 滚动日策略机械同日换券（卖光旧 + 该腿滚动到基准新券面值，双方共用政策）；pending 顺延记录；`roll_events` 全状态映射；`TargetFaces` 精确基准回放控制组 | 四组均 7/7 同日、0 缺失、0 约束拒绝；精确回放控制超额 **0.0000bp**；weekly 同日/因果性/回放测试；`make acceptance-rolling` **45/45 PASS** |
+| **R38** | 滚动日策略机械同日换券（卖光旧 + 该腿滚动到基准新券面值，双方共用政策）；pending 顺延记录；`roll_events` 全状态映射；`TargetFaces` 精确基准回放控制组 | 四组均 7/7 同日、0 缺失、0 约束拒绝；精确回放控制超额 **0.0000bp**；weekly 同日/因果性/回放测试；`make acceptance-rolling` **79/79 PASS** |
 | **R39** | VaR 改为冻结分析日组合 + 历史冲击（`analysis_as_of + frozen_positions + historical_shocks`） | 95% VaR/ES **32.42/44.58 万**（YTM 冻结反例 31.82/43.33 万在测试中逐位复现；旧 aging 35.67/49.67 万并列） |
 | **R40** | 全重估/KRD 统一即期定价与冲击基；解析 KRD | 小冲击收敛 8.3e-4 / 4.3e-6 / 4.3e-7；平行 ±100bp 8.2%/8.3%，陡平蝶 25bp ≈1.08%，历史 ~1% |
 | **R41** | 窗口元数据/基期/pooled 语义/版本字段修正；文档数字与 CSV 自动核对 | 3×约 2 年 + 229 日尾窗；carry 年化 3.7358%、MDD −4.9915%；全段 −120.58bp、年化 −13.37bp、窗口均值 −25.01bp |
 
-**验收边界**：buyhold 两年 33/33 与 rolling 四年 45/45 分别报告；主 VaR 即期空间与审查 YTM 冻结
+**验收边界**：buyhold 两年 62/62 与 rolling 四年 79/79 分别报告；主 VaR 即期空间与审查 YTM 冻结
 空间差 +1.9%/+2.9% 已披露；price-only VaR 不含持有期 carry/现金事件；滚动基准采用面值保持，
 DV01 保持仅作为后续稳健性对照；重叠窗口不做推断。
+
+**C 阶段接口已建（仅接口，无绩效结论）**：`src/ficc/ml/`（as-of、标签 `available_after`、walk-forward purge/embargo、泄漏检测、`researched_sample` 标注）与 `src/ficc/rl/`（`RebalanceEnv` 复用同一引擎事件顺序/账本/闸门，记录 original_action→projected_target→executed/rejected、gate_level、reward=账本 NAV 差）。限制：env 每步重放 O(n²)、闸门内部缩放档位未暴露、ML 标签为曲线一阶代理；绩效比较待 rolling/风险验收固定后。
 
 **下一步（C）**：先做监督学习/RL 的 as-of 接口、split manifest 与零信号基线（不比较绩效）；
 固定 rolling 验收与风险口径后再谈绩效比较，且 2019–2025 已研究样本不得改称未触碰测试集。

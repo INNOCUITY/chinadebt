@@ -91,7 +91,60 @@ def _add(rows: list[dict], strategy: str, check: str, passed: bool, detail: str)
     )
 
 
-def _run_one(name, strategy, panel, funding, calendar, cfg) -> None:
+def _recon_detail(rows: list[dict], name: str, reconciliation) -> None:
+    """把 7 项对账逐项写成独立行（现金/持仓/票息权益/归因闭合等显式可审计）。"""
+    for check in reconciliation.checks:
+        if not check.executed:
+            continue
+        _add(rows, name, f"recon_{check.name}", bool(check.passed), check.detail[:240])
+
+
+def _risk_small_shock_check(rows: list[dict], name: str, panel, calendar, cfg) -> None:
+    """固定组合蝶式 0.001bp：全重估 vs 同源 KRD 的一阶收敛（<1e-4）。"""
+    try:
+        from ficc.curve.curve import Curve
+        from ficc.data.schema import CANONICAL_TENORS
+        from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds
+        from ficc.risk.stress import stress_test
+
+        day = END  # 用验收窗口末日，避免 T+1 超出日历末尾
+        rates = panel.loc[pd.Timestamp(day)].to_numpy(dtype=float)
+        curve = Curve(
+            as_of=day,
+            tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float).copy(),
+            rates=rates,
+            method="linear",
+        )
+        bonds = build_universe_bonds(curve, day, cfg=cfg)
+        bench = build_benchmark(curve, day, bonds=bonds, calendar=calendar, cfg=cfg)
+        scenarios = [{"type": "butterfly", "name": "[收敛]蝶式0.001bp", "bp": 0.001}]
+        results = stress_test(
+            bench.faces, list(bonds), curve, scenarios=scenarios, calendar=calendar, cfg=cfg
+        )
+        error_raw = getattr(results[0], "error_ratio", None)
+        error = float("nan") if error_raw is None else float(error_raw)
+        _add(
+            rows,
+            name,
+            "risk_small_shock_convergence",
+            bool(error == error and error < 1e-4),
+            f"蝶式0.001bp 相对误差={error:.3e}（阈值 1e-4；全重估与 KRD 同源即期）",
+        )
+    except Exception as exc:
+        _add(rows, name, "risk_small_shock_convergence", False, f"检查失败: {exc}")
+
+
+def _run_one(
+    name,
+    strategy,
+    panel,
+    funding,
+    calendar,
+    cfg,
+    *,
+    causality: bool = False,
+    do_risk: bool = False,
+) -> None:
     log.info("验收: %s", name)
     result = run_backtest(
         strategy, panel=panel, calendar=calendar, funding=funding, cfg=cfg, start=START, end=END
@@ -193,6 +246,9 @@ def _run_one(name, strategy, panel, funding, calendar, cfg) -> None:
         not not_run,
         f"未执行: {not_run or '无'}",
     )
+    _recon_detail(rows, name, reconciliation)
+    if do_risk:
+        _risk_small_shock_check(rows, name, panel, calendar, cfg)
 
     held = result.constraints[result.constraints["n_positions"] > 0]
     cv_fail = int((~held["ok"]).sum())
@@ -236,6 +292,20 @@ def _run_one(name, strategy, panel, funding, calendar, cfg) -> None:
             bench_dates <= strat_dates,
             f"基准换券日 {sorted(bench_dates)}，策略缺 {sorted(bench_dates - strat_dates)}",
         )
+        # 跨换券归因：归因逐日索引必须覆盖换券日，且换券日桥接残差仍在容差内
+        attr_dates = set(pd.to_datetime(attr.daily["date"]).dt.date)
+        uncovered = sorted(bench_dates - attr_dates)
+        daily_dates = pd.to_datetime(attr.daily["date"]).dt.date
+        roll_residual = float(
+            attr.daily.loc[daily_dates.isin(bench_dates), "bridge_residual"].abs().max()
+        )
+        _add(
+            rows,
+            name,
+            "attribution_across_rolls",
+            not uncovered and roll_residual <= BRIDGE_ABS_TOL,
+            f"换券日 {len(bench_dates)} 个，归因缺 {uncovered}，换券日残差={roll_residual:.3e} 元",
+        )
 
     total_ret = result.nav.iloc[-1] / result.nav.iloc[0] - 1.0
     bench_ret = result.benchmark_nav.iloc[-1] / result.benchmark_nav.iloc[0] - 1.0
@@ -253,6 +323,43 @@ def _run_one(name, strategy, panel, funding, calendar, cfg) -> None:
             abs(excess_bp) <= tol,
             f"excess={excess_bp:.4f}bp（阈值 ±{tol:g}bp），成交 {len(result.trades)} 笔",
         )
+    if causality:
+        cutoff = START + (END - START) // 2
+        panel2 = panel.copy()
+        future = panel2.index > pd.Timestamp(cutoff)
+        panel2.loc[future, :] = panel2.loc[future, :] * 1.5
+        funding2 = funding.copy()
+        funding2.loc[funding2.index > pd.Timestamp(cutoff)] = (
+            funding2.loc[funding2.index > pd.Timestamp(cutoff)] + 3.0
+        )
+        perturbed = run_backtest(
+            strategy,
+            panel=panel2,
+            calendar=calendar,
+            funding=funding2,
+            cfg=cfg,
+            start=START,
+            end=END,
+        )
+        nav_base = result.nav.loc[result.nav.index <= cutoff]
+        nav_pert = perturbed.nav.loc[perturbed.nav.index <= cutoff]
+        ok_nav = nav_base.index.equals(nav_pert.index) and np.allclose(
+            nav_base.to_numpy(), nav_pert.to_numpy(), rtol=0, atol=1e-9
+        )
+        tb = result.trades[result.trades["trade_date"] <= cutoff].reset_index(drop=True)
+        tp = perturbed.trades[perturbed.trades["trade_date"] <= cutoff].reset_index(drop=True)
+        ok_trades = len(tb) == len(tp) and all(
+            tb[col].tolist() == tp[col].tolist()
+            for col in ("trade_id", "side", "face_value", "clean_price", "settlement_date")
+        )
+        _add(
+            rows,
+            name,
+            "future_perturbation_prefix",
+            bool(ok_nav and ok_trades),
+            f"cutoff={cutoff}，nav_prefix_equal={ok_nav}，trade_prefix_equal={ok_trades}",
+        )
+
     return rows, result, attr
 
 
@@ -305,11 +412,27 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     rows: list[dict] = []
-    for name, strategy in strategies:
-        strategy_rows, _result, _attr = _run_one(name, strategy, panel, funding, calendar, cfg)
+    for index, (name, strategy) in enumerate(strategies):
+        strategy_rows, _result, _attr = _run_one(
+            name,
+            strategy,
+            panel,
+            funding,
+            calendar,
+            cfg,
+            causality=bool(args.rolling and index == 0),
+            do_risk=(index == 0),
+        )
         rows.extend(strategy_rows)
 
     summary = pd.DataFrame(rows)
+    summary["start"] = str(START)
+    summary["end"] = str(END)
+    summary["benchmark_version"] = str(cfg.backtest.benchmark_version)
+    summary["rolling_version"] = (
+        "roll_v1_trigger1y_parissue" if cfg.portfolio.rolling.enabled else ""
+    )
+    summary["config_hash"] = cfg.hash()
     out = cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
     summary_path = out / (

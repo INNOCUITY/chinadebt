@@ -451,6 +451,7 @@ def run_backtest(
             # 只按 [1.0..0.0] 缩放买入面值以恢复可行性（卖出旧券始终保留）。
             lot = float(cfg.constraints.min_trade_lot)
             for scale in (1.0, 0.9, 0.8, 0.6, 0.4, 0.2, 0.0):
+                attempted.append(target)
                 scaled = tuple(
                     order
                     if order.side == "sell"
@@ -576,6 +577,8 @@ def run_backtest(
                         "strategy_trade_ids": "",
                         "status": "pending",
                         "reason": "",
+                        "pending_deferred": False,
+                        "gate_attempts": 0,
                     }
                     roll_rows.append(roll_row)
                     old_face = float(bench_faces.pop(event.retired.code, 0.0))
@@ -756,6 +759,7 @@ def run_backtest(
         executed = 0
         executed_notional = 0.0
         submitted_ids: list[str] = []
+        attempted: list[Any] = []
         rejected_reason = ""
         partial_de_risk = False
         gate_level = 1.0
@@ -919,6 +923,7 @@ def run_backtest(
                 if roll_row["retired_code"] in trade_id or roll_row["issued_code"] in trade_id
             ]
             roll_row["strategy_trade_ids"] = ";".join(matched)
+            roll_row["gate_attempts"] = len(attempted)
             if matched:
                 roll_row["status"] = "same_day"
             elif rejected_reason:

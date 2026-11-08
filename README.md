@@ -83,11 +83,11 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（608 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（624 项离线，exit 0）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
-- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（608 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
+- 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（624 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
 - 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
@@ -136,7 +136,9 @@ make check    # = ruff check + ruff format --check + pytest（608 项离线，ex
 - **R39 VaR**：改为冻结分析日组合 + 历史冲击（`analysis_as_of + frozen_positions + historical_shocks`）；95% VaR/ES **32.42/44.58 万元**（旧 aging 口径 35.67/49.67 万并列；审查的 YTM 冻结反例 31.82/43.33 万在测试中逐位复现）。
 - **R40 风险近似**：全重估与 KRD 统一 `price_from_spot` + `spot_shock`；小冲击收敛 8.3e-4 / 4.3e-6 / 4.3e-7；平行 ±100bp 8.2%/8.3%、陡平蝶 25bp ≈1.08%、历史 ~1%（旧"蝶式 16.4%"是不同源误差，已纠正）。
 - **R41 报告**：窗口契约改为 3×约 2 年 + 229 日尾窗；收益基期=前收 NAV；`pooled_cumulative_excess_bp`（全段 −120.58bp）与 `pooled_ann_excess_bp`（−13.37bp）、`mean_window_excess_bp`（−25.01bp）明确分列；carry 年化 **3.7358%**、MDD **−4.9915%**；`rolling_version` 填值；文档数字与 CSV 自动核对。
-- **验收**：默认 buyhold `make acceptance` **33/33 PASS**；滚动 `make acceptance-rolling` **45/45 PASS**；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
+- **验收**：默认 buyhold `make acceptance` **62/62 PASS**；滚动 `make acceptance-rolling` **79/79 PASS**（含对账逐项、跨换券归因、票息权益、现金对账、未来扰动、风险小冲击收敛）；滚动因果性/同日换券/拒单审计均有测试。两者范围不同，不能互相替代。
 - **边界**：主 VaR 用即期空间（与审查 YTM 冻结空间差 +1.9%/+2.9%，已并列）；price-only VaR 不含持有期 carry/现金事件；滚动基准为面值保持政策；重叠窗口不做推断。ML/RL 仅可先做 as-of/split 接口与零信号基线，绩效比较待 rolling/风险验收固定后。
+
+**C 阶段接口（仅接口，未做绩效比较）**：`src/ficc/ml/`（as-of 无未来视图、标签 `available_after`、walk-forward purge/embargo 与泄漏检测、`researched_sample` 标注）；`src/ficc/rl/`（`RebalanceEnv` 复用同一引擎/账本/闸门，记录原动作→提交目标→实际成交/拒单、gate_level、reward=账本 NAV 差）。已知限制：env 每步重放 O(n²)、闸门内部重试档位未暴露、ML 标签为曲线一阶代理；绩效比较等 rolling/风险验收固定后再做。
 
 **历史轮次（R31–R36）**：执行状态、对偶因子基、独立估值、到期退出与统一验收——见方法论 §10.7–10.13 与 code.md C-071~C-079。

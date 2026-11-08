@@ -1092,6 +1092,8 @@ PnL 分布"保留为 `historical_aging` 对照。默认 price-only；`include_ca
   历史 2013 钱荒/2020 疫情 **1.07% / 0.94%**（不是旧报告的 16.4% 蝶式）；
 - 单点极值：2Y-only +100bp 1.0%、30Y-only 13.3%（曲率/外推），风险报告须并列全重估。
 
+**契约（显式）**：`VaR = f(analysis_as_of, frozen_positions, historical_shocks, horizon_days, include_carry)`——分析日组合/条款/结算/剩余期限**冻结**；历史样本只提供风险因素变化；`horizon_days=1` 默认瞬时价格风险（price-only，BIS 历史模拟口径），`include_carry=True` 时叠加分析日曲线下时间前进的 carry/roll + 区间票息现金（total-return 近似，非路径一致持有期回测）；现金流事件（票息/本金/费用/融资）只在账本口径出现，不进入 price-only 分布。统一验收里新增 `risk_small_shock_convergence`（蝶式 0.001bp 误差 <1e-4）。
+
 **结论**：KRD 近似与全重估同一价格函数后可作小幅冲击的风险近似（一阶收敛验证通过），
 但大幅平行（凸性）、蝶式/单点长端（曲率）与历史多期限路径仍需全重估；VaR/ES 输出并列
 `current_frozen` 与 `historical_aging`，风险包不消费未修正的因子归因分项。
@@ -1126,7 +1128,7 @@ ML/RL 的数据契约设计可以推进，绩效比较与策略优化等待以�
 | 编号 | 修复 | 复验证据 |
 |------|------|----------|
 | **R37** | `Ledger.simulate(return_path=True)` 返回投影窗口**逐日快照**；闸门删除显式 `horizon=下一交易日`，改用默认 `max(as_of, 最大结算日的下一交易日)`；对路径上每个快照跑 9 项约束，成交日当天状态（含单券权重）也检查；拒单原因记录最后违规码 | 新增 `test_r37_*`：T+2 + `cash_floor=0` 时 4 笔建仓在成交前被拒；执行日权重越界被拦；长样本 rv 2023-07-04 违规消失（0 天违规）。R32 长假场景改为如实区分"成交引入的违规"与"融资被动消耗导致的 4 天 cash_floor" |
-| **R38** | 滚动与信号调度解耦：滚动日基准换券后，策略执行**机械换券订单**（卖光旧券 + 该腿滚动到**基准的新券面值**，双方共用同一政策；主动偏离由后续信号重建，不再依赖 pending）；daily 的旧 pending 顺延并在事件表记录；`roll_events` 记录事件→成交映射、状态与原因；新增 `TargetFaces` 精确基准回放控制组 | 新增同日换券/事件映射/滚动因果性/精确回放测试；`make acceptance-rolling` **45/45 PASS**；长样本控制组超额 **0.0000bp**；四组均 7/7 同日、0 缺失、0 约束拒绝 |
+| **R38** | 滚动与信号调度解耦：滚动日基准换券后，策略执行**机械换券订单**（卖光旧券 + 该腿滚动到**基准的新券面值**，双方共用同一政策；主动偏离由后续信号重建，不再依赖 pending）；daily 的旧 pending 顺延并在事件表记录；`roll_events` 记录事件→成交映射、状态与原因；新增 `TargetFaces` 精确基准回放控制组 | 新增同日换券/事件映射/滚动因果性/精确回放测试；`make acceptance-rolling` **79/79 PASS**；长样本控制组超额 **0.0000bp**；四组均 7/7 同日、0 缺失、0 约束拒绝；`roll_events` 含 `pending_deferred`/`gate_attempts` |
 | **R39** | VaR 历史模拟改为 `analysis_as_of + frozen_positions + historical_shocks`（冻结分析日组合/条款/结算/剩余期限，只搬运历史即期关键点 Δz）；旧"逐日老化"保留为对照；明确 price-only 与 `include_carry` 边界 | `test_risk.py` 21 项：主口径 95% VaR/ES **32.42 / 44.58 万**；审查的 YTM 冻结空间逐位复现 **31.82 / 43.33 万**；旧 aging 并列 **35.67 / 49.67 万** |
 | **R40** | 全重估与 KRD 统一到 `price_from_spot` + `spot_shock`（关键点线性、两端平推）；KRD 用同源解析一阶导（与 1bp `key_rate_durations` 单点差分差 <0.2%，冲击基不变） | 小冲击收敛：平行 1bp **8.3e-4**、陡/平 0.01bp **4.3e-6**、蝶式 0.001bp **4.3e-7**（旧蝶式 9.38% 基差消除）；大幅：平行 ±100bp 8.2%/8.3%、陡/平/蝶 25bp ≈1.08%、历史 ~1% |
 | **R41** | 窗口导出契约：`window_structure`（3×~2y + 229 日尾窗）、continuous 收益基期=**前收 NAV**、`pooled_cumulative_excess_bp`（连续复利全段）+ `pooled_ann_excess_bp` + `mean_window_excess_bp`（明确命名）、`rolling_version` 填值、note 按模式生成；脚本内置与 `long_sample_summary.csv` 的 ann/MDD/全段超额自动核对 | carry 年化 **3.7358%**、MDD **−4.9915%**；全段超额 **−120.58bp**、年化 **−13.37bp**、窗口均值 **−25.01bp**；2s10s 3.8380%/−4.8260%/年化 −3.64bp；rv 3.8638%/−4.7929%/年化 −1.13bp；精确回放控制 3.8756%/−4.8230%/0.0000bp |
@@ -1140,3 +1142,27 @@ buyhold 33 项与 rolling 43 项分别报告，不能互相替代。
 **验收结论**：R37–R41 的实现契约已关闭；可以按计划 §12.15 进入 C（先监督学习、再 RL）的
 **数据/接口与零信号基线设计**，但"绩效比较"仍须等 rolling 验收与风险口径在报告中固定后，
 且不得把 2019–2025 已研究样本重新命名为未触碰测试集。
+
+
+### 10.20 ML/RL 接口（仅接口与无未来约束，不含绩效比较）
+
+**监督学习接口**（`src/ficc/ml/`）：
+
+- `build_asof_view(panel, funding, calendar, as_of, availability_lag_days=1)`：只暴露
+  `≤ as_of − lag` 的观测（中债曲线收盘后才可用），构造时断言无未来行；`AsOfView.history(n)` 只回看。
+- `FeatureSpec`/`build_features`：变换只接收 `AsOfView` 的历史切片，输出索引越界即断言失败。
+- `ForwardLabelSpec`/`forward_returns`：持有期标签带 `available_after = as_of + holding_days`（交易日），
+  明确"只允许离线/训练调用"，避免把标签误当作 as-of 特征。
+- `WalkForwardSpec`/`generate_splits`/`validate_no_leakage`：purge 由标签持有期决定、embargo 分隔
+  验证/测试；测试窗两两不重叠；manifest 固定标注 `researched_sample`，**不称 untouched holdout**。
+  2019–2025 已研究，绩效比较前不得重新命名测试集。
+
+**RL 接口**（`src/ficc/rl/`）：`RebalanceEnv` 每步调用**同一个** `run_backtest`（账本/闸门/滚动/成本
+不重写），`StepRecord` 记录 `original_action`（策略原始目标）、`projected_target`（闸门实际提交）、
+`executed_trades`、`rejected/reject_reason`、`gate_level/risk_off`、`nav_before/after` 与
+`reward = nav_after − nav_before`（同一账本净收益，价差不重复扣）；`events` 按
+signal→project→execute→reject/roll→settle 排序，换券事件来自 `roll_events`。
+
+**已知限制（不掩盖）**：env 每次 step 从 episode 起点重跑引擎，O(n²)，是接口原型而非性能实现；
+闸门内部缩放重试档位未暴露给 env（只记录提交目标与 gate_level）；ML 标签当前是曲线平价券一阶代理，
+正式标签应复用账本/定价层。绩效比较与训练等 rolling/风险验收固定后再做。

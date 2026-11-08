@@ -1,34 +1,63 @@
-﻿strategy,check,status,detail
-zero_tilt,attribution_bridge,PASS,max|bridge_residual|=2.077e-08 元（容差 1e-05）
-zero_tilt,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
-zero_tilt,factor_identity,PASS,max|F@B−I|=0.000e+00
-zero_tilt,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元
-zero_tilt,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元
-zero_tilt,ledger_reconciliation,PASS,执行 7 项；失败: 无
-zero_tilt,reconciliation_coverage,PASS,未执行: 无
-zero_tilt,constraints_held_days,PASS,有持仓日 480 天，违规 0 天
-zero_tilt,zero_tilt_control,PASS,excess=0.3722bp（阈值 ±1bp），成交 8 笔
-carry_roll,attribution_bridge,PASS,max|bridge_residual|=2.272e-08 元（容差 1e-05）
-carry_roll,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
-carry_roll,factor_identity,PASS,max|F@B−I|=0.000e+00
-carry_roll,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元
-carry_roll,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元
-carry_roll,ledger_reconciliation,PASS,执行 7 项；失败: 无
-carry_roll,reconciliation_coverage,PASS,未执行: 无
-carry_roll,constraints_held_days,PASS,有持仓日 480 天，违规 0 天
-2s10s,attribution_bridge,PASS,max|bridge_residual|=2.701e-08 元（容差 1e-05）
-2s10s,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
-2s10s,factor_identity,PASS,max|F@B−I|=0.000e+00
-2s10s,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元
-2s10s,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元
-2s10s,ledger_reconciliation,PASS,执行 7 项；失败: 无
-2s10s,reconciliation_coverage,PASS,未执行: 无
-2s10s,constraints_held_days,PASS,有持仓日 480 天，违规 0 天
-rv,attribution_bridge,PASS,max|bridge_residual|=3.586e-08 元（容差 1e-05）
-rv,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0"
-rv,factor_identity,PASS,max|F@B−I|=0.000e+00
-rv,factor_telescoping,PASS,max|四因子和−curve_pnl|=3.492e-10 元
-rv,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元
-rv,ledger_reconciliation,PASS,执行 7 项；失败: 无
-rv,reconciliation_coverage,PASS,未执行: 无
-rv,constraints_held_days,PASS,有持仓日 480 天，违规 0 天
+﻿strategy,check,status,detail,start,end,benchmark_version,rolling_version,config_hash
+zero_tilt,attribution_bridge,PASS,max|bridge_residual|=2.077e-08 元（容差 1e-05）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-98353580.078909（145 笔）, 重算 cash_end=1646419.921091, 账面 cash_end=1646419.921091, 差额=0.000000；判定：|差额|=2.53785e-08 <= 容差 1e-06；金额最大的 8 笔事件：2019-01-30 trade_buy -25211237.181308; 2019-01-30 trade_buy -25040",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_position_identity,PASS,期末面值独立重算（4 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_nav_identity,PASS,NAV 独立重算 481 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 1920 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_pnl_identity,PASS,NAV 路径合计=5972438.120200；MTM 路径合计=5972438.120200；合计差=1.49012e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=1.49012e-08（2019-01-30）；未解释项=1.49012e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→105972438.120200,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_full_price_identity,PASS,全价=净价+应计校验 1920 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_attribution_closure,PASS,"Σcomponents=5972438.120200（分项：price=+2073952.443709, coupon=+3991200.000000, principal_net=+0.000000, funding=-3713.135243, fees=-3070.556707, trade_settlement=-102337996.386959, pending_delta=-2049981.233217, slippage=-85930.631559, trade_",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：4 只券、8 笔应付票息，cashflows 实际 coupon 事件 8 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,risk_small_shock_convergence,PASS,蝶式0.001bp 相对误差=4.089e-07（阈值 1e-4；全重估与 KRD 同源即期）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,constraints_held_days,PASS,有持仓日 480 天，违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+zero_tilt,zero_tilt_control,PASS,excess=0.3722bp（阈值 ±1bp），成交 8 笔,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,attribution_bridge,PASS,max|bridge_residual|=2.272e-08 元（容差 1e-05）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,factor_telescoping,PASS,max|四因子和−curve_pnl|=2.328e-10 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-94348431.932811（220 笔）, 重算 cash_end=5651568.067189, 账面 cash_end=5651568.067189, 差额=0.000000；判定：|差额|=1.76951e-08 <= 容差 1e-06；金额最大的 8 笔事件：2019-01-30 trade_buy -28236585.643065; 2019-01-30 trade_buy -24038",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_position_identity,PASS,期末面值独立重算（4 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_nav_identity,PASS,NAV 独立重算 481 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 1920 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-05-28: 重算=99331595.699463 vs 账面=99331595.699463,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_pnl_identity,PASS,NAV 路径合计=5918664.578893；MTM 路径合计=5918664.578893；合计差=5.58794e-09；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=2.98023e-08（2019-03-28）；未解释项=2.98023e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→105918664.578893,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_full_price_identity,PASS,全价=净价+应计校验 1920 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_attribution_closure,PASS,"Σcomponents=5918664.578893（分项：price=+2118908.661302, coupon=+4004128.500000, principal_net=+0.000000, funding=-0.000000, fees=-26351.195023, trade_settlement=-98326209.237788, pending_delta=-5124953.083042, slippage=-178021.387385, trade_en",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：4 只券、8 笔应付票息，cashflows 实际 coupon 事件 8 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+carry_roll,constraints_held_days,PASS,有持仓日 480 天，违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,attribution_bridge,PASS,max|bridge_residual|=2.701e-08 元（容差 1e-05）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,factor_telescoping,PASS,max|四因子和−curve_pnl|=4.657e-10 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-94228866.987815（327 笔）, 重算 cash_end=5771133.012185, 账面 cash_end=5771133.012185, 差额=0.000000；判定：|差额|=1.86265e-08 <= 容差 1e-06；金额最大的 8 笔事件：2019-01-30 trade_buy -25211237.181308; 2019-01-30 trade_buy -25040",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_position_identity,PASS,期末面值独立重算（4 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_nav_identity,PASS,NAV 独立重算 481 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 1920 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_pnl_identity,PASS,NAV 路径合计=5947071.163447；MTM 路径合计=5947071.163447；合计差=2.04891e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=1.77533e-08（2019-05-09）；未解释项=2.04891e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→105947071.163447,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_full_price_identity,PASS,全价=净价+应计校验 1920 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_attribution_closure,PASS,"Σcomponents=5947071.163447（分项：price=+2192627.368254, coupon=+3885318.000000, principal_net=+0.000000, funding=-7888.965097, fees=-16492.589715, trade_settlement=-98089803.433003, pending_delta=-3074971.849825, slippage=-106492.649995, trade",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：4 只券、8 笔应付票息，cashflows 实际 coupon 事件 8 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+2s10s,constraints_held_days,PASS,有持仓日 480 天，违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,attribution_bridge,PASS,max|bridge_residual|=3.586e-08 元（容差 1e-05）,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,independent_valuation,PASS,"max|valuation_basis|=0 元, breach_days=0",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,factor_identity,PASS,max|F@B−I|=0.000e+00,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,factor_telescoping,PASS,max|四因子和−curve_pnl|=3.492e-10 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,benchmark_bridge,PASS,benchmark max|bridge_residual|=2.077e-08 元,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,ledger_reconciliation,PASS,执行 7 项；失败: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,reconciliation_coverage,PASS,未执行: 无,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_cash_identity,PASS,"cash_begin=100000000.000000, Σevents=-97295234.634459（417 笔）, 重算 cash_end=2704765.365541, 账面 cash_end=2704765.365541, 差额=0.000000；判定：|差额|=1.30385e-08 <= 容差 1e-06；金额最大的 8 笔事件：2019-01-30 trade_buy -25211237.181308; 2019-01-30 trade_buy -25040",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_position_identity,PASS,期末面值独立重算（4 只券）：最大误差=0.000000（券 SYN-10Y-20190128），容差=1e-06；卖出/日期校验：无异常,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_nav_identity,PASS,NAV 独立重算 481 个快照日（cash + Σ市值 + pending_cash）：最大误差=0.000000；市值公式 face/100×dirty 校验 1920 行：最大误差=0.000000；容差=1e-06；已按 trade-date 会计计入 pending_cash；NAV 最大误差日 2019-01-29: 重算=99916332.030265 vs 账面=99916332.030265,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_pnl_identity,PASS,NAV 路径合计=5986103.945698；MTM 路径合计=5986103.945698；合计差=2.79397e-08；MTM 路径 = ΔMV + Δpending_cash + 内部现金流；逐日最大差=2.65427e-08（2020-04-08）；未解释项=2.79397e-08 <= 容差 1e-06；外部现金流（已声明，窗口内合计）=0.000000；NAV 首末=100000000.000000→105986103.945698,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_full_price_identity,PASS,全价=净价+应计校验 1920 行：最大误差=0.000000（2019-03-19 SYN-5Y-20190128）；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_attribution_closure,PASS,"Σcomponents=5986103.945698（分项：price=+2217337.613546, coupon=+3971023.000000, principal_net=+0.000000, funding=-16248.994176, fees=-26453.717536, trade_settlement=-101223554.922747, pending_delta=-3074971.849825, slippage=-159553.956137, tra",2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,recon_coupon_entitlement,PASS,独立重建票息权益（归属=付息日日初已结算面值；非交易日顺延应付）：4 只券、8 笔应付票息，cashflows 实际 coupon 事件 8 笔；最大金额误差=0.000000；容差=1e-06,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
+rv,constraints_held_days,PASS,有持仓日 480 天，违规 0 天,2019-01-28,2020-12-31,buyhold,,9564eb9af95ded04
