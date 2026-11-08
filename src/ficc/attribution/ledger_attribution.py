@@ -153,6 +153,11 @@ DAILY_COLUMNS: tuple[str, ...] = (
     "bridge_residual",
     "trade_entry",
     "settlement_date",
+    "model_price_pnl",
+    "valuation_basis",
+    "valuation_basis_nav_bp",
+    "valuation_basis_breach",
+    "principal_redemption",
 )
 FACTORS_COLUMNS: tuple[str, ...] = (
     "date",
@@ -169,6 +174,8 @@ FACTORS_COLUMNS: tuple[str, ...] = (
     "slope_bp",
     "curvature_bp",
     "other_curve_nav_bp",
+    "snapshot_price_pnl",
+    "valuation_basis",
 )
 BONDS_COLUMNS: tuple[str, ...] = (
     "date",
@@ -187,6 +194,9 @@ BONDS_COLUMNS: tuple[str, ...] = (
     "other_curve",
     "begin_ytm_pct",
     "remaining_years",
+    "model_dirty_begin",
+    "model_dirty_end",
+    "valuation_basis",
 )
 
 # 因子节点（年）与桥接容差。
@@ -197,6 +207,9 @@ _CURV_SHORT_TENOR = 2.0
 _CURV_BELLY_TENOR = 5.0
 _CURV_LONG_TENOR = 10.0
 _BRIDGE_ABS_TOL = 1e-6
+# 独立估值检查容差：|snapshot−model| 超过 max(1 元, NAV×1e-8) 视为估值基差异常（R34）
+VALUATION_ABS_TOL: float = 1.0
+VALUATION_REL_NAV_TOL: float = 1e-8
 _IDENTITY_REL_TOL = 1e-9
 # 面板曲线的默认插值方法：与回测引擎 ``backtest.engine._curve_at``（CN_IB 面板
 # 11 节点 + hermite）保持同一口径；账本若用其他插值，调用方显式传 curve_method。
@@ -465,22 +478,36 @@ def _tenor_index(tenors: np.ndarray, target: float) -> int:
     return int(hits[0])
 
 
-def _slope_unit_shape(tenors: np.ndarray) -> np.ndarray:
-    """slope 因子的单位响应形状：2Y −1bp、10Y 0bp，中间线性、两端平推。"""
-    return np.interp(
-        tenors,
-        np.array([_SLOPE_SHORT_TENOR, _SLOPE_LONG_TENOR], dtype=float),
-        np.array([-1.0, 0.0], dtype=float),
-    )
+# 因子节点（2Y/5Y/10Y）上的观测映射 F：rows = level/slope/curvature。
+# - level  = Δy10
+# - slope  = Δy10 − Δy2
+# - curv   = 2Δy5 − Δy2 − Δy10
+# 注意：这里 `level=Δy10` 与项目可观测因子 `level_all`（全期限等权）是不同口径，
+# 仅用于归因分类，不能与因子研究里的 level_all 混用。
+FACTOR_NODES: tuple[float, ...] = (2.0, 5.0, 10.0)
+FACTOR_MATRIX: np.ndarray = np.array(
+    [[0.0, 0.0, 1.0], [-1.0, 0.0, 1.0], [-1.0, 2.0, -1.0]], dtype=float
+)
+# 形状基 B = F^{-1}：单位因子冲击在各节点的 Δy；其余期限按节点值线性插值、两端平推。
+BASIS_MATRIX: np.ndarray = np.linalg.inv(FACTOR_MATRIX)
 
 
-def _curvature_unit_shape(tenors: np.ndarray) -> np.ndarray:
-    """curvature 因子的单位响应形状：2Y 0、5Y +0.5bp、10Y 0，线性、两端平推。"""
-    return np.interp(
-        tenors,
-        np.array([_CURV_SHORT_TENOR, _CURV_BELLY_TENOR, _CURV_LONG_TENOR], dtype=float),
-        np.array([0.0, 0.5, 0.0], dtype=float),
+def factor_shapes(tenors: np.ndarray) -> np.ndarray:
+    """返回形状矩阵 ``(3, n_tenors)``：B 的三列插值到整条曲线。"""
+    tenors_arr = np.asarray(tenors, dtype=float)
+    matrix = np.vstack(
+        [
+            np.interp(tenors_arr, np.asarray(FACTOR_NODES), BASIS_MATRIX[:, column])
+            for column in range(3)
+        ]
     )
+    nodal = np.vstack(
+        [np.interp(np.asarray(FACTOR_NODES), tenors_arr, matrix[column]) for column in range(3)]
+    ).T  # 每列是一个形状向量
+    response = FACTOR_MATRIX @ nodal
+    if not np.allclose(response, np.eye(3), atol=1e-12):
+        raise RuntimeError(f"因子基不满足 F@B=I：\n{response}")
+    return matrix
 
 
 # ---------------------------------------------------------------------------
@@ -662,8 +689,8 @@ def attribute_fixed_holdings(
     index_2y = _tenor_index(tenors, _SLOPE_SHORT_TENOR)
     index_5y = _tenor_index(tenors, _CURV_BELLY_TENOR)
     index_10y = _tenor_index(tenors, _LEVEL_TENOR)
-    slope_shape = _slope_unit_shape(tenors)
-    curvature_shape = _curvature_unit_shape(tenors)
+    shapes = factor_shapes(tenors)
+    level_shape, slope_shape, curvature_shape = shapes[0], shapes[1], shapes[2]
 
     events_by_date = _cashflow_events(cashflow_frame)
     coupon_by_day_bond: dict[date, dict[str, float]] = {}
@@ -697,14 +724,16 @@ def attribute_fixed_holdings(
         current_rates = np.asarray(current_curve.rates, dtype=float)
         # 曲线单位是百分数；因子日变化统一用 bp 报告，重估时再换回百分数。
         delta_bp = (current_rates - previous_rates) * 100.0
-        delta_level_bp = float(delta_bp[index_10y])
-        delta_slope_bp = float(delta_bp[index_10y] - delta_bp[index_2y])
-        delta_curvature_bp = float(
-            2.0 * delta_bp[index_5y] - delta_bp[index_2y] - delta_bp[index_10y]
+        nodal_delta = np.array(
+            [delta_bp[index_2y], delta_bp[index_5y], delta_bp[index_10y]], dtype=float
         )
+        factor_delta = FACTOR_MATRIX @ nodal_delta
+        delta_level_bp = float(factor_delta[0])
+        delta_slope_bp = float(factor_delta[1])
+        delta_curvature_bp = float(factor_delta[2])
         delta_mean_bp = float(np.mean(delta_bp))
 
-        level_rates = previous_rates + delta_level_bp / 100.0
+        level_rates = previous_rates + level_shape * delta_level_bp / 100.0
         slope_rates = level_rates + slope_shape * delta_slope_bp / 100.0
         curvature_rates = slope_rates + curvature_shape * delta_curvature_bp / 100.0
         level_curve = _curve(day, tenors, level_rates, curve_method)
@@ -740,11 +769,14 @@ def attribute_fixed_holdings(
             trade_entry += sign * view.face * view.dirty_trade / 100.0
 
         price_total = 0.0
+        model_price_total = 0.0
+        basis_total = 0.0
         carry_total = 0.0
         level_total = 0.0
         slope_total = 0.0
         curvature_total = 0.0
         other_total = 0.0
+        redemption_face = 0.0
         coupon_by_bond = coupon_by_day_bond.get(day, {})
 
         for code in sorted(begin_rows):
@@ -768,47 +800,55 @@ def attribute_fixed_holdings(
             end_record = end_rows.get(code)
             end_face = float(end_record["face_value"]) if end_record is not None else 0.0
             remaining = day_count(day, bond.maturity_date) / 365.0
+            model_begin = _model_dirty(bond, previous_day, previous_curve, resolved)
 
-            if remaining <= 0.0 or day >= bond.maturity_date:
-                # 到期日：经济持仓已兑付，价格贡献全部由 other_curve 承接。
-                end_dirty = 0.0
-                price_pnl = begin_face * (end_dirty - begin_dirty) / 100.0
-                carry_roll = level = slope = curvature = 0.0
-                other_curve = price_pnl
+            matured = end_record is None and day >= bond.maturity_date
+            if matured:
+                # R35：到期退出 = 价格 → 现金的转换（赎回价值 100，末期票息走 coupon_cash）。
+                # 市场曲线分项必须为零；本金现金在桥接里扣除 redemption_face，避免重复计收益。
+                end_dirty_snapshot = 100.0
+                model_end = 100.0
+                carry_roll = begin_face * (100.0 - model_begin) / 100.0
+                level = slope = curvature = other_curve = 0.0
+                redemption_face += begin_face
             else:
-                end_dirty = _bond_mark(code, bond, day, end_rows, current_curve, resolved)
-                dirty_roll = dirty_price_from_ytm(
-                    bond, day, float(previous_curve.rate(remaining)), cfg=resolved
-                )
-                dirty_level = dirty_price_from_ytm(
-                    bond, day, float(level_curve.rate(remaining)), cfg=resolved
-                )
-                dirty_slope = dirty_price_from_ytm(
-                    bond, day, float(slope_curve.rate(remaining)), cfg=resolved
-                )
-                dirty_curvature = dirty_price_from_ytm(
-                    bond, day, float(curvature_curve.rate(remaining)), cfg=resolved
-                )
-                price_pnl = begin_face * (end_dirty - begin_dirty) / 100.0
-                carry_roll = begin_face * (dirty_roll - begin_dirty) / 100.0
+                if end_record is not None:
+                    end_dirty_snapshot = _snapshot_dirty(end_record, code, day)
+                else:
+                    # 当日全部卖出（未到期）：用清仓 mark 作为日终价；不产生独立估值差。
+                    end_dirty_snapshot = _bond_mark(
+                        code, bond, day, end_rows, current_curve, resolved
+                    )
+                model_end = _model_dirty(bond, day, current_curve, resolved)
+                dirty_roll = _model_dirty(bond, day, previous_curve, resolved)
+                dirty_level = _model_dirty(bond, day, level_curve, resolved)
+                dirty_slope = _model_dirty(bond, day, slope_curve, resolved)
+                dirty_curvature = _model_dirty(bond, day, curvature_curve, resolved)
+                carry_roll = begin_face * (dirty_roll - model_begin) / 100.0
                 level = begin_face * (dirty_level - dirty_roll) / 100.0
                 slope = begin_face * (dirty_slope - dirty_level) / 100.0
                 curvature = begin_face * (dirty_curvature - dirty_slope) / 100.0
-                other_curve = begin_face * (end_dirty - dirty_curvature) / 100.0
+                other_curve = begin_face * (model_end - dirty_curvature) / 100.0
+                curve_model = begin_face * (model_end - model_begin) / 100.0 - carry_roll
+                _check_identity(
+                    level + slope + curvature + other_curve,
+                    curve_model,
+                    what=f"{code}@{day} 四因子和==model curve_pnl",
+                    scale=curve_model,
+                )
 
-            curve_pnl = price_pnl - carry_roll
-            _check_identity(
-                carry_roll + curve_pnl,
-                price_pnl,
-                what=f"{code}@{day} carry_roll+curve_pnl==price_pnl",
-                scale=price_pnl,
-            )
-            _check_identity(
-                level + slope + curvature + other_curve,
-                curve_pnl,
-                what=f"{code}@{day} level+slope+curvature+other==curve_pnl",
-                scale=curve_pnl,
-            )
+            price_snapshot = begin_face * (end_dirty_snapshot - begin_dirty) / 100.0
+            price_model = begin_face * (model_end - model_begin) / 100.0
+            valuation_basis = price_snapshot - price_model
+            matured = end_record is None and day >= bond.maturity_date
+            if matured:
+                _check_identity(
+                    level + slope + curvature + other_curve,
+                    0.0,
+                    what=f"{code}@{day} 到期市场曲线分项==0",
+                    scale=price_snapshot,
+                )
+
             bond_rows.append(
                 {
                     "date": day,
@@ -816,10 +856,10 @@ def attribute_fixed_holdings(
                     "begin_face": begin_face,
                     "end_face": end_face,
                     "begin_dirty": begin_dirty,
-                    "end_dirty": end_dirty,
-                    "price_pnl": price_pnl,
+                    "end_dirty": end_dirty_snapshot,
+                    "price_pnl": price_snapshot,
                     "carry_roll": carry_roll,
-                    "curve_pnl": curve_pnl,
+                    "curve_pnl": price_model - carry_roll,
                     "coupon_cash": float(coupon_by_bond.get(code, 0.0)),
                     "level": level,
                     "slope": slope,
@@ -827,21 +867,32 @@ def attribute_fixed_holdings(
                     "other_curve": other_curve,
                     "begin_ytm_pct": begin_ytm,
                     "remaining_years": remaining,
+                    "model_dirty_begin": model_begin,
+                    "model_dirty_end": model_end,
+                    "valuation_basis": valuation_basis,
                 }
             )
-            price_total += price_pnl
+            price_total += price_snapshot
+            model_price_total += price_model
+            basis_total += valuation_basis
             carry_total += carry_roll
             level_total += level
             slope_total += slope
             curvature_total += curvature
             other_total += other_curve
 
-        curve_total = price_total - carry_total
+        curve_total = model_price_total - carry_total
         _check_identity(
             level_total + slope_total + curvature_total + other_total,
             curve_total,
-            what=f"{day} 四因子和==curve_pnl",
+            what=f"{day} 四因子和==model curve_pnl",
             scale=curve_total,
+        )
+        _check_identity(
+            model_price_total + basis_total,
+            price_total,
+            what=f"{day} snapshot price == model price + valuation basis",
+            scale=price_total,
         )
 
         pending_delta = pending_by_date[day] - pending_by_date[previous_day]
@@ -849,7 +900,7 @@ def attribute_fixed_holdings(
         bridge_residual = nav_delta - (
             price_total
             + coupon_total
-            + principal_total
+            + (principal_total - redemption_face)  # 到期本金是价格→现金转换，不重复计收益
             - funding_cost
             - fee_cost
             + trade_settlement
@@ -860,6 +911,8 @@ def attribute_fixed_holdings(
         if not np.isfinite(bridge_residual):
             raise ValueError(f"{day}: 桥接残差非有限值，输入含 NaN/inf")
 
+        basis_scale = max(VALUATION_ABS_TOL, VALUATION_REL_NAV_TOL * abs(nav_day))
+        basis_breach = bool(abs(basis_total) > basis_scale)
         residual_bp_values.append(bridge_residual / max(1.0, abs(nav_previous)) * 1e4)
         daily_rows.append(
             {
@@ -877,6 +930,11 @@ def attribute_fixed_holdings(
                 "bridge_residual": bridge_residual,
                 "trade_entry": trade_entry,
                 "settlement_date": _settlement_of(day, calendar, resolved),
+                "model_price_pnl": model_price_total,
+                "valuation_basis": basis_total,
+                "valuation_basis_nav_bp": basis_total / max(1.0, abs(nav_day)) * 1e4,
+                "valuation_basis_breach": basis_breach,
+                "principal_redemption": redemption_face,
             }
         )
         factor_rows.append(
@@ -888,13 +946,15 @@ def attribute_fixed_holdings(
                 "curvature": curvature_total,
                 "other_curve": other_total,
                 "curve_pnl": curve_total,
-                "price_pnl": price_total,
+                "price_pnl": model_price_total,
                 "level_bp": delta_level_bp,
                 "level_mean_bp": delta_mean_bp,
                 "level_mean_diff_bp": delta_level_bp - delta_mean_bp,
                 "slope_bp": delta_slope_bp,
                 "curvature_bp": delta_curvature_bp,
                 "other_curve_nav_bp": other_total / max(1.0, abs(nav_day)) * 1e4,
+                "snapshot_price_pnl": price_total,
+                "valuation_basis": basis_total,
             }
         )
 
@@ -915,6 +975,37 @@ def attribute_fixed_holdings(
         residual_bp=residual_bp,
         benchmark=benchmark,
     )
+
+
+def _snapshot_dirty(record: dict[str, Any], code: str, day: date) -> float:
+    """读取快照日终全价（缺失则明确报错，不静默用模型价替代）。"""
+    value = record.get("dirty_price")
+    if pd.isna(value):
+        raise ValueError(f"{code}@{day}: 日终全价 dirty_price 缺失")
+    return float(value)
+
+
+def _model_dirty(
+    bond: BondStatic,
+    settlement: date,
+    curve: Curve,
+    cfg: Config,
+) -> float:
+    """从**条款 + 结算日 + 曲线**独立重估全价（与账本口径一致：ACT/365、T+lag）。
+
+    到期/已过到期日返回赎回价值 100（末期票息由现金事件单独处理，不并入价格）。
+    """
+    remaining = day_count(settlement, bond.maturity_date) / 365.0
+    if remaining < 0.0:
+        return 100.0
+    if remaining == 0.0:
+        # 结算日=到期日：全价 = 100 + 末期票息（AI 在到期日已满一个付息期）
+        try:
+            return 100.0 + float(accrued_interest(bond, settlement, cfg=cfg))
+        except Exception:
+            return 100.0
+    ytm = float(curve.rate(remaining))
+    return float(dirty_price_from_ytm(bond, settlement, ytm, cfg=cfg))
 
 
 def _bond_mark(

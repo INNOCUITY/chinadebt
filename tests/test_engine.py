@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ficc.backtest.engine import run_backtest
+from ficc.backtest.engine import allows_partial_de_risk, run_backtest
 from ficc.config import get_config
 from ficc.data.loader import load_curve_long, load_funding_series
 from ficc.data.schema import CANONICAL_TENORS
@@ -323,3 +323,138 @@ def test_drawdown_trigger_allows_derisking_execution(market) -> None:
     assert dv01.max() > 0
     assert (dv01 / bench).max() < 1.15  # 1.1× 目标经整手取整后允许少量超调
     assert len(result.rejected) > 0  # 3× 目标被拒
+
+
+def _make_report(codes_and_values: list[tuple[str, float, float]]):
+    from ficc.portfolio.constraints import ConstraintReport, ConstraintViolation
+
+    violations = tuple(
+        ConstraintViolation(code=code, detail=code, value=value, limit=limit)
+        for code, value, limit in codes_and_values
+    )
+    return ConstraintReport(as_of=START, violations=violations, metrics={})
+
+
+def test_r31_partial_de_risk_policy() -> None:
+    """R31 降风险偏序：允许"历史回撤未消除但可行动项改善"，禁止引入新违规。"""
+    current = _make_report([("cash_floor", -110.0, -100.0), ("drawdown_stop", -0.06, -0.05)])
+    better = _make_report([("cash_floor", -105.0, -100.0), ("drawdown_stop", -0.06, -0.05)])
+    worse = _make_report(
+        [
+            ("cash_floor", -105.0, -100.0),
+            ("leverage", 2.1, 2.0),
+            ("drawdown_stop", -0.06, -0.05),
+        ]
+    )
+    unchanged = _make_report([("cash_floor", -110.0, -100.0), ("drawdown_stop", -0.06, -0.05)])
+    assert allows_partial_de_risk(current, better)
+    assert not allows_partial_de_risk(current, worse)  # 引入新违规 code
+    assert not allows_partial_de_risk(current, unchanged)  # 可行动项未改善
+
+
+def test_r31_risk_ladder_selects_lower_level(market) -> None:
+    """R31：基准档不可行时，熔断必须实际降档执行（gate_level<1 且有卖出）。"""
+    cfg, panel, funding, calendar = market
+
+    class _Overweight85:
+        name = "over85"
+
+        def target_krd(self, ctx):
+            from ficc.portfolio.types import TargetKRD
+
+            mult = 0.85 if ctx.as_of <= START else 3.0
+            return TargetKRD(
+                as_of=ctx.as_of, krd={t: mult * v for t, v in ctx.benchmark.krd.items()}
+            )
+
+    limits = cfg.risk.limits.model_copy(update={"max_drawdown_stop": 2e-3, "max_dv01": 74_400.0})
+    tight = cfg.model_copy(update={"risk": cfg.risk.model_copy(update={"limits": limits})})
+    result = run_backtest(
+        _Overweight85(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=tight,
+        start=START,
+        end=date(2019, 3, 29),
+    )
+    assert int(result.signals["risk_off"].sum()) > 0
+    levels = result.constraints["gate_level"]
+    assert (levels < 1.0).any(), "熔断阶梯没有被实际选择"
+    assert (result.trades["side"] == "sell").sum() >= 1
+    ratio = result.exposure["total_dv01"] / result.exposure["bench_total_dv01"]
+    assert ratio.iloc[-1] < 0.86  # 降档执行后明显低于初始 0.85×基准
+
+
+def test_r32_long_holiday_cash_budget(market) -> None:
+    """R32 反例：平 3% 曲线、5% 融资、零费用/价差、紧现金带跨春节不得违规。
+
+    旧实现在闸门只扣一天融资，02-03 建仓后 02-11 出现 cash_floor；修复后
+    闸门用账本状态推进到"结算日后的下一交易日"，把长假逐日融资计入投影。
+    """
+    cfg, panel, _funding, calendar = market
+    dates = panel.index[
+        (panel.index >= pd.Timestamp(date(2019, 1, 28)))
+        & (panel.index <= pd.Timestamp(date(2019, 2, 15)))
+    ]
+    flat = pd.DataFrame(3.0, index=dates, columns=list(panel.columns))
+    funding_5 = pd.Series(5.0, index=dates)
+    costs = cfg.costs.model_copy(
+        update={
+            "fee_bp": 0.0,
+            "settlement_fee_cny_per_trade": 0.0,
+            "spread_bp_active": 0.0,
+            "spread_bp_illiquid": 0.0,
+            "spread_bp_ultra_long": 0.0,
+        }
+    )
+    cons = cfg.constraints.model_copy(update={"min_cash_fraction": -0.0802})
+    tight = cfg.model_copy(update={"costs": costs, "constraints": cons})
+
+    class _Over108:
+        name = "over108"
+
+        def target_krd(self, ctx):
+            from ficc.portfolio.types import TargetKRD
+
+            return TargetKRD(
+                as_of=ctx.as_of, krd={t: 1.08 * v for t, v in ctx.benchmark.krd.items()}
+            )
+
+    result = run_backtest(
+        _Over108(),
+        panel=flat,
+        calendar=calendar,
+        funding=funding_5,
+        cfg=tight,
+        start=date(2019, 1, 28),
+        end=date(2019, 2, 12),
+    )
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    assert len(held) > 0
+    assert "cash_floor" not in held["violation_codes"].str.cat(sep=";")
+    floor = float(tight.constraints.min_cash_fraction) * result.exposure["nav"]
+    assert (result.exposure["cash"] >= floor - 1e-6).all()
+    assert result.exposure["cash"].min() < -8_000_000  # 确实跨过了长假的负现金区间
+
+
+def test_r32_settlement_lag_0_1_2(market) -> None:
+    """R32：T+0/T+1/T+2 下成交结算日与账本一致，且闸门投影覆盖结算日。"""
+    cfg, panel, funding, calendar = market
+    for lag in (0, 1, 2):
+        lag_cfg = cfg.model_copy(
+            update={"pricing": cfg.pricing.model_copy(update={"settlement_lag_days": lag})}
+        )
+        result = run_backtest(
+            _ZeroTilt(),
+            panel=panel,
+            calendar=calendar,
+            funding=funding,
+            cfg=lag_cfg,
+            start=START,
+            end=date(2019, 2, 15),
+        )
+        assert len(result.trades) > 0
+        for trade in result.trades.itertuples():
+            assert trade.settlement_date == calendar.settlement_date(trade.trade_date, lag)
+        assert result.constraints["ok"].all()

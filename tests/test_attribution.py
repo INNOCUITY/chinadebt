@@ -74,6 +74,16 @@ def curve_with(as_of: date, changes: dict[float, float], base: float = 2.0) -> C
     return Curve(as_of=as_of, tenors=TENORS.copy(), rates=rates, method="linear")
 
 
+def curve_with_factor(as_of: date, factor: str, bp: float, base: float = 2.0) -> Curve:
+    """按**对偶形状基**构造纯因子冲击曲线（满足 F@B=I）。"""
+    from ficc.attribution.ledger_attribution import BASIS_MATRIX, FACTOR_NODES
+
+    index = {"level": 0, "slope": 1, "curvature": 2}[factor]
+    shape = np.interp(TENORS, np.asarray(FACTOR_NODES), BASIS_MATRIX[:, index])
+    rates = np.full_like(TENORS, base) + shape * bp / 100.0
+    return Curve(as_of=as_of, tenors=TENORS.copy(), rates=rates, method="linear")
+
+
 def panel_from_curves(curves: dict[date, Curve]) -> pd.DataFrame:
     data = {day: np.asarray(curve.rate(TENORS), dtype=float) for day, curve in curves.items()}
     frame = pd.DataFrame(data).T
@@ -171,10 +181,29 @@ def _assert_factor_identities(result) -> None:
         atol=1e-9,
     )
     bond_sum = result.bonds.groupby("date", sort=True)[
-        ["price_pnl", "carry_roll", "curve_pnl"]
+        ["price_pnl", "carry_roll", "curve_pnl", "valuation_basis"]
     ].sum()
-    aligned = result.factors.set_index("date")[["price_pnl", "carry_roll", "curve_pnl"]]
-    pd.testing.assert_frame_equal(bond_sum, aligned, check_exact=False, rtol=1e-9, atol=1e-9)
+    bond_sum = bond_sum.rename(columns={"price_pnl": "snapshot_price_pnl"})
+    aligned = result.factors.set_index("date")[
+        ["snapshot_price_pnl", "carry_roll", "curve_pnl", "valuation_basis"]
+    ]
+    pd.testing.assert_frame_equal(
+        bond_sum,
+        aligned,
+        check_exact=False,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    # 市场价（model）= carry + curve；快照价 = model 价 + 估值基差
+    assert np.allclose(
+        result.factors["price_pnl"] + result.factors["valuation_basis"],
+        result.factors["snapshot_price_pnl"],
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    assert np.allclose(
+        result.daily["valuation_basis"], result.factors["valuation_basis"], rtol=1e-9, atol=1e-9
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,14 +287,11 @@ def test_slope_move_lands_in_slope_factor(calendar: TradingCalendar, two_year_bp
     bond = make_bond("STEEP2", date(2023, 6, 15), date(2026, 6, 18))
     trade = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17))
     days = [date(2024, 6, 17), date(2024, 6, 18)]
-    # 2Y 单独移动；按 Δcurv=0 设计节点，10Y 不动（Δlevel=0）
-    changes = {
-        2.0: two_year_bp,
-        3.0: 0.75 * two_year_bp,
-        5.0: 0.5 * two_year_bp,
-        7.0: 0.25 * two_year_bp,
+    # 对偶基：纯 slope 冲击（Δlevel=Δcurv=0），整条曲线按 B_slope 形状移动
+    curves = {
+        days[0]: flat_curve(days[0]),
+        days[1]: curve_with_factor(days[1], "slope", -two_year_bp),
     }
-    curves = {days[0]: flat_curve(days[0]), days[1]: curve_with(days[1], changes)}
     ledger = run_ledger(calendar, cfg, trades=[trade], curves=curves)
     result = attribute(ledger, panel_from_curves(curves), calendar, cfg)
 
@@ -293,7 +319,10 @@ def test_butterfly_move_lands_in_curvature_factor(calendar: TradingCalendar) -> 
     bond = make_bond("BFLY5", date(2019, 6, 15), maturity)
     trade = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17))
     days = [date(2024, 6, 17), day]
-    curves = {days[0]: flat_curve(days[0]), days[1]: curve_with(day, {5.0: 10.0})}
+    curves = {
+        days[0]: flat_curve(days[0]),
+        days[1]: curve_with_factor(day, "curvature", 10.0),
+    }
     ledger = run_ledger(calendar, cfg, trades=[trade], curves=curves)
     result = attribute(ledger, panel_from_curves(curves), calendar, cfg)
 
@@ -302,7 +331,8 @@ def test_butterfly_move_lands_in_curvature_factor(calendar: TradingCalendar) -> 
     scale = max(1.0, abs(row["curve_pnl"]))
     assert row["level_bp"] == pytest.approx(0.0, abs=1e-9)
     assert row["slope_bp"] == pytest.approx(0.0, abs=1e-9)
-    assert row["curvature_bp"] == pytest.approx(20.0)  # 2×(+10bp)
+    # 对偶基：curv 因子 = 2Δy5−Δy2−Δy10，B_curv=(0,+0.5,0) → 冲击 10bp 对应 +10
+    assert row["curvature_bp"] == pytest.approx(10.0)
     assert abs(row["level"]) <= 1e-6 * scale
     assert abs(row["slope"]) <= 1e-6 * scale
     assert abs(row["other_curve"]) <= 1e-6 * scale
@@ -524,3 +554,144 @@ def test_single_snapshot_returns_empty_frames(calendar: TradingCalendar) -> None
     assert list(result.daily.columns) == list(DAILY_COLUMNS)
     assert list(result.factors.columns) == list(FACTORS_COLUMNS)
     assert list(result.bonds.columns) == list(BONDS_COLUMNS)
+
+
+# ---------------------------------------------------------------------------
+# R33：F@B=I 与不同剩余期限的纯因子场景
+# ---------------------------------------------------------------------------
+def test_r33_factor_response_is_identity() -> None:
+    from ficc.attribution.ledger_attribution import (
+        BASIS_MATRIX,
+        FACTOR_MATRIX,
+        factor_shapes,
+    )
+
+    assert np.allclose(FACTOR_MATRIX @ BASIS_MATRIX, np.eye(3), atol=1e-12)
+    # 形状矩阵在节点处回到 B，在整条曲线上 F@B 仍为单位阵（插值后取节点）
+    shapes = factor_shapes(TENORS)
+    nodal = np.vstack([np.interp(np.array([2.0, 5.0, 10.0]), TENORS, row) for row in shapes]).T
+    assert np.allclose(FACTOR_MATRIX @ nodal, np.eye(3), atol=1e-12)
+    # 纯 slope 输入（2/5/10Y = −10/−5/0bp，其余线性扩展）在 B 空间内
+    delta = shapes[1] * 10.0
+    factor_delta = FACTOR_MATRIX @ np.array(
+        [np.interp(np.array([2.0, 5.0, 10.0]), TENORS, delta)[i] for i in range(3)]
+    )
+    assert np.allclose(factor_delta, [0.0, 10.0, 0.0], atol=1e-12)
+
+
+@pytest.mark.parametrize("factor", ["level", "slope", "curvature"])
+def test_r33_pure_factor_across_remaining_maturities(
+    calendar: TradingCalendar, factor: str
+) -> None:
+    """不同剩余期限（2/5/7/10/30Y）的纯因子冲击：对应因子≈全程，其余≈0。"""
+    cfg = zero_cost_cfg()
+    day0, day1 = date(2024, 6, 17), date(2024, 6, 18)
+    tenors = [2.0, 5.0, 7.0, 10.0, 30.0]
+    bonds = [
+        make_bond(f"F{int(t)}", date(2024, 6, 17), date(2024 + int(t), 6, 17), coupon_pct=2.0)
+        for t in tenors
+    ]
+    trades = [
+        make_trade(calendar, cfg, trade_id=f"t{int(t)}", bond=bond, trade_date=day0)
+        for t, bond in zip(tenors, bonds, strict=True)
+    ]
+    curves = {day0: flat_curve(day0), day1: curve_with_factor(day1, factor, 10.0)}
+    ledger = run_ledger(calendar, cfg, trades=trades, curves=curves)
+    result = attribute(ledger, panel_from_curves(curves), calendar, cfg)
+
+    row = result.factors.iloc[0]
+    scale = max(1.0, abs(row["curve_pnl"]))
+    for other_factor in {"level", "slope", "curvature"} - {factor}:
+        assert abs(row[other_factor]) <= 1e-6 * scale, other_factor
+    assert abs(row["other_curve"]) <= 1e-6 * scale
+    assert abs(row[factor] - row["curve_pnl"]) <= 1e-6 * scale
+
+
+# ---------------------------------------------------------------------------
+# R34：同步篡改快照估值 → valuation_basis 捕获，不进入 other_curve
+# ---------------------------------------------------------------------------
+def test_r34_snapshot_valuation_tamper_is_caught(calendar: TradingCalendar) -> None:
+    from ficc.attribution.ledger_attribution import VALUATION_ABS_TOL
+
+    cfg = zero_cost_cfg()
+    bond = make_bond("VAL", date(2024, 6, 15), date(2026, 6, 15))
+    trade = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17))
+    days = [date(2024, 6, 17), date(2024, 6, 18)]
+    curves = {day: flat_curve(day) for day in days}
+    ledger = run_ledger(calendar, cfg, trades=[trade], curves=curves)
+    snapshots = ledger.snapshots_frame().copy()
+    nav = ledger.nav_series().copy()
+
+    # 末日快照价格、市值、NAV 同步 +10,000 元（约 1 元/百元面值 × 1M 面值）
+    last = snapshots["as_of"] == days[-1]
+    delta_price = 10_000.0 / 1_000_000.0 * 100.0
+    snapshots.loc[last, "dirty_price"] = snapshots.loc[last, "dirty_price"] + delta_price
+    snapshots.loc[last, "clean_price"] = snapshots.loc[last, "clean_price"] + delta_price
+    snapshots.loc[last, "market_value"] = snapshots.loc[last, "market_value"] + 10_000.0
+    snapshots.loc[last, "nav"] = snapshots.loc[last, "nav"] + 10_000.0
+    nav.iloc[-1] = nav.iloc[-1] + 10_000.0
+
+    result = attribute_fixed_holdings(
+        strategy="tampered",
+        nav=nav,
+        snapshots=snapshots,
+        cashflows=ledger.cashflows_frame(),
+        trades=ledger.trades_frame(),
+        panel=panel_from_curves(curves),
+        calendar=calendar,
+        cfg=cfg,
+    )
+    row = result.daily.iloc[-1]
+    assert abs(row["valuation_basis"] - 10_000.0) <= 1.0
+    assert row["valuation_basis_breach"]
+    assert abs(row["valuation_basis"]) > VALUATION_ABS_TOL
+    factor_row = result.factors.iloc[-1]
+    assert abs(factor_row["other_curve"]) <= 1e-6 * max(1.0, abs(factor_row["curve_pnl"]))
+    assert abs(result.daily["bridge_residual"]).max() < BRIDGE_TOL
+
+
+def test_r34_clean_valuation_has_no_basis(calendar: TradingCalendar) -> None:
+    cfg = zero_cost_cfg()
+    bond = make_bond("CLEAN", date(2024, 6, 15), date(2026, 6, 15))
+    trade = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17))
+    days = [date(2024, 6, 17), date(2024, 6, 18), date(2024, 6, 20)]
+    curves = {day: flat_curve(day) for day in days}
+    ledger = run_ledger(calendar, cfg, trades=[trade], curves=curves)
+    result = attribute(ledger, panel_from_curves(curves), calendar, cfg)
+    assert not result.daily["valuation_basis_breach"].any()
+    assert result.daily["valuation_basis"].abs().max() < 1.0
+
+
+# ---------------------------------------------------------------------------
+# R35：平曲线到期 → 市场曲线分项为 0，收益只保留 carry/现金
+# ---------------------------------------------------------------------------
+def test_r35_maturity_has_no_market_curve_pnl(calendar: TradingCalendar) -> None:
+    cfg = zero_cost_cfg()
+    # 券在 2024-06-18 到期（交易日），前一日仍持有
+    bond = make_bond("MAT", date(2022, 6, 19), date(2024, 6, 19), coupon_pct=2.0, freq=2)
+    trade = make_trade(calendar, cfg, trade_id="b1", bond=bond, trade_date=date(2024, 6, 17))
+    days = [date(2024, 6, 17), date(2024, 6, 18), date(2024, 6, 19), date(2024, 6, 20)]
+    curves = {day: flat_curve(day) for day in days}
+    ledger = run_ledger(calendar, cfg, trades=[trade], curves=curves)
+    result = attribute(ledger, panel_from_curves(curves), calendar, cfg)
+
+    assert abs(result.daily["bridge_residual"]).max() < BRIDGE_TOL
+    maturity_rows = result.factors[result.factors["date"] == date(2024, 6, 19)]
+    assert len(maturity_rows) == 1
+    row = maturity_rows.iloc[0]
+    scale = max(1.0, 1_000_000.0)
+    for column in ("level", "slope", "curvature", "other_curve"):
+        assert abs(row[column]) <= 1e-6 * scale, column
+    # 到期日：价格从含末期票息的 dirty 回到赎回价值 100 → carry_roll 为负，
+    # 与 coupon_cash 相加才是持有期收益；市场曲线分项必须为 0。
+    assert row["carry_roll"] == pytest.approx(row["price_pnl"], rel=1e-9, abs=1e-9)
+    maturity_daily = result.daily[result.daily["date"] == date(2024, 6, 19)].iloc[0]
+    assert maturity_daily["principal_redemption"] == pytest.approx(1_000_000.0, rel=1e-12)
+    assert maturity_daily["coupon_cash"] > 0.0
+    assert maturity_daily["nav_delta"] == pytest.approx(
+        maturity_daily["price_pnl"]
+        + maturity_daily["coupon_cash"]
+        + maturity_daily["principal_cash"]
+        - maturity_daily["principal_redemption"],
+        abs=BRIDGE_TOL,
+    )

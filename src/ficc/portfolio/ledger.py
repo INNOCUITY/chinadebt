@@ -81,6 +81,8 @@
 from __future__ import annotations
 
 import bisect
+import copy
+import dataclasses
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -369,6 +371,125 @@ class Ledger:
         if index < 0:
             return self._funding_rate_pct
         return self._funding_rates[dates[index]]
+
+    # ---- 只读投影（执行闸门用：统一状态推进，不另写近似账本）----------
+    def clone(self) -> Ledger:
+        """深拷贝账本（含全部内部状态），供 :meth:`simulate` 做只读预演。
+
+        原账本不受任何影响；克隆体与原账本共享同一个 calendar/config 对象
+        （只读使用）。
+        """
+        return copy.deepcopy(self)
+
+    def _projection_copy(self) -> Ledger:
+        """轻量投影副本：只复制**当前状态**（不含历史事件/快照/成交），O(状态) 而非 O(历史)。
+
+        `clone()` 用于需要完整历史的测试；执行闸门每天调用 `simulate`，必须用这个轻量版本，
+        否则深拷贝 480 天历史会让回测退化为 O(n²)。
+        """
+        other = Ledger.__new__(Ledger)
+        other._calendar = self._calendar
+        other._cfg = self._cfg
+        other._initial_cash = self._initial_cash
+        other._cash = self._cash
+        other._funding_rate_pct = self._funding_rate_pct
+        other._funding_rates = dict(self._funding_rates)
+        other._funding_dates_sorted = (
+            None if self._funding_dates_sorted is None else list(self._funding_dates_sorted)
+        )
+        other._trade_ids = set(self._trade_ids)
+        other._known_bonds = dict(self._known_bonds)
+        other._positions = dict(self._positions)
+        other._faces = dict(self._faces)
+        other._settled_faces = dict(self._settled_faces)
+        other._coupon_schedules = dict(self._coupon_schedules)
+        other._applied = set(self._applied)
+        other._settled = set(self._settled)
+        other._receivables = {day: list(items) for day, items in self._receivables.items()}
+        other._last_processed = self._last_processed
+        # 历史容器：成交引用保留（待结算成交的结算日推进需要），事件/快照不复制
+        other._trades = list(self._trades)
+        other._events = []
+        other._snapshots = []
+        return other
+
+    @staticmethod
+    def _curve_proxy(curve: Any, day: date) -> Any:
+        """把给定曲线改日期成 ``day`` 的估值代理（价格不变，仅推进时间轴）。"""
+        if getattr(curve, "as_of", None) == day:
+            return curve
+        if dataclasses.is_dataclass(curve):
+            return dataclasses.replace(curve, as_of=day)
+        raise TypeError(
+            "curve 必须是 dataclass（如 ficc.curve.Curve）才能做投影日期代理；"
+            f"实际 {type(curve).__name__}"
+        )
+
+    def simulate(
+        self,
+        as_of: date,
+        curve: Any,
+        *,
+        extra_trades: tuple[TradeRecord, ...] = (),
+        horizon: date | None = None,
+    ) -> LedgerSnapshot:
+        """预演"推进今日已发生事件 + 加入候选成交 + 推进到检查时点"后的快照。
+
+        - **不读未来**：克隆后把资金利率表截断到 ``<= as_of``，未来自然日只能
+          前向填充最近已知利率；曲线用调用方给的 ``curve`` 作估值代理（价格不变）。
+        - **统一状态推进**：直接复用 ``process_day`` 的自然日循环，结算队列、
+          票息/本金（含顺延）、费用、融资全部按账本规则逐日推进，不另写近似公式。
+        - ``horizon`` 默认 = ``max(as_of, 候选成交最大结算日的下一个交易日)``：
+          覆盖 T+lag 结算以及结算后到下一个 NAV 检查点之间的周末/长假融资。
+        """
+        as_of = _check_date(as_of, field="as_of")
+        if self._last_processed is not None and as_of < self._last_processed:
+            raise ValueError(f"simulate 的 as_of({as_of}) 早于已处理日({self._last_processed})")
+        extra = tuple(extra_trades)
+        for trade in extra:
+            if not isinstance(trade, TradeRecord):
+                raise TypeError("extra_trades 必须是 TradeRecord 序列")
+
+        projection = self._projection_copy()
+        projection._funding_rates = {
+            day: rate for day, rate in projection._funding_rates.items() if day <= as_of
+        }
+        projection._funding_dates_sorted = None
+
+        for trade in extra:
+            if (
+                projection._last_processed is not None
+                and trade.trade_date <= projection._last_processed
+            ):
+                raise ValueError(
+                    f"候选成交 {trade.trade_id} 的 trade_date({trade.trade_date}) "
+                    f"不晚于已处理日({projection._last_processed})"
+                )
+            projection.submit(trade)
+
+        settle_dates = [trade.settlement_date for trade in extra]
+        default_horizon = as_of
+        if settle_dates:
+            latest_settle = max(settle_dates)
+            default_horizon = max(as_of, self._calendar.next_trading_day(latest_settle, 1))
+        target = _check_date(horizon or default_horizon, field="horizon")
+        if target < as_of:
+            raise ValueError(f"horizon({target}) 不能早于 as_of({as_of})")
+
+        snapshot = projection._snapshots[-1] if projection._snapshots else None
+        day = (
+            as_of
+            if projection._last_processed is None
+            else projection._last_processed + timedelta(days=1)
+        )
+        if projection._last_processed is None and projection._snapshots == []:
+            day = as_of
+        while day <= target:
+            snapshot = projection.process_day(day, self._curve_proxy(curve, day))
+            day += timedelta(days=1)
+        if snapshot is None:  # pragma: no cover - target >= as_of 时至少处理一天
+            snapshot = projection.process_day(target, self._curve_proxy(curve, target))
+        return snapshot
 
     # ---- 提交成交 ------------------------------------------------------
     def submit(self, trade: TradeRecord) -> None:

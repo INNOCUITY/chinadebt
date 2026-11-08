@@ -1,4 +1,4 @@
-.PHONY: help setup install recon strategies cost-study attribution data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
+.PHONY: help setup install recon strategies cost-study attribution acceptance data fetch quality fit diagnostics pipeline backtest risk sensitivity report serve test lint fmt check repro clean
 
 # 优先使用项目本地 .venv（含 pandas/scipy/pytest/ruff），保证在任何 shell 下 `make check` 都能复现；
 # 没有 .venv 时回退系统 python3（此时请先 `make setup`）。
@@ -41,8 +41,11 @@ strategies:  ## 三个基线策略回测（含成本/换手/暴露/约束/逐券
 cost-study:  ## 成本对照实验（固定路径回放 + 决策敏感性 + 参数敏感性）
 	$(PY) scripts/run_cost_study.py --quick
 
-attribution:  ## 账本归因（固定持仓：桥接 + carry/roll + 因子拆分）
+attribution:  ## 账本归因（固定持仓：桥接 + carry/roll + 因子 + 独立估值）
 	$(PY) scripts/run_attribution.py
+
+acceptance:  ## 统一验收（策略 + 归因 + 独立估值 + 对账；缺任一检查即失败）
+	$(PY) scripts/run_acceptance.py
 
 # ------------------------- 研究 -------------------------
 fit:  ## 曲线拟合 + 残差诊断（最小链路：热力图 + NSS 残差）

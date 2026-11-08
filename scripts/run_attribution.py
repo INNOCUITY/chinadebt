@@ -117,6 +117,9 @@ def _summary_line(result: AttributionResult) -> dict[str, float | str]:
         "curvature_sum": float(factors["curvature"].sum()),
         "other_curve_sum": float(factors["other_curve"].sum()),
         "other_curve_nav_bp_sum": float(factors["other_curve_nav_bp"].sum()),
+        "max_abs_valuation_basis": float(daily["valuation_basis"].abs().max()),
+        "valuation_breach_days": int(daily["valuation_basis_breach"].sum()),
+        "principal_redemption_sum": float(daily["principal_redemption"].sum()),
     }
 
 
@@ -188,6 +191,14 @@ def main(argv: list[str] | None = None) -> int:
         # 验收：桥接残差必须为"噪声级"，不是用残差补平
         max_residual = float(strategy_attr.daily["bridge_residual"].abs().max())
         scale = max(float(result.nav.abs().max()), 1.0)
+        if int(strategy_attr.daily["valuation_basis_breach"].sum()) > 0:
+            log.error(
+                "%s 有 %d 天独立估值基差超容差（max=%.6g 元）",
+                strategy.name,
+                int(strategy_attr.daily["valuation_basis_breach"].sum()),
+                float(strategy_attr.daily["valuation_basis"].abs().max()),
+            )
+            return 1
         if max_residual > 1e-6 + 1e-9 * scale:
             log.error(
                 "%s 桥接残差 %.6g 元超过容差（NAV 量级 %.3g）",
@@ -220,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         "curvature_sum",
         "other_curve_sum",
         "other_curve_nav_bp_sum",
+        "max_abs_valuation_basis",
+        "valuation_breach_days",
     ]
     with pd.option_context("display.width", 240):
         print(summary[cols].to_string(index=False, float_format=lambda x: f"{x:.6g}"))
