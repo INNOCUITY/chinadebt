@@ -164,7 +164,14 @@
 | C-129 | 2026-11-09 | [fix] | RL | R59：持仓估值对 policy 不可见，NAV 用 available 日 |
 | C-130 | 2026-11-09 | [fix] | 协议 | R60：完整经济配置指纹 + v1 冻结 lag=1 |
 | C-131 | 2026-11-09 | [feat] | 验证 | 跨入口控制实验 + Mac 本地 example（预热/保存恢复） |
-| C-132 | 2026-11-09 | [test] | 测试 | 测试基线 684 → **693 项全绿** |
+| C-132 | 2026-11-09 | [test] | 测试 | 测试基线 684 → 693 项全绿 |
+| C-134 | 2026-11-09 | [fix] | RL | R61：step/rollout 统一决策日持仓 |
+| C-135 | 2026-11-09 | [fix] | 执行 | R62：initial_curve 起点条款可用时点 |
+| C-136 | 2026-11-09 | [fix] | 验证 | R63：独立 TerminalState 比较 + 费用篡改必失败 |
+| C-137 | 2026-11-09 | [fix] | 协议 | R60 补查：pricing 入指纹 |
+| C-138 | 2026-11-09 | [feat] | ML | 冻结 OOS 预测导出 + 树模型 + 成本后评估 |
+| C-139 | 2026-11-09 | [test] | 测试 | 测试基线 693 → **700 项全绿** |
+| C-133 | 2026-11-09 | [docs] | 独立审查 | 复核 7fd3fd0：R61 持仓时点、R62 起点信息泄漏、R60 结算指纹缺项、R63 终止对照缺失 |
 | C-126 | 2026-11-09 | [docs] | 独立审查 | 复核 d530a9c；R57–R60：预热边界、基准身份、持仓信息泄漏与经济指纹 |
 | C-118 | 2026-11-09 | [docs] | 独立审查 | 复核 R47–R50；登记 R51–R56：协议执行约束、投影审计与冒烟产物隔离 |
 | C-110 | 2026-11-08 | [docs] | 独立审查 | R47–R50：RL 快速路径奖励/动作/终止缺口，ML 基线及重叠口径 |
@@ -184,7 +191,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：693 passed / 0 failed / 1 deselected（network）/ 约 13 分钟（含真实数据回归与回测）
+基线：700 passed / 0 failed / 1 deselected（network）/ 约 14 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1222,10 +1229,11 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前状态（2026-11-09，审查 HEAD `d530a9c`）**：R53–R56 的逐桶投影、单位/方向、面值三阶段
-与产物隔离已有实质修复；R51 正常预热路径/调度、R52 部分冻结字段也已改善。尚未关闭 R57
-（无预热时突破截止）、R58（滞后基准每天重新发行）、R59（持仓估值泄漏当日曲线）与 R60
-（实际经济配置指纹不完整）。C-126 为本轮证据与范围；训练前置契约仍待这四项独立验收。
+**当前状态（2026-11-09，审查 HEAD `7fd3fd0`）**：R57 预热失败保护、R58 不再每日重发基准、
+R59 持仓市场估值隐藏已有修复；R60 费用/风险字段覆盖改善，但仍遗漏 pricing/结算周期。
+新增 R61（step/rollout 持仓日期不一致）、R62（起点券条款带入不可用行情）、R63（跨入口
+脚本未真正比较终止净值）。固定面值控制与本地 example 可运行，不等于状态相关策略的
+训练契约已闭合。C-133 为最新证据与后续验收范围。
 历史轮次的未修状态不要当作当前状态。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
@@ -2642,6 +2650,147 @@ TargetFaces 最终提交面值已由 `gate_decisions.projected_faces` 暴露；�
 
 ---
 
+### C-133 [docs] 7fd3fd0 修复、跨入口控制与 example 的独立审查
+
+- **日期/范围**：2026-11-09，`7fd3fd08e6003e2d16b027bf1596694d94fc7e9e`。
+  仅维护四份审查/规划文档；未改业务实现、测试或正式报告，未训练 RL、未连接 A800。
+- **认可的修复**：预热不足不再向未来 clamp；正常路径持仓估值字段隐藏；旧日更基准身份
+  反例修复；费用、超长券价差、初始资金及风险配置进入指纹，v1 lag=2 已拒绝。
+  这些修复应保留，以下是仍需验收的不同边界。
+
+**R61 [P1 / 状态契约] step 与 rollout 看到的持仓数量属于不同日期**
+
+- 位置：`src/ficc/rl/env.py:812–820` 与 `2125–2131`。
+- rollout 的 `_LaggedView.context` 取 `state=_state_at(available)`，连持仓数量也用 t−lag；
+  step 的 `_observation` 却选 `result.positions.as_of==day`，数量是 t 日，metadata 也这样标注。
+  两边 NAV 都滞后，并不能抵消数量日期不同。
+- 独立反例：2019-01-28→01-31、lag=1、每日决策，使用同一规则“空仓请求四腿各 25M，
+  已有持仓则请求各 22M”。01-29 成交后 step 已看到持仓，rollout 仍看到 01-28 空仓；
+  step 于 **01-30** 各卖 3M，rollout 于 **01-31** 才卖。末 NAV 分别为
+  **100,077,249.48** 与 **100,090,428.36 元**，相差 **13,178.88 元**。
+- 影响：目前“相同固定动作序列一致”成立，但状态相关 policy 在两入口产生的动作序列不同。
+  这直接影响用 step 调试、rollout 训练的可替换性。反例是接口支持的日频模式，不能称作
+  已冻结 5 日协议下的模型绩效结论；5 日协议也应覆盖决策日前后的成交/机械换券。
+- 验收：统一观测构建与字段 as_of；明确已成交面值采用 t 还是 t−lag，两入口都遵守同一选择。
+  用会读取持仓/现金的同一 policy 对拍观测、原始动作、订单、终值，覆盖日频和 5 日网格。
+
+**R62 [P1 / 起点因果性] 固定基准身份仍把 START 曲线带入 START−lag 观测**
+
+- 位置：`src/ficc/rl/env.py:598–601`，`_book_at` 对早于 episode 的日期返回 initial_book。
+- 初始券票息由 `curve0=panel[start]` 决定；之后虽然用 available 曲线 mark，现金流条款
+  已依赖尚不可用的 start 行情。基准 legs/coupon 与 KRD 都向 policy 暴露这种依赖。
+- 独立反例：只把 2019-01-28 全期限收益率上调 **1pp**，保留 01-25 及以前数据不变。
+  两次 reset 都声明 available_through=01-25，基准 KRD 的最大单桶变化却为
+  **1,833.5511 元/bp**（20Y 桶 6,904.2367→8,737.7877）。
+- 现有 `test_policy_context_is_lagged_and_future_data_does_not_leak` 特意不再扰动 START，
+  注释说明基准在 START 构造。此举缩小了测试范围，并未满足严格 lag=1 契约。
+- 验收：从已可用数据冻结初始券条款，或推迟首个 policy 决策至条款可用时点；也可显式定义
+  起点外生条款的信息例外，但必须另立可比较的协议，不能仍声称所有市场信息≤t−1。
+  引擎、基准、标签必须同源，不能只把 policy 的券改成另一组。恢复首日扰动测试。
+
+**R60 [P2 / 补查未关闭] 经济指纹遗漏 pricing，T+1/T+2 仍具有同一身份**
+
+- 位置：`src/ficc/research/protocol.py:180–198`；实际结算消费字段在 `portfolio/ledger.py:517`。
+- `_config_economics` 未纳入 `cfg.pricing`。只改 `pricing.settlement_lag_days=1→2`，
+  protocol_fingerprint 仍完全相同。01-28→01-30 同目标回放中，01-29 四笔建仓从
+  **01-30 结算变成 01-31 结算**；终止未结算现金 **0→−100,302,640.44 元**，
+  未付费用 **0→2,545.54 元**。
+- 验收：至少纳入实际消费的定价/结算配置；对完整 resolved 配置做字段消费审计及变异测试，
+  避免只追加上轮列出的少数键就称“完整”。运行范围、数据、源码与经济协议标识分层保留。
+
+**R63 [P2 / 验收缺项] 跨入口脚本只复制一份终止数据，没有比较三条路径的净终值**
+
+- 位置：`scripts/run_cross_entry_check.py:164–174`。所有比较行的 terminal 字段都来自同一个
+  `rollout.terminal`；`ok` 只检查部分订单字段和 NAV，不调用 step 的 terminate 做比较，也
+  不比较扣未付费用后的 `net_terminal_value`。
+- 故障注入：只将 rollout 返回的 `terminal.accrued_fees` 增加 **1 元**，账本和 step 保持原值；
+  02-01→02-12 控制仍 **exit 0**，输出“终止净值一致”，三行 CSV 都被填成同一错误费用 1 元。
+  这是验收测试的漏检，不是正常路径出现了 1 元账本错误。
+- 验收：独立取得三条路径的终止状态，对比现金、面值、未结算交易/现金、费用、净终值；
+  任一路费用+1 必须失败。订单至少包含 bond_code，NAV 日期索引必须完全相同，不能只取交集。
+  再加入实际预测→z→KRD 的正/负/零控制；固定面值回放不会验证观测与该映射。
+
+**本轮实跑范围与结果**
+
+- `run_cross_entry_check.py --out-dir ...` 默认 02-01→03-29 隔离复跑成功，三组订单/NAV 差 0；
+  终止相关措辞须受 R63 限定。故障注入产物在独立临时目录，未覆盖仓库报告。
+- `run_local_example.py --out-dir ...` 隔离复跑成功：8 行 ML、Ridge 保存/读取预测一致；
+  RL 保存的是 NAV 序列和少量摘要，不能将其称为完整训练轨迹或可续训 checkpoint。
+  后续训练应保存 obs/action/reward/done、投影审计和终止费用；当前没有 RL 模型研究。
+- 完整协议冒烟隔离复跑 exit 0，`protocol_smoke.csv` / `protocol_manifest.json` 与提交产物
+  逐字节一致：731 日/147 决策、zero 超额 0bp、成本 85,601.844986 元。默认跨入口 CSV 也与
+  提交产物逐字节一致；这不能替代 R61/R62/R63 的独立断言。未重跑三套 acceptance。
+- 默认 `make check` 独立实跑 **exit 0**：ruff/129 个文件格式检查通过，pytest **693 项通过、
+  1 项 network 排除**；另以 collect-only 核对 693/694 项。现有测试未覆盖上述独立反例。
+- 远端 `main` 只读核对已是 `7fd3fd0…`，不需要再次推送该提交；本轮文档未提交/推送。
+
+**下一步**：先统一 policy 观察和起点信息契约、补 pricing 指纹及独立终止断言；通过后接入
+同一冻结预测序列的成本后评估，再做状态相关 RL/多 seed。已有账本和规则研究无需重写。
+Mac example 保留；A800 准备可并行，正式训练等待这些明确验收项，详见计划 §12.26。
+
+---
+
+### R61–R63 修复与成本后模型评估（2026-11-09 第十八轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R61 | P1 | step/rollout 共用同一持仓时点：决策日 t 的 face/settled_face 已知，估值 NaN；NAV/cash 用 available | C-134；状态相关策略（空仓 25M/腿→有仓 22M）两路径均 01-30 减仓、末 NAV 100,077,216.64、差 0 |
+| R62 | P1 | `run_backtest(initial_curve)` 让初始券条款/基准身份用 start−lag 已可得曲线；env 传 available_through(start) | C-135；START +1pp 扰动后 20Y 基准 KRD 6882.1144 不变（逐桶最大差 0；旧 1833.5511）；初始券 SYN-*-20190125 |
+| R63 | P2 | 公开 `terminal_state_from_result`；跨入口分别构造 ML/rollout/step TerminalState 并逐项比较 | C-136；终止费用 +1 元 → 脚本 exit 1（旧复制同一 terminal 仍 pass） |
+| R60 补查 | P2 | 指纹纳入 `cfg.pricing`；T+1→T+2 可区分 | C-137；settlement_lag 2 指纹变化；未结算现金/费用反例可识别 |
+| 成本后评估 | — | `ml_oos_predictions.csv` + `run_model_cost_eval.py`：冻结 ridge/tree/train_mean/literal_zero 预测经 z→KRD→同一账本，22 split | C-138；均值 active +12.0~12.5bp、TE 40~41bp、成本 175~181 万、拒单 30；树 IC −0.030/R² −0.211。仅诊断 |
+
+**边界**：成本后评估为各测试窗独立 episode 均值（非连续净值）；未做树调参/多 seed/A800；不是 alpha 结论。
+
+### C-134 [fix] R61：step/rollout 统一持仓时点
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：两入口统一使用决策日 t 的账本持仓（face/settled_face 已知，估值字段 NaN）；NAV/cash 用 available；共享 `_positions_frame_at`/`_sanitize_positions` 与记录构造器。
+- **验证方式**：状态相关策略（空仓买 25M/腿、有仓降至 22M）：step/rollout 均 01-30 减仓，四日末 NAV 100,077,216.64、差 0，逐字段一致。
+- **风险/遗留**：策略若需要当日估值需自行用 lagged 曲线重估；固定面值策略无法暴露此类差异，验收必须用状态相关策略。
+
+### C-135 [fix] R62：起点条款可用时点
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/backtest/engine.py`、`src/ficc/rl/env.py`、`tests/test_engine.py`、`tests/test_rl_clock.py`
+- **变更内容**：`run_backtest(initial_curve=...)` 用其决定初始 Universe/RollingUniverse 与基准身份（票息/起息/期限），日度估值/执行仍用当日曲线；env 传 available_through(start)；`initial_curve.as_of > start` 拒绝。
+- **验证方式**：仅扰动 START 曲线 +1pp：available 均 01-25，20Y 基准 KRD 6882.1144 前后不变、逐桶最大差 0（旧 1833.5511）；初始券 `SYN-*-20190125`，票息/首日 executed 一致。
+- **风险/遗留**：日度滚动换券仍用当日曲线（外生政策）；只有起点条款受 initial_curve 控制。
+
+### C-136 [fix] R63：独立终止对照
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`scripts/run_cross_entry_check.py`、`tests/test_cross_entry.py`
+- **变更内容**：公开 `terminal_state_from_result(result, calendar, cfg)`；跨入口脚本分别构造 ML/rollout/step 的 TerminalState，比较 nav/cash/未结算现金/费用/净终值；新增 `--tamper-fee` 测试开关。
+- **验证方式**：三路径终止差全 0；人为 rollout 费用 +1 元 → exit 1。
+- **风险/遗留**：终止默认不强平；费用口径与 NAV 不同步的说明保留。
+
+### C-137 [fix] R60 补查：pricing 入指纹
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/research/protocol.py`、`tests/test_protocol.py`
+- **变更内容**：`_config_economics` 加入 `cfg.pricing` 全量；T+1/T+2 结算配置变化指纹必变。
+- **验证方式**：settlement_lag_days=2 时指纹改变；审查反例（未结算现金 0→−100,302,640.44、费用 0→2,545.54）可被协议识别。
+- **风险/遗留**：指纹变化后旧结果不能与新配置混比。
+
+### C-138 [feat] 冻结 OOS 预测导出、树模型与成本后评估
+
+- **日期**：2026-11-09
+- **文件**：`scripts/run_ml_baseline.py`、`scripts/run_model_cost_eval.py`、`reports/ml_oos_predictions.csv`、`reports/model_cost_eval*.csv`、`tests/test_model_cost_eval.py`
+- **变更内容**：Ridge/train_mean/literal_zero/极简 CART（depth≤3，验证窗选深）导出逐样本 OOS 预测；新脚本按 split 测试窗把原始收益预测经 `z=clip(raw/0.01,-1,1)`→KRD 倾斜→同一账本评估成本/换手/拒单/终止；不重新训练或调参。
+- **验证方式**：22 split、277 OOS 行；树 OOS IC −0.030/R² −0.211；成本后均值 active +12.0~12.5bp、TE 40~41bp、成本 175~181 万、拒单 30；脚本 quick 测试通过。
+- **风险/遗留**：各测试窗独立 episode 均值，不是连续净值；10% tilt 与约束投影导致高拒单；不是 alpha 结论；未做树调参/多 seed。
+
+### C-139 [test] 测试基线 693 → 700
+
+- **日期**：2026-11-09
+- **变更内容**：新增状态持仓 1、initial_curve 1、终止对照 2、pricing 1、成本后评估 2 等。
+- **验证方式**：`make check`（700 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 14 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -2649,7 +2798,7 @@ TargetFaces 最终提交面值已由 `gate_decisions.projected_faces` 暴露；�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **693** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **700** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

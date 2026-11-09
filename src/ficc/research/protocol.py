@@ -44,6 +44,7 @@ import pandas as pd
 
 from ficc.backtest.engine import BacktestResult, run_backtest
 from ficc.config import Config, get_config
+from ficc.curve.curve import Curve
 from ficc.logging import get_logger
 from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
 from ficc.utils.calendar import TradingCalendar
@@ -195,6 +196,7 @@ def _config_economics(cfg: Config) -> dict[str, Any]:
         "risk": cfg.risk.model_dump(mode="json"),
         "benchmark": cfg.benchmark.model_dump(mode="json"),
         "curve": cfg.curve.model_dump(mode="json"),
+        "pricing": cfg.pricing.model_dump(mode="json"),
     }
 
 
@@ -404,6 +406,7 @@ def evaluate_predictions(
     start: date | None = None,
     end: date | None = None,
     prediction_is_z: bool = False,
+    initial_curve: Curve | None = None,
 ) -> PredictionEvaluation:
     """用**同一回测引擎**把预测映射成仓位，评估成本后净收益与风险。
 
@@ -431,6 +434,7 @@ def evaluate_predictions(
         cfg=resolved,
         start=start,
         end=end,
+        initial_curve=initial_curve,
     )
     nav = result.nav
     bench = result.benchmark_nav
@@ -480,6 +484,7 @@ def evaluate_target_faces(
     protocol: ExperimentProtocol | None = None,
     start: date | None = None,
     end: date | None = None,
+    initial_curve: Curve | None = None,
 ) -> PredictionEvaluation:
     """跨入口控制：把**固定目标面值**经同一引擎/成本口径跑成组合轨迹。"""
     proto = protocol or ExperimentProtocol()
@@ -499,6 +504,7 @@ def evaluate_target_faces(
         cfg=resolved,
         start=decision_start,
         end=decision_end,
+        initial_curve=initial_curve,
     )
     return PredictionEvaluation(
         protocol={**proto.describe(), "fingerprint": protocol_fingerprint(resolved, proto)},

@@ -1,4 +1,4 @@
-﻿check,order_diff,nav_max_abs_diff,start,end,protocol_version,decision_step_days,terminal_nav,terminal_unsettled_cash,terminal_accrued_fees
-ml_vs_rollout,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662263.88383998,0.0,0.0
-ml_vs_step,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662263.88383998,0.0,0.0
-rollout_vs_step,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662263.88383998,0.0,0.0
+﻿check,order_diff,nav_max_abs_diff,terminal_nav_diff,terminal_cash_diff,terminal_unsettled_cash_diff,terminal_accrued_fees_diff,terminal_net_diff,terminal_unsettled_count_diff,start,end,protocol_version,decision_step_days,terminal_nav,terminal_unsettled_cash,terminal_accrued_fees,terminal_net
+ml_vs_rollout,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662146.39958502,0.0,0.0,100662146.39958502
+ml_vs_step,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662146.39958502,0.0,0.0,100662146.39958502
+rollout_vs_step,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2019-02-01,2019-03-29,protocol_v1_2026-11-08,5,100662146.39958502,0.0,0.0,100662146.39958502

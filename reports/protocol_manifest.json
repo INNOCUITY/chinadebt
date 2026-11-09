@@ -36,7 +36,7 @@
       "comparison_rule": "跨模型比较时把所有策略采样到 decision_step_days 的同一决策日；RL 非决策日返回 hold（不主动交易）"
     }
   },
-  "fingerprint": "0c9e1acc69805e5027b0f7f53d1c487df1e5c81fcc6fac479667e704bd92bb3e",
+  "fingerprint": "25397be9900224ec520f00edb69dd6913d4e66133f6a6f94ffae1338a6a18fa6",
   "start": "2019-01-28",
   "end": "2021-12-31",
   "n_decision_days": 147,

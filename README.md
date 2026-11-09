@@ -145,9 +145,9 @@ make check    # = ruff check + ruff format --check + pytest（673 项离线，ex
 
 **最新独立审查（2026-11-09，HEAD `8ebf2aa`）**：R47 的 Hold 奖励闭合、R49 的 rollout 终止接口已复验；R50 默认基线及重叠修正成立，全量 ML CSV 重建一致。Ridge 仍差于 train_mean/literal_zero。R48 两路径一致性有改善，但 KRD 形状投影、候选 DV01 单位及 TargetFaces 最终提交面值仍有 R53–R55 问题。
 
-**训练入口 R57–R60（`2026-11-09` 修复）**：RL 预热区强制（start 前不足 `max(lag,warmup_days)` 交易日直接报错，不向未来 clamp）；policy 看到的基准=引擎实际持有的同一组券（滚动日同步真实持仓，修复 lag=1 延迟建仓 80,877.64 元/8.09bp）；持仓估值字段对 policy 不可见、NAV 用 available 日；协议指纹纳入完整经济配置（结算费/超长券价差/init_cash/杠杆/风险限制），v1 冻结 lag=1。跨入口控制（ML 评估器/RL rollout/RL step）同网格同目标：NAV 差 0、订单字段差 0、终止净值一致。全量冒烟 731 日/147 决策、zero 超额 0bp、成本 85,601.84 元。`run_local_example.py` 提供带预热区的 Mac 本地 example（轨迹/Ridge 模型保存恢复，仅链路验证）。
+**训练入口（`7fd3fd0` 独立复核）**：预热不足拒绝、基准不再每日重发、持仓估值隐藏与费用/风险指纹覆盖已有修复；固定面值跨入口订单/NAV 差 0，本地 example（8 行 Ridge、NAV 摘要存取）可复现。但仍存在 step/rollout 持仓时点不同（R61）、起点条款带入当日不可用曲线（R62）、pricing/结算配置未入指纹（R60 补查）；跨入口脚本尚未独立比较终止净值（R63）。因此固定动作控制不代表状态相关策略已验收。全量协议冒烟口径仍为 731 日/147 决策、zero 超额 0bp、成本 85,601.84 元。
 
-**下一步**：跨入口控制已完成（零/固定动作）；可在同一协议下接入正式训练（ML 常数/Ridge/树、RL 多 seed），当前不做 A800。Mac 负责带预热区的 example 与契约测试；单卡 A800 40GB 先做环境吞吐剖析和最小训练；8 卡优先独立 seed/fold 任务，CPU/内存实测后决定并发。2019–2025 始终是已研究样本。详见[方法论 §10.25](docs/03_methodology.md)、[计划 §12.24](docs/01_project_plan.md)、[C-126 / R57–R60](docs/code.md)。本轮仅更新审查文档，未修改业务代码或模型。
+**下一步**：统一观察与起点信息契约，补结算指纹和终止断言；随后将已有 Ridge/train_mean/literal_zero 的冻结 OOS 预测接入成本后评估，再扩展树模型和 RL。Mac 做短链路；单卡 A800 40GB 先测吞吐与最小训练，8 卡优先独立 seed/fold 并行，CPU/内存实测后定并发。2019–2025 保持已研究样本。详见[方法论 §10.26](docs/03_methodology.md)、[计划 §12.26](docs/01_project_plan.md)、[C-133](docs/code.md)。本轮仅维护文档，未修改业务实现或部署服务器。
 
 **计算资源规划（2026-11-08，尚未实现训练部署）**：MacBook Air M2 / 16GB 用 example 数据验证全 pipeline；正式 ML/RL 实验放服务器。分别支持单卡 A800 40GB 与 8×A800 40GB，8 卡优先按 seed/窗口/消融分配独立任务，CPU/内存未知时先低并发实测。当前 Ridge 只有 10 个拟合参数，RL 尚无已训练网络；拟议 64×64 / 128×128 小型 actor/critic，不因 GPU 多而增加模型容量。两端共用账本/协议，详细交付顺序见[计划 §12.20](docs/01_project_plan.md#1220-mac-本地示例--a800-正式实验的执行方案2026-11-08)。
 

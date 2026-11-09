@@ -623,3 +623,53 @@ def test_r54_attempts_detail_units_and_sides(market) -> None:
     first = face_decisions[0]["accepted_orders"][0]
     assert {"bond_code", "side", "face_value"} <= set(first)
     assert float(first["face_value"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# R62：初始券条款由已可用曲线决定，日度估值仍用当日曲线
+# ---------------------------------------------------------------------------
+def test_r62_initial_curve_freezes_terms_and_rejects_future_curve(market) -> None:
+    """R62：``initial_curve`` 决定初始券起息/票息，估值仍逐日用自己的曲线。"""
+    from ficc.rl.env import _curve_at
+
+    cfg, panel, funding, calendar = market
+    tenors = tuple(float(t) for t in CANONICAL_TENORS)
+    # 01-25 缺 2Y 报价（真实数据缺口），用当日可得的其他期限点做 Hermite 插值。
+    initial = _curve_at(panel, tenors, date(2019, 1, 25), allow_missing=True)
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=START,
+        end=date(2019, 2, 1),
+        initial_curve=initial,
+    )
+    bench_trades = result.benchmark_trades
+    first_buy = bench_trades.loc[
+        pd.to_datetime(bench_trades["trade_date"]).dt.date == calendar.next_trading_day(START, 1)
+    ]
+    assert len(first_buy) == 4
+    # 起息日来自 initial_curve.as_of（01-25），不是回测起点 01-28
+    assert {str(code).rsplit("-", 1)[-1] for code in first_buy["bond_code"]} == {"20190125"}
+    for row in first_buy.itertuples():
+        tenor = float(str(row.bond_code).split("-")[1].rstrip("Y"))
+        assert row.coupon_pct == pytest.approx(float(initial.rate(tenor)), abs=1e-12)
+    # 每日估值/风险仍用当日曲线：exposure 的基准 KRD 随交易日变化
+    krd_columns = [column for column in result.exposure.columns if column.startswith("bench_krd_")]
+    assert krd_columns
+    assert result.exposure[krd_columns].nunique().max() > 1
+
+    # 起点之后的曲线不得被当作初始条款
+    with pytest.raises(ValueError, match="晚于回测起点"):
+        run_backtest(
+            _ZeroTilt(),
+            panel=panel,
+            calendar=calendar,
+            funding=funding,
+            cfg=cfg,
+            start=START,
+            end=date(2019, 2, 1),
+            initial_curve=_curve_at(panel, tenors, date(2019, 1, 29), allow_missing=True),
+        )

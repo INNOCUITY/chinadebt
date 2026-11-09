@@ -29,7 +29,7 @@ from ficc.data.schema import CANONICAL_TENORS, BondStatic
 from ficc.portfolio.benchmark import build_benchmark, mark_faces
 from ficc.portfolio.ledger import PositionView
 from ficc.portfolio.rolling import RollingUniverse
-from ficc.portfolio.types import MarketContext, TargetKRD
+from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
 from ficc.rl import ActionSpec, RebalanceEnv, StepRecord
 from ficc.rl.env import _curve_at, _LaggedView
 from ficc.utils.calendar import TradingCalendar
@@ -59,12 +59,18 @@ def _fixed_benchmark_at(
     cfg: Config,
     start: date,
     available: date,
+    *,
+    terms_day: date | None = None,
 ):
-    """独立期望值：起点构造一次基准，只把同一组券/面值重估到 available。"""
+    """独立期望值：起点构造一次基准，只把同一组券/面值重估到 available。
+
+    ``terms_day``（R62）是初始券条款/票息所使用的曲线日；缺省等于 ``start``。
+    引擎在 ``start`` 构造基准（``as_of=start``），但条款可以来自更早的已可用曲线。
+    """
     tenors = tuple(float(t) for t in CANONICAL_TENORS)
-    curve_start = _curve_at(panel, tenors, start)
-    universe = RollingUniverse.build(curve_start, start, cfg=cfg).active()
-    benchmark0 = build_benchmark(curve_start, start, bonds=universe, calendar=calendar, cfg=cfg)
+    curve_terms = _curve_at(panel, tenors, terms_day or start, allow_missing=True)
+    universe = RollingUniverse.build(curve_terms, terms_day or start, cfg=cfg).active()
+    benchmark0 = build_benchmark(curve_terms, start, bonds=universe, calendar=calendar, cfg=cfg)
     return mark_faces(
         dict(benchmark0.faces),
         bonds=universe,
@@ -126,10 +132,15 @@ def test_reset_observation_cutoff_and_metadata(market) -> None:
 
     # R58：基准身份在 episode 起点构造一次，只把同一组券/面值重估到 01-25；
     # 不是用 01-25 的 RollingUniverse.build 重新发行一组券。
-    lagged_benchmark = _fixed_benchmark_at(panel, calendar, cfg, START, AVAILABLE)
+    # R62：初始券条款来自 START 之前已可用的曲线（01-25），不是 START 当日曲线；
+    # 基准在 START 构造（as_of=START），只把同一组券/面值重估到 01-25。
+    lagged_benchmark = _fixed_benchmark_at(
+        panel, calendar, cfg, START, AVAILABLE, terms_day=AVAILABLE
+    )
     assert env.available_through(START) == AVAILABLE
+    assert env.initial_curve is not None and env.initial_curve.as_of == AVAILABLE
     assert obs.benchmark_krd == pytest.approx(dict(lagged_benchmark.krd))
-    start_book = _fixed_benchmark_at(panel, calendar, cfg, START, START)
+    start_book = _fixed_benchmark_at(panel, calendar, cfg, START, START, terms_day=AVAILABLE)
     assert set(obs.metadata["curve_tenors"])  # 曲线仍可读
     assert {leg.bond.code for leg in lagged_benchmark.legs} == set(start_book.faces)
 
@@ -407,3 +418,88 @@ def test_lag_aligns_with_decision_grid_indices(market) -> None:
     assert record2.original_action.notes == "off_grid_hold"
     assert "off_grid_hold" in record2.notes
     assert record2.executed_trades == ()
+
+
+def test_r62_start_curve_does_not_leak_into_initial_terms(market) -> None:
+    """R62：只扰动 START 当日曲线，起点条款/基准/policy 基准 KRD 必须不变。
+
+    初始券由 ``initial_curve = curve_at(available_through(start))``（01-25）发行，
+    因此两次 reset 的 ``available_through`` 都是 01-25、``benchmark_krd`` 逐桶相同；
+    引擎初始基准券代码/票息一致，首日 executed 目标也不随 START 曲线变化。
+    """
+    cfg, panel, funding, calendar = market
+    perturbed = panel.copy()
+    perturbed.loc[pd.Timestamp(START), :] = perturbed.loc[pd.Timestamp(START), :] + 1.0
+    days = calendar.trading_days_between(START, END)
+
+    def run(data: pd.DataFrame):
+        env = RebalanceEnv(data, calendar, funding, cfg)
+        obs0 = env.reset(START, END)
+        seen: dict[str, object] = {}
+
+        def policy(ctx: MarketContext) -> TargetFaces | None:
+            if ctx.as_of == START:
+                seen["krd"] = dict(ctx.benchmark.krd)
+                seen["available"] = ctx.benchmark.as_of
+                return TargetFaces(as_of=ctx.as_of, faces=dict(ctx.benchmark.faces))
+            return None
+
+        rollout = env.rollout(policy, START, END)
+        return env, obs0, seen, rollout
+
+    env_a, obs_a, seen_a, rollout_a = run(panel)
+    env_b, obs_b, seen_b, rollout_b = run(perturbed)
+
+    assert obs_a.metadata["available_through"] == obs_b.metadata["available_through"]
+    assert obs_a.metadata["available_through"] == AVAILABLE.isoformat()
+    assert env_a.initial_curve is not None and env_b.initial_curve is not None
+    assert env_a.initial_curve.as_of == env_b.initial_curve.as_of == AVAILABLE
+    assert seen_a["available"] == seen_b["available"] == AVAILABLE
+    # 基准 KRD 逐桶不变（1e-9）
+    assert dict(obs_a.benchmark_krd) == pytest.approx(dict(obs_b.benchmark_krd), abs=1e-9, rel=0.0)
+    assert seen_a["krd"] == pytest.approx(seen_b["krd"], abs=1e-9, rel=0.0)
+
+    # 引擎初始基准券代码/票息/起息/到期一致（benchmark_trades 首日建仓）
+    def _initial_legs(rollout) -> tuple[tuple[object, ...], ...]:
+        trades = rollout.result.benchmark_trades
+        first = trades.loc[pd.to_datetime(trades["trade_date"]).dt.date == days[1]]
+        return tuple(
+            sorted(
+                (
+                    str(row["bond_code"]),
+                    float(row["coupon_pct"]),
+                    row["issue_date"],
+                    row["maturity_date"],
+                )
+                for _, row in first.iterrows()
+            )
+        )
+
+    legs_a = _initial_legs(rollout_a)
+    legs_b = _initial_legs(rollout_b)
+    assert legs_a == legs_b
+    assert {str(code).rsplit("-", 1)[-1] for code, *_rest in legs_a} == {"20190125"}
+    # benchmark_positions 的初始持仓代码也一致（首日空仓占位行之外的第一组持仓）
+    first_position_rows = [
+        frame.loc[pd.to_datetime(frame["as_of"]).dt.date == days[1]]
+        for frame in (rollout_a.result.benchmark_positions, rollout_b.result.benchmark_positions)
+    ]
+    codes_a = tuple(sorted(str(code) for code in first_position_rows[0]["bond_code"]))
+    codes_b = tuple(sorted(str(code) for code in first_position_rows[1]["bond_code"]))
+    assert codes_a == codes_b
+
+    # executed 首日目标不随 START 曲线变化（成交发生在 START 之后一天）
+    def _first_trades(rollout) -> tuple[tuple[object, ...], ...]:
+        record = rollout.records[0]
+        assert record.date == days[1]
+        return tuple(
+            sorted(
+                (trade["bond_code"], trade["side"], trade["face_value"], trade["clean_price"])
+                for trade in record.executed_trades
+            )
+        )
+
+    assert _first_trades(rollout_a) == _first_trades(rollout_b)
+    assert float(rollout_a.result.nav.loc[END]) == pytest.approx(
+        float(rollout_b.result.nav.loc[END]), abs=0.0
+    )

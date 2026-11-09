@@ -36,6 +36,7 @@ from ficc.rl import (
     RebalanceEnv,
     StepRecord,
     TerminalState,
+    terminal_state_from_result,
 )
 from ficc.utils.calendar import TradingCalendar
 
@@ -174,6 +175,7 @@ def test_target_krd_normal_execution_and_substitution_detail(market) -> None:
         cfg=env.cfg,
         start=START,
         end=record.date,
+        initial_curve=env.initial_curve,
     )
     assert env.result is not None
     np.testing.assert_allclose(
@@ -453,6 +455,7 @@ def test_performance_stats_and_replay_consistency(market) -> None:
         cfg=env.cfg,
         start=START,
         end=obs2.as_of,
+        initial_curve=env.initial_curve,
     )
     assert env.result is not None
     np.testing.assert_allclose(
@@ -465,17 +468,31 @@ def test_performance_stats_and_replay_consistency(market) -> None:
 # R47/R48/R49：共用轨迹构造器、逐字段等价、缩放/滚动反例、终止状态
 # ---------------------------------------------------------------------------
 def _benchmark_faces(
-    panel: pd.DataFrame, calendar: TradingCalendar, cfg: Config, day: date
+    panel: pd.DataFrame,
+    calendar: TradingCalendar,
+    cfg: Config,
+    day: date,
+    *,
+    initial_curve: Curve | None = None,
 ) -> dict[str, float]:
-    """起点基准的逐腿面值（构造精确面值/25M 反例用）。"""
-    row = panel.loc[pd.Timestamp(day)].reindex(list(CANONICAL_TENORS))
-    curve = Curve(
-        as_of=day,
-        tenors=np.asarray(CANONICAL_TENORS),
-        rates=tuple(row.values),
-        method="hermite",
-    )
-    universe = RollingUniverse.build(curve, day, cfg=cfg).active()
+    """起点基准的逐腿面值（构造精确面值/25M 反例用）。
+
+    R62：``initial_curve`` 非空时，初始券按该曲线的起息/票息发行（与引擎
+    ``run_backtest(initial_curve=...)`` 同一口径）；缺省仍用 ``day`` 当日曲线。
+    """
+    if initial_curve is not None:
+        curve = initial_curve
+        terms_day = initial_curve.as_of
+    else:
+        row = panel.loc[pd.Timestamp(day)].reindex(list(CANONICAL_TENORS))
+        curve = Curve(
+            as_of=day,
+            tenors=np.asarray(CANONICAL_TENORS),
+            rates=tuple(row.values),
+            method="hermite",
+        )
+        terms_day = day
+    universe = RollingUniverse.build(curve, terms_day, cfg=cfg).active()
     benchmark = build_benchmark(curve, day, bonds=universe, calendar=calendar, cfg=cfg)
     return {leg.bond.code: float(leg.face_value) for leg in benchmark.legs}
 
@@ -648,7 +665,7 @@ def test_rollout_matches_step_across_action_types(market) -> None:
     probe = RebalanceEnv(panel, calendar, funding, cfg)
     obs0 = probe.reset(START, END)
     bench = dict(obs0.benchmark_krd)
-    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0])
+    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0], initial_curve=probe.initial_curve)
     face_target = dict(bench_faces)
     face_target[sorted(face_target)[0]] += 1_000_000.0
     huge = {tenor: 1000.0 * value for tenor, value in bench.items()}
@@ -699,7 +716,9 @@ def test_rollout_scaled_faces_matches_step(market) -> None:
     tight = cfg.model_copy(
         update={"constraints": cfg.constraints.model_copy(update={"min_cash_fraction": 0.0})}
     )
-    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0])
+    probe = RebalanceEnv(panel, calendar, funding, tight)
+    probe.reset(START, days[-1])
+    bench_faces = _benchmark_faces(panel, calendar, cfg, days[0], initial_curve=probe.initial_curve)
     requested = {code: 25_000_000.0 for code in sorted(bench_faces)}
     assert len(requested) == 4
     schedule = {days[0]: ActionSpec(target_faces=requested, notes="25M x4")}
@@ -761,7 +780,9 @@ def test_rollout_roll_cancellation_matches_step(market) -> None:
     roll_records = [record for record in rollout.records if record.policy_actions]
     assert roll_records, "短窗口内应出现机械换券（roll_trigger_years=1.99）"
     roll_dates = {record.date for record in roll_records}
-    assert {date(2019, 2, 2), date(2019, 2, 11)} <= roll_dates
+    # R62：初始 2Y 券起息日从 START(01-28) 前移到 available(01-25)，首个滚动
+    # 触发日相应从 02-02 前移到 01-30；第二个滚动日仍为 02-11。
+    assert {date(2019, 1, 30), date(2019, 2, 11)} <= roll_dates
     for record in roll_records:
         assert record.policy_source == "policy_roll"
         assert record.pending_status == "cancelled_by_roll"
@@ -917,11 +938,15 @@ def test_krd_shape_projection_is_scaled_not_executed() -> None:
 # R58/R59：基准身份固定 + policy 可见估值截断
 # ---------------------------------------------------------------------------
 def test_r58_zero_tilt_tracks_fixed_benchmark_for_lag0_and_lag1(market) -> None:
-    """R58：零倾斜策略在 lag=0/1 下都买同一组起点券，不再因每日重发券被拒单。
+    """R58：零倾斜策略在 lag=0/1 下都买同一组（各自）起点券，不因每日重发券被拒单。
 
     旧实现 lag=1 时 01-29/01-31 的请求因目标券不在实际宇宙而被拒，仅 01-30 建仓，
     末 NAV 100,017,330.65（较基准少 80,877.64 元 / 8.0878bp）。修复后两条路径都在
-    01-29 一次建仓四腿 25M，末 NAV 与真实基准只差现金流舍入量级。
+    01-29 一次建仓四腿 25M，末 NAV 与各自真实基准只差现金流舍入量级。
+
+    R62 起，lag=1 的初始券条款来自 ``available_through(START)=01-25`` 而非 START，
+    因此 lag=0/1 的起点券/票息不再相同（这是因果性修复的预期结果），但两条路径各自
+    都零倾斜跟踪自己的真实基准；lag=0 仍复现旧数值。
     """
     cfg, panel, funding, calendar = market
     days = calendar.trading_days_between(START, date(2019, 1, 31))
@@ -935,9 +960,12 @@ def test_r58_zero_tilt_tracks_fixed_benchmark_for_lag0_and_lag1(market) -> None:
         )
 
     finals: list[float] = []
+    terms_days: list[date] = []
     for lag in (0, 1):
         env = RebalanceEnv(panel, calendar, funding, cfg, information_lag_days=lag)
         rollout = env.rollout(policy, START, end)
+        assert env.initial_curve is not None
+        terms_days.append(env.initial_curve.as_of)
         assert rollout.records[0].action_outcome == "executed"
         assert len(rollout.records[0].executed_trades) == 4
         assert all(
@@ -952,8 +980,10 @@ def test_r58_zero_tilt_tracks_fixed_benchmark_for_lag0_and_lag1(market) -> None:
         assert final_nav == pytest.approx(benchmark_nav, abs=0.01)
         finals.append(final_nav)
 
-    assert finals[0] == pytest.approx(finals[1], abs=0.01)
+    assert terms_days == [START, date(2019, 1, 25)]
+    # R62：lag=1 的初始券来自 01-25，NAV 与 lag=0（START 条款）不同是预期的
     assert finals[0] == pytest.approx(100_098_208.29, abs=0.01)
+    assert finals[1] == pytest.approx(100_098_152.99, abs=0.01)
 
 
 def test_r58_rolling_identity_syncs_real_benchmark_holdings(market) -> None:
@@ -1096,3 +1126,197 @@ def test_r59_policy_positions_and_nav_do_not_leak_current_curve(market) -> None:
     # 用 positions 估值的策略在两种情形下产生同一原始动作
     assert sink_a["action"] == sink_b["action"]
     assert rollout_a.records[1].original_action == rollout_b.records[1].original_action
+
+
+# ---------------------------------------------------------------------------
+# R61：step 与 rollout 共用同一持仓时点（状态相关策略对拍）
+# ---------------------------------------------------------------------------
+def test_r61_state_dependent_step_and_rollout_share_position_timing(market) -> None:
+    """R61 反例：空仓买 25M/腿、已有仓位降至 22M/腿，两入口减仓日必须相同。
+
+    旧实现 step 在 01-29 的观测已看到 01-29 成交后的 25M，而 rollout 的 policy
+    上下文仍取 ``available=01-28`` 的空仓状态，导致 step 于 01-30 减仓、rollout
+    于 01-31 才减仓，四日末 NAV 相差 13,178.88 元。修复后两边都暴露 **t 日**
+    账本持仓（face/settled_face 已知，估值 NaN），动作序列、减仓日与终值一致。
+    """
+    cfg, panel, funding, calendar = market
+    end = date(2019, 1, 31)
+    days = calendar.trading_days_between(START, end)
+
+    step_env = RebalanceEnv(panel, calendar, funding, cfg)
+    obs = step_env.reset(START, end)
+    # 起点基准身份（episode 已可用曲线决定，R62）供空仓首日建仓使用
+    initial_codes = tuple(sorted(step_env._lagged_view._initial_book.faces))
+    assert len(initial_codes) == 4
+    step_records: list[StepRecord] = []
+    step_seen: dict[date, tuple[str, ...]] = {}
+    while not step_env.done:
+        if obs.positions.empty:
+            current: tuple[str, ...] = ()
+            action = ActionSpec(
+                target_faces={code: 25_000_000.0 for code in initial_codes},
+                notes="R61 空仓建仓",
+            )
+        else:
+            current = tuple(sorted(str(code) for code in obs.positions["bond_code"]))
+            action = ActionSpec(
+                target_faces={code: 22_000_000.0 for code in current},
+                notes="R61 减仓",
+            )
+        step_seen[obs.as_of] = current
+        obs, record = step_env.step(action)
+        step_records.append(record)
+
+    roll_seen: dict[date, tuple[str, ...]] = {}
+
+    def policy(ctx: MarketContext) -> TargetFaces:
+        current = tuple(sorted(position.bond.code for position in ctx.positions))
+        roll_seen[ctx.as_of] = current
+        if not current:
+            return TargetFaces(
+                as_of=ctx.as_of,
+                faces={code: 25_000_000.0 for code in sorted(ctx.benchmark.faces)},
+                notes="R61 空仓建仓",
+            )
+        return TargetFaces(
+            as_of=ctx.as_of,
+            faces={code: 22_000_000.0 for code in current},
+            notes="R61 减仓",
+        )
+
+    roll_env = RebalanceEnv(panel, calendar, funding, cfg)
+    rollout = roll_env.rollout(policy, START, end)
+
+    # 两入口都在 01-29 决策时看到 01-29 成交后的四腿 25M（不是 01-28 的空仓）
+    assert step_seen[days[1]] == roll_seen[days[1]] == initial_codes
+    assert step_seen[days[0]] == roll_seen[days[0]] == ()
+
+    def _reduction_date(records: list[StepRecord] | tuple[StepRecord, ...]) -> date:
+        reductions = [
+            record.date
+            for record in records
+            if any(trade["side"] == "sell" for trade in record.executed_trades)
+        ]
+        assert len(reductions) == 1
+        return reductions[0]
+
+    assert _reduction_date(step_records) == _reduction_date(rollout.records) == date(2019, 1, 30)
+    reduction = next(
+        record
+        for record in rollout.records
+        if any(trade["side"] == "sell" for trade in record.executed_trades)
+    )
+    assert {trade["face_value"] for trade in reduction.executed_trades} == {3_000_000.0}
+    assert len(reduction.executed_trades) == 4
+
+    # 同一内部记录构造器：逐字段等价；四日末 NAV 差为 0（不是只比固定面值策略）
+    _assert_records_equivalent(step_records, rollout.records)
+    assert float(step_env.result.nav.loc[end]) == pytest.approx(
+        float(rollout.result.nav.loc[end]), abs=0.0
+    )
+
+
+# ---------------------------------------------------------------------------
+# R63：从任意 BacktestResult 独立构造 TerminalState
+# ---------------------------------------------------------------------------
+def _terminal_states_match(left: TerminalState, right: TerminalState) -> bool:
+    """比较终止义务的实质字段（trade_id 仅含策略名，不参与经济比较）。"""
+    if left.liquidation_assumption != right.liquidation_assumption:
+        return False
+    for field_name in (
+        "nav_mark_to_market",
+        "cash",
+        "unsettled_cash",
+        "accrued_fees",
+    ):
+        if not np.isclose(
+            getattr(left, field_name), getattr(right, field_name), rtol=0.0, atol=1e-9
+        ):
+            return False
+    if not left.positions.reset_index(drop=True).equals(right.positions.reset_index(drop=True)):
+        return False
+    if len(left.unsettled_trades) != len(right.unsettled_trades):
+        return False
+    for left_trade, right_trade in zip(left.unsettled_trades, right.unsettled_trades, strict=True):
+        left_cmp = {key: value for key, value in left_trade.items() if key != "trade_id"}
+        right_cmp = {key: value for key, value in right_trade.items() if key != "trade_id"}
+        if set(left_cmp) != set(right_cmp):
+            return False
+        for key, value in left_cmp.items():
+            other = right_cmp[key]
+            if isinstance(value, float):
+                if not np.isclose(value, other, rtol=0.0, atol=1e-9):
+                    return False
+            elif value != other:
+                return False
+    return True
+
+
+def test_r63_terminal_state_from_any_result_and_fee_tamper_is_detected(market) -> None:
+    """R63：ML 路径与 step 路径各自构造 TerminalState；费用 +1 元必须被发现。"""
+    from dataclasses import replace
+
+    cfg, panel, funding, calendar = market
+    end = date(2019, 1, 31)
+    days = calendar.trading_days_between(START, end)
+    probe = RebalanceEnv(panel, calendar, funding, cfg)
+    bench = dict(probe.reset(START, end).benchmark_krd)
+    schedule = {day: ActionSpec() for day in days[:-1]}
+    schedule[days[-2]] = ActionSpec(target_krd=bench, notes="末日建仓（T+1 未结算）")
+
+    step_env, _records = _step_records(market, cfg, schedule, START, end)
+    assert step_env.done is True
+    step_state = terminal_state_from_result(step_env.result, calendar=calendar, cfg=step_env.cfg)
+
+    ml_strategy = _ScheduledStrategy(schedule, calendar=calendar, cfg=cfg)
+    ml_strategy.name = "ml"
+    ml_result = run_backtest(
+        ml_strategy,
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=START,
+        end=end,
+        initial_curve=step_env.initial_curve,
+    )
+    ml_state = terminal_state_from_result(ml_result, calendar=calendar, cfg=cfg)
+
+    # 两条独立路径的终止义务一致；末日成交仍在 T+1 未结算
+    assert _terminal_states_match(step_state, ml_state)
+    assert step_state.unsettled_trades and ml_state.unsettled_trades
+    assert all(item["settlement_date"] > end for item in ml_state.unsettled_trades)
+    assert ml_state.unsettled_cash < 0.0
+    assert ml_state.accrued_fees > 0.0
+    assert ml_state.net_terminal_value == pytest.approx(
+        ml_state.nav_mark_to_market - ml_state.accrued_fees
+    )
+
+    # 故障注入：只把一侧 accrued_fees +1 元，比较必须失败（不是三行复制同一快照）
+    tampered = replace(ml_state, accrued_fees=ml_state.accrued_fees + 1.0)
+    assert _terminal_states_match(step_state, ml_state) is True
+    assert _terminal_states_match(step_state, tampered) is False
+    assert tampered.net_terminal_value == pytest.approx(ml_state.net_terminal_value - 1.0)
+
+    # T+2：末日成交的结算日更晚，仍未结算；费用/现金义务不小于 T+1 场景
+    lag2_cfg = cfg.model_copy(
+        update={"pricing": cfg.pricing.model_copy(update={"settlement_lag_days": 2})}
+    )
+    ml2_result = run_backtest(
+        _ScheduledStrategy(schedule, calendar=calendar, cfg=lag2_cfg),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=lag2_cfg,
+        start=START,
+        end=end,
+        initial_curve=step_env.initial_curve,
+    )
+    lag2_state = terminal_state_from_result(ml2_result, calendar=calendar, cfg=lag2_cfg)
+    assert lag2_state.unsettled_trades
+    assert all(item["settlement_date"] > end for item in lag2_state.unsettled_trades)
+    assert lag2_state.unsettled_cash < 0.0
+    assert lag2_state.accrued_fees > 0.0
+    assert lag2_state.unsettled_cash == pytest.approx(
+        sum(item["signed_cash"] for item in lag2_state.unsettled_trades)
+    )

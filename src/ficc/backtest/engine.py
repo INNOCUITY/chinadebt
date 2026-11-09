@@ -180,7 +180,17 @@ def run_backtest(
     cfg: Config | None = None,
     start: date | None = None,
     end: date | None = None,
+    initial_curve: Curve | None = None,
 ) -> BacktestResult:
+    """运行日频回测。
+
+    ``initial_curve``（R62）：可选的**起点已可用**曲线，用于决定初始合成券条款与
+    基准身份。提供时，初始 :class:`RollingUniverse` 按 ``initial_curve.as_of``
+    起息（票息/起息/期限均来自该曲线），初始基准也用该曲线定价；每日估值、执行与
+    闸门仍用各交易日自己的曲线，因此基准身份/条款不再依赖 START 当日行情。
+    ``None`` 保持旧行为（用 ``start`` 当日曲线）。若 ``initial_curve.as_of`` 晚于
+    回测起点则拒绝，避免把起点之后的行情带入起点条款。
+    """
     from ficc.portfolio.benchmark import build_benchmark, mark_faces
     from ficc.portfolio.constraints import check_constraints, portfolio_risk
     from ficc.portfolio.construction import build_orders, execution_price
@@ -197,6 +207,19 @@ def run_backtest(
 
     curve_tenors = list(CANONICAL_TENORS)
     curve0 = _curve_at(panel, curve_tenors, days[0])
+    if initial_curve is not None:
+        if not isinstance(initial_curve, Curve):
+            raise TypeError(f"initial_curve 必须是 Curve，实际 {type(initial_curve).__name__}")
+        terms_curve = initial_curve
+        terms_day = initial_curve.as_of
+        if terms_day > days[0]:
+            raise ValueError(
+                f"initial_curve.as_of={terms_day} 晚于回测起点 {days[0]}："
+                "初始券条款不得使用起点之后的曲线信息"
+            )
+    else:
+        terms_curve = curve0
+        terms_day = days[0]
     roll_policy = RollPolicy.from_config(cfg)
     benchmark_version = str(cfg.backtest.benchmark_version)
     if roll_policy.enabled and benchmark_version != "rolling":
@@ -209,9 +232,9 @@ def run_backtest(
             "benchmark_version='rolling' 需要 portfolio.rolling.enabled=True"
             "（滚动基准必须有明确的滚动政策）"
         )
-    rolling_universe = RollingUniverse.build(curve0, days[0], cfg=cfg)
+    rolling_universe = RollingUniverse.build(terms_curve, terms_day, cfg=cfg)
     universe = rolling_universe.active()
-    benchmark0 = build_benchmark(curve0, days[0], bonds=universe, calendar=calendar, cfg=cfg)
+    benchmark0 = build_benchmark(terms_curve, days[0], bonds=universe, calendar=calendar, cfg=cfg)
     bench_faces: dict[str, float] = dict(benchmark0.faces)
     bench_weights: dict[float, float] = dict(benchmark0.weights)
     bench_notional = float(benchmark0.notional or benchmark0.market_value)

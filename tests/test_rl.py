@@ -103,6 +103,7 @@ def test_zero_action_equivalence(market) -> None:
         cfg=env.cfg,
         start=START,
         end=obs2.as_of,
+        initial_curve=env.initial_curve,
     )
     assert env.result is not None
     np.testing.assert_allclose(
@@ -141,6 +142,7 @@ def test_two_zero_steps_match_direct_backtest(market) -> None:
         cfg=env.cfg,
         start=START,
         end=obs2.as_of,
+        initial_curve=env.initial_curve,
     )
     assert env.result is not None
     np.testing.assert_allclose(

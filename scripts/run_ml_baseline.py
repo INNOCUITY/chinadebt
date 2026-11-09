@@ -76,6 +76,7 @@ START = date(2019, 1, 28)
 END = date(2025, 12, 31)
 QUICK_END = date(2021, 12, 31)
 FUNDING_COLUMN = "FDR007"
+TREE_DEPTHS = (1, 2, 3)
 ALPHA_GRID: tuple[float, ...] = (0.01, 0.1, 1.0, 10.0, 100.0)
 MIN_TRAIN_ROWS = 30
 MIN_VALID_ROWS = 5
@@ -293,6 +294,65 @@ def _mae(target: np.ndarray, prediction: np.ndarray) -> float:
     )
 
 
+@dataclass(frozen=True)
+class TreeModel:
+    """极简 CART 回归树（深度 1–3，仅作同协议非线性对照；不做调参研究）。"""
+
+    feature: int | None = None
+    threshold: float | None = None
+    left: TreeModel | None = None
+    right: TreeModel | None = None
+    value: float = 0.0
+
+    def predict(self, features: np.ndarray) -> np.ndarray:
+        if self.feature is None:
+            return np.full(len(features), self.value, dtype=float)
+        out = np.empty(len(features), dtype=float)
+        mask = features[:, self.feature] <= float(self.threshold)
+        if mask.any():
+            out[mask] = self.left.predict(features[mask])  # type: ignore[union-attr]
+        if (~mask).any():
+            out[~mask] = self.right.predict(features[~mask])  # type: ignore[union-attr]
+        return out
+
+
+def fit_tree(
+    features: np.ndarray,
+    target: np.ndarray,
+    *,
+    max_depth: int = 2,
+    min_leaf: int = 8,
+) -> TreeModel:
+    """递归二分裂回归树；阈值只在训练特征分位点上搜索，不接触测试窗。"""
+    if len(target) < 2 * min_leaf or max_depth <= 0:
+        return TreeModel(value=float(np.mean(target)) if len(target) else 0.0)
+    best = {"sse": float(((target - target.mean()) ** 2).sum()), "feature": None, "threshold": None}
+    for feature in range(features.shape[1]):
+        column = features[:, feature]
+        quantiles = np.unique(np.quantile(column, [0.2, 0.35, 0.5, 0.65, 0.8]))
+        for threshold in quantiles:
+            left = column <= threshold
+            n_left = int(left.sum())
+            if n_left < min_leaf or len(target) - n_left < min_leaf:
+                continue
+            left_y, right_y = target[left], target[~left]
+            sse = float(
+                ((left_y - left_y.mean()) ** 2).sum() + ((right_y - right_y.mean()) ** 2).sum()
+            )
+            if sse < best["sse"] - 1e-15:
+                best = {"sse": sse, "feature": feature, "threshold": float(threshold)}
+    if best["feature"] is None:
+        return TreeModel(value=float(target.mean()))
+    mask = features[:, int(best["feature"])] <= float(best["threshold"])
+    return TreeModel(
+        feature=int(best["feature"]),
+        threshold=float(best["threshold"]),
+        left=fit_tree(features[mask], target[mask], max_depth=max_depth - 1, min_leaf=min_leaf),
+        right=fit_tree(features[~mask], target[~mask], max_depth=max_depth - 1, min_leaf=min_leaf),
+        value=float(target.mean()),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 评估（测试窗只报告，不参与任何选择）
 # ---------------------------------------------------------------------------
@@ -300,13 +360,15 @@ def evaluate_splits(
     dataset: pd.DataFrame,
     splits: list[Split],
     feature_names: list[str],
-) -> tuple[pd.DataFrame, dict[str, float], int]:
-    """逐 split：训练→选 alpha（验证窗）→测试窗报告；返回 metrics/pooled/skipped。"""
+) -> tuple[pd.DataFrame, dict[str, float], int, pd.DataFrame]:
+    """逐 split：训练→选 alpha/树深（验证窗）→测试窗报告；返回 metrics/pooled/skipped/oos。"""
     rows: list[dict[str, Any]] = []
     pooled_y: list[np.ndarray] = []
     pooled_pred: list[np.ndarray] = []
     pooled_train_mean: list[np.ndarray] = []
     pooled_literal_zero: list[np.ndarray] = []
+    pooled_tree: list[np.ndarray] = []
+    oos_rows: list[dict[str, Any]] = []
     skipped = 0
 
     for split in splits:
@@ -355,6 +417,19 @@ def evaluate_splits(
         valid_pred = model.predict(x_valid)
         test_pred = model.predict(x_test)
 
+        best_depth = int(TREE_DEPTHS[0])
+        best_tree_mae = float("inf")
+        tree_model: TreeModel | None = None
+        for depth in TREE_DEPTHS:
+            candidate_tree = fit_tree(x_train, y_train, max_depth=depth)
+            tree_mae = _mae(y_valid, candidate_tree.predict(x_valid))
+            if tree_mae < best_tree_mae:
+                best_tree_mae = tree_mae
+                best_depth = int(depth)
+                tree_model = candidate_tree
+        assert tree_model is not None
+        tree_test_pred = tree_model.predict(x_test)
+
         train_mean = float(y_train.mean())
         mean_valid = np.full_like(y_valid, train_mean)
         mean_test = np.full_like(y_test, train_mean)
@@ -386,14 +461,33 @@ def evaluate_splits(
                 "test_mae_ridge": _mae(y_test, test_pred),
                 "test_mae_train_mean": _mae(y_test, mean_test),
                 "test_mae_literal_zero": _mae(y_test, literal_zero_test),
+                "test_tree_depth": best_depth,
+                "test_ic_tree": _rank_ic(y_test, tree_test_pred),
+                "test_r2_tree": _r2(y_test, tree_test_pred),
+                "test_mae_tree": _mae(y_test, tree_test_pred),
                 "test_label_mean": float(y_test.mean()),
                 "test_pred_mean": float(test_pred.mean()),
             }
         )
+        for i in range(len(y_test)):
+            oos_rows.append(
+                {
+                    "split_id": int(split.split_id),
+                    "decision_as_of": test["decision_as_of"].iloc[i],
+                    "label": float(y_test[i]),
+                    "pred_ridge": float(test_pred[i]),
+                    "pred_tree": float(tree_test_pred[i]),
+                    "pred_train_mean": float(train_mean),
+                    "pred_literal_zero": 0.0,
+                    "test_start": split.test_dates[0],
+                    "test_end": split.test_dates[-1],
+                }
+            )
         pooled_y.append(y_test)
         pooled_pred.append(test_pred)
         pooled_train_mean.append(mean_test)
         pooled_literal_zero.append(literal_zero_test)
+        pooled_tree.append(tree_test_pred)
 
     if not rows:
         raise ValueError("没有任何 split 满足最小样本要求，无法评估")
@@ -407,8 +501,11 @@ def evaluate_splits(
         "mae": _mae(np.concatenate(pooled_y), np.concatenate(pooled_pred)),
         "mae_train_mean": _mae(np.concatenate(pooled_y), np.concatenate(pooled_train_mean)),
         "mae_literal_zero": _mae(np.concatenate(pooled_y), np.concatenate(pooled_literal_zero)),
+        "ic_tree": _rank_ic(np.concatenate(pooled_y), np.concatenate(pooled_tree)),
+        "r2_tree": _r2(np.concatenate(pooled_y), np.concatenate(pooled_tree)),
+        "mae_tree": _mae(np.concatenate(pooled_y), np.concatenate(pooled_tree)),
     }
-    return metrics, pooled, skipped
+    return metrics, pooled, skipped, pd.DataFrame(oos_rows)
 
 
 def dataset_summary(dataset: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
@@ -490,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
         len(feature_names),
     )
 
-    metrics, pooled, skipped = evaluate_splits(dataset, splits, feature_names)
+    metrics, pooled, skipped, oos = evaluate_splits(dataset, splits, feature_names)
     summary = dataset_summary(dataset, feature_names)
 
     manifest = dataset_manifest(dataset)
@@ -554,9 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     summary_path = out / "ml_dataset_summary.csv"
     manifest_path = out / "ml_dataset_manifest.json"
     dataset_path = out / "ml_dataset.csv"
+    oos_path = out / "ml_oos_predictions.csv"
     metrics.to_csv(metrics_path, index=False, encoding="utf-8-sig")
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
     dataset.to_csv(dataset_path, index=True, encoding="utf-8-sig")
+    oos.to_csv(oos_path, index=False, encoding="utf-8-sig")
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
@@ -577,6 +676,9 @@ def main(argv: list[str] | None = None) -> int:
         "test_mae_ridge",
         "test_mae_train_mean",
         "test_mae_literal_zero",
+        "test_ic_tree",
+        "test_r2_tree",
+        "test_mae_tree",
     ]
     with pd.option_context("display.width", 220):
         print(metrics[cols].to_string(index=False, float_format=lambda x: f"{x:.6f}"))
@@ -584,7 +686,8 @@ def main(argv: list[str] | None = None) -> int:
         "\n=== Pooled OOS（不同 split 的测试窗不重叠）===\n"
         f"n={pooled['n']:.0f}  IC={pooled['ic']:.4f}  "
         f"R²={pooled['r2']:.4f}（train_mean {pooled['r2_train_mean']:.4f}；literal_zero {pooled['r2_literal_zero']:.4f}）  "
-        f"MAE={pooled['mae']:.2e}（train_mean {pooled['mae_train_mean']:.2e}；literal_zero {pooled['mae_literal_zero']:.2e}）"
+        f"MAE={pooled['mae']:.2e}（train_mean {pooled['mae_train_mean']:.2e}；literal_zero {pooled['mae_literal_zero']:.2e}）\n"
+        f"tree: IC={pooled['ic_tree']:.4f} R²={pooled['r2_tree']:.4f} MAE={pooled['mae_tree']:.2e}"
     )
     print(
         "\n结论边界：以上是基准市场收益的样本外预测力，不是可交易 alpha；"

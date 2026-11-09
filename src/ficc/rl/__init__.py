@@ -6,14 +6,19 @@
 - :class:`Observation` / :class:`StepRecord` / :class:`Event`：as-of 观测、单步审计记录、
   时间序事件；:class:`Rollout` 是单次 ``run_backtest`` 的整段轨迹 + 终止状态；
 - :class:`RebalanceEnv`：逐日重放环境，账本/闸门/滚动/成本**复用** ``run_backtest``；
-- :func:`hold_target_krd`：零动作目标（保持当前 KRD）。
+- :func:`hold_target_krd`：零动作目标（保持当前 KRD）；
+- :func:`terminal_state_from_result`：从任意 ``BacktestResult`` 独立构造终止义务（R63）。
 
-信息时钟与决策网格（R51/R57/R58/R59）：``RebalanceEnv(information_lag_days=1,
+信息时钟与决策网格（R51/R57/R58/R59/R61/R62）：``RebalanceEnv(information_lag_days=1,
 decision_step_days=1)`` 默认把曲线/历史/基准/持仓估值/NAV 截到
 ``t − information_lag_days`` 个交易日；持仓只保留数量/条款，估值字段 NaN。预热不足时
 ``reset/rollout`` 直接抛 ``ValueError``（``warmup_days`` 可显式要求更多历史），绝不把
 截止日夹到未来。基准身份在 episode 起点固定，滚动日按真实基准持仓同步，不逐日重新发行。
-非网格日强制 hold。R55 的 ``StepRecord`` 分开记录 ``requested_faces``（原始请求）、
+R61：``step`` 的观测与 ``rollout`` 的 policy 上下文都使用**决策时点 t 的持仓**（数量/
+条款已知、估值 NaN），不会一边看 t、一边看 t−lag。R62：episode 初始券条款/基准身份由
+``curve_at(available_through(start))`` 决定，不含 START 当日行情；日度估值仍用当日曲线。
+非网格日强制 hold。R63：``terminal_state_from_result`` 让 ML/rollout/step 三条路径各自
+构造并比较终止义务，费用 +1 元即可被发现。R55 的 ``StepRecord`` 分开记录 ``requested_faces``（原始请求）、
 ``projected_faces``（最终接受订单的带符号面值）、``post_trade_faces``（期末持仓）；
 R53 的 KRD 投影按逐桶偏差判定 ``scaled``，总 DV01 不变但形状改变不会被记成 ``executed``。
 
@@ -37,6 +42,7 @@ from ficc.rl.env import (
     StepRecord,
     TerminalState,
     hold_target_krd,
+    terminal_state_from_result,
 )
 
 __all__ = [
@@ -51,4 +57,5 @@ __all__ = [
     "StepRecord",
     "TerminalState",
     "hold_target_krd",
+    "terminal_state_from_result",
 ]

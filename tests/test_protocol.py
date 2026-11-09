@@ -220,3 +220,16 @@ def test_r60_lag_is_frozen_in_v1() -> None:
         ExperimentProtocol(information_lag_days=2)
     custom = ExperimentProtocol(version="protocol_custom", information_lag_days=2)
     assert custom.information_lag_days == 2
+
+
+def test_r60_pricing_in_fingerprint(market) -> None:
+    """结算周期 T+1→T+2 必须改变协议指纹（R60 补查）。"""
+    cfg, _panel, _funding, _calendar = market
+    proto = ExperimentProtocol()
+    base = protocol_fingerprint(cfg, proto)
+    t2 = cfg.model_copy(
+        update={
+            "pricing": cfg.pricing.model_copy(update={"settlement_lag_days": 2}),
+        }
+    )
+    assert protocol_fingerprint(t2, proto) != base

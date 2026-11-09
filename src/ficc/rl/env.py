@@ -17,12 +17,20 @@
 - **终止义务**：``terminate()`` 按市价估值、不强制平仓，单独披露未结算成交、
   待结算现金（买入负/卖出正）与未结算费用；reward 只取账本 NAV 的逐日变化，
   不额外计入终止清算收益；
-- **as-of / 信息滞后（R51/R57/R59）**：**曲线/历史/基准/NAV/现金/持仓估值**都只能
+- **as-of / 信息滞后（R51/R57/R59/R61）**：**曲线/历史/基准/NAV/现金/持仓估值**都只能
   看到 ``available_through = t − information_lag_days``（默认 1 个交易日，中债 t 日
   收盘估值当日不可用）；持仓数量/条款与成交仍按 t 日已知状态披露，但 t 日曲线估值
-  字段置 NaN。``Observation.as_of`` 仍是 episode 当前交易日，另用
-  ``metadata["available_through"]``/``nav_as_of`` 披露信息截止日。预热不足时
-  ``reset/rollout`` 直接拒绝，绝不把截止日向未来夹紧。执行/估值/闸门仍用当日价格。
+  字段置 NaN。``step`` 的 ``Observation`` 与 ``rollout`` 的 policy 上下文使用**同一
+  持仓时点 t**，不得一边看 t、一边看 t−lag（R61）。``Observation.as_of`` 仍是 episode
+  当前交易日，另用 ``metadata["available_through"]``/``nav_as_of`` 披露信息截止日。
+  预热不足时 ``reset/rollout`` 直接拒绝，绝不把截止日向未来夹紧。执行/估值/闸门仍用
+  当日价格。
+- **起点条款（R62）**：episode 初始合成券与基准身份由 ``initial_curve =
+  curve_at(available_through(start))`` 决定（票息/起息/期限均来自该曲线），因此
+  policy 在起点看到的基准 KRD 不含 START 当日行情；之后的日度估值/滚动仍用当日曲线。
+- **终止义务（R63）**：公开函数 :func:`terminal_state_from_result` 可从任意
+  ``BacktestResult``（ML/rollout/step）独立构造 :class:`TerminalState`，脚本/测试
+  无需复制同一份 ``rollout.terminal`` 即可逐项比较净终值。
 - **决策网格（R51）**：episode 起始交易日为索引 0；``decision_step_days > 1`` 时只有
   ``索引 % step == 0`` 的交易日允许策略给出目标，其余交易日强制 hold（不调用 policy、
   不产生主动订单），记录 ``notes`` 含 ``off_grid_hold``。step 与 rollout 共用该网格，
@@ -46,7 +54,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Literal, NamedTuple
@@ -78,6 +86,7 @@ __all__ = [
     "StepRecord",
     "TerminalState",
     "hold_target_krd",
+    "terminal_state_from_result",
 ]
 
 EventKind = Literal["signal", "project", "execute", "reject", "roll", "settle"]
@@ -274,6 +283,127 @@ class TerminalState:
         return float(self.nav_mark_to_market) - float(self.accrued_fees)
 
 
+def terminal_state_from_result(
+    result: BacktestResult,
+    *,
+    calendar: TradingCalendar,
+    cfg: Config,
+) -> TerminalState:
+    """从**任意** :class:`BacktestResult` 独立构造终止义务快照（R63）。
+
+    该函数是 :meth:`RebalanceEnv.terminate` 的公开实现，也可由脚本/测试直接对
+    ML 路径、rollout 路径、逐步 step 路径各自返回的 ``BacktestResult`` 调用，避免
+    三条报告路径复制同一个 ``rollout.terminal`` 而掩盖差异。
+
+    口径与 :class:`TerminalState` 完全一致：终止日取 ``result.end``，按市价估值、
+    不强制平仓；未结算成交（``settlement_date > result.end``）的现金义务与将在
+    结算日扣除的费用单独披露；``net_terminal_value = nav − accrued_fees``。
+
+    Parameters
+    ----------
+    result : BacktestResult
+        任意一次回测（ML/rollout/step 均可），必须含 ``nav/exposure/positions/trades``。
+    calendar : TradingCalendar
+        用于校验终止日确实落在交易日历内。
+    cfg : Config
+        费用/结算参数（与产生 ``result`` 的配置一致；口径不同会导致费用估算漂移）。
+    """
+    if not isinstance(result, BacktestResult):
+        raise TypeError(f"result 必须是 BacktestResult，实际 {type(result).__name__}")
+    if not isinstance(calendar, TradingCalendar):
+        raise TypeError("calendar 必须是 TradingCalendar")
+    end = _to_date(result.end)
+    if not calendar.is_trading_day(end):
+        raise ValueError(f"result.end={end} 不是交易日，无法构造终止义务")
+
+    nav_series = result.nav
+    if end in nav_series.index:
+        nav = float(nav_series.loc[end])
+    elif pd.Timestamp(end) in nav_series.index:
+        nav = float(nav_series.loc[pd.Timestamp(end)])
+    else:
+        raise ValueError(f"result.nav 不含终止日 {end}，无法构造终止义务")
+    exposure = result.exposure
+    exposure_row = exposure.loc[_dates_of(exposure["date"]) == end]
+    cash = float(exposure_row["cash"].iloc[0]) if len(exposure_row) else float("nan")
+    pending_cash = (
+        float(exposure_row["pending_cash"].iloc[0]) if len(exposure_row) else float("nan")
+    )
+    positions = _positions_frame_at(result, end)
+
+    unsettled: list[dict[str, Any]] = []
+    unsettled_cash = 0.0
+    accrued_fees = 0.0
+    for _, trade in result.trades.iterrows():
+        settlement_date = _to_date(trade["settlement_date"])
+        if settlement_date <= end:
+            continue
+        bond = _bond_from_trade_row(trade)
+        ai = float(accrued_interest(bond, settlement_date, cfg=cfg))
+        face = float(trade["face_value"])
+        clean = float(trade["clean_price"])
+        gross = face / 100.0 * (clean + ai)
+        signed_cash = -gross if str(trade["side"]) == "buy" else gross
+        fee = _estimated_trade_fee(
+            cfg=cfg, face=face, clean_price=clean, contract_fee=float(trade["fee"])
+        )
+        unsettled_cash += signed_cash
+        accrued_fees += fee
+        unsettled.append(
+            {
+                "trade_id": str(trade["trade_id"]),
+                "bond_code": str(trade["bond_code"]),
+                "side": str(trade["side"]),
+                "face_value": face,
+                "clean_price": clean,
+                "trade_date": _to_date(trade["trade_date"]),
+                "settlement_date": settlement_date,
+                "accrued_interest": ai,
+                "settlement_amount": gross,
+                "signed_cash": signed_cash,
+                "fee": fee,
+            }
+        )
+
+    market_value = (
+        float(positions["market_value"].sum())
+        if len(positions) and "market_value" in positions
+        else 0.0
+    )
+    reconciliation = cash + market_value + unsettled_cash
+    pending_gap = unsettled_cash - pending_cash
+    note_parts = [
+        "终止口径：按市价 mark-to-market，不强制平仓；reward 取账本 NAV 逐日变化，"
+        "不追加终止变现收益/成本；半价差已在成交日按账本扣一次，终止时不重复扣",
+        (
+            f"未结算成交 {len(unsettled)} 笔，待结算现金 {unsettled_cash:,.2f} 元"
+            "（买入为负、卖出为正；已含在期末 NAV 的 pending_cash 内）"
+        ),
+        (
+            f"已发生未支付费用 {accrued_fees:,.2f} 元按 cfg.costs.fee_bp + 每笔结算费 + "
+            "TradeRecord.fee 估算；引擎在结算日才扣费，故未计入期末 NAV；"
+            f"净终值 = NAV − 未支付费用 = {nav - accrued_fees:,.2f} 元"
+        ),
+        (
+            f"NAV 对账：cash({cash:,.2f}) + ΣMV({market_value:,.2f}) + "
+            f"pending_cash({unsettled_cash:,.2f}) = {reconciliation:,.2f}，"
+            f"result.nav 末值 {nav:,.2f}"
+        ),
+    ]
+    if np.isfinite(pending_gap) and abs(pending_gap) > 1e-6:
+        note_parts.append(f"待结算现金与 exposure.pending_cash 差额 {pending_gap:,.6f} 元")
+    return TerminalState(
+        nav_mark_to_market=nav,
+        cash=cash,
+        positions=positions,
+        unsettled_trades=tuple(unsettled),
+        unsettled_cash=unsettled_cash,
+        accrued_fees=accrued_fees,
+        liquidation_assumption="mark_to_market_no_forced_liquidation",
+        notes="；".join(note_parts),
+    )
+
+
 @dataclass(frozen=True)
 class Observation:
     """``as_of`` 时点的观测（**信息截止早于 as_of，R51**）。
@@ -391,7 +521,9 @@ class Rollout:
     policy 只在该 episode 的决策网格日（索引 % ``decision_step_days`` == 0，R51）被
     调用；收到的 ``MarketContext`` 已按 ``information_lag_days`` 截断
     （``curve/history/benchmark``/``nav/cash`` 截止 ``available_through``；
-    ``positions`` 只有数量/条款，估值字段 NaN，R59）。执行仍按 t+1 成交与同一闸门。
+    ``positions`` 是**决策时点 t** 的数量/条款，估值字段 NaN，R59/R61）。执行仍按
+    t+1 成交与同一闸门。R62：引擎初始券条款/基准身份来自 ``initial_curve``（起点已
+    可用曲线），不含 START 当日行情。
     """
 
     records: tuple[StepRecord, ...]
@@ -460,6 +592,23 @@ def _empty_frame() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _positions_frame_at(result: BacktestResult | None, day: date) -> pd.DataFrame:
+    """``result`` 在 ``day`` 的账本持仓快照（R61 的**唯一**持仓时点口径）。
+
+    - ``result is None``（尚未重放）→ 空表；
+    - 否则取 ``as_of == day`` 的行（空仓日保留账本的占位行）。
+
+    ``step`` 返回的 :class:`Observation` 与 ``rollout`` 的 policy 上下文都暴露
+    **决策时点 t 的持仓**；数量/条款已知，估值字段随后统一置 NaN（R59）。
+    """
+    if result is None:
+        return _empty_frame()
+    positions = result.positions
+    if len(positions) == 0:
+        return positions.copy()
+    return positions.loc[_dates_of(positions["as_of"]) == day].copy()
+
+
 # 非决策网格日强制 hold 的机器可读前缀（R51，测试/审计按子串检索）
 _OFF_GRID_NOTE = "off_grid_hold"
 
@@ -477,11 +626,14 @@ _VALUATION_COLUMNS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class _PolicyState:
-    """策略在某个已观测交易日的账本状态（现金/NAV/持仓数量均为该日已知）。"""
+    """``available_through`` 日 policy 可见的**账户层**状态（NAV/现金，R59）。
+
+    持仓数量不再缓存于此：R61 起 policy 与 ``Observation`` 都直接使用决策时点 t
+    的账本持仓（``ctx.positions``），避免两入口从不同日期取数量。
+    """
 
     nav: float
     cash: float
-    positions: tuple[Any, ...]
 
 
 @dataclass(frozen=True)
@@ -506,6 +658,16 @@ def _sanitize_position(position: Any) -> Any:
         mod_duration=float("nan"),
         dv01=float("nan"),
     )
+
+
+def _sanitize_positions(positions: Iterable[Any]) -> tuple[Any, ...]:
+    """policy 可见的持仓视图：**数量/条款已知、估值 NaN**（R59/R61）。
+
+    ``step`` 的 :class:`Observation` 与 ``rollout`` 的 policy 上下文都通过本函数
+    （或等价的 :func:`_sanitize_positions_frame`）暴露 **决策时点 t 的账本持仓**，
+    不再出现"step 看 t 日、rollout 看 t−lag 日"的错日（R61）。
+    """
+    return tuple(_sanitize_position(position) for position in positions)
 
 
 def _sanitize_positions_frame(
@@ -588,15 +750,24 @@ def _episode_benchmark_books(
     cfg: Config,
     start: date,
     end: date,
+    *,
+    initial_curve: Curve | None = None,
 ) -> tuple[_BenchmarkBook, dict[date, _BenchmarkBook]]:
     """在 episode 起点构造一次基准，并逐日推进**同一组券**的滚动状态（R58）。
 
     返回 ``(initial_book, books)``：``initial_book`` 是引擎在 ``start`` 构造的初始
-    基准（起息日 = start），用于 ``available_through < start`` 的估值；``books[d]``
-    是引擎在 ``d`` 日实际持有的基准身份/面值（滚动日替换为真实新券、面值沿用旧腿）。
+    基准（起息/票息由 ``initial_curve`` 决定，缺省则用 ``start`` 当日曲线），用于
+    ``available_through < start`` 的估值；``books[d]`` 是引擎在 ``d`` 日实际持有的
+    基准身份/面值（滚动日替换为真实新券、面值沿用旧腿）。
+
+    R62：``initial_curve`` 必须是 episode 起点**已可用**的曲线（通常是
+    ``available_through(start)``）。它只决定初始券条款与基准构造，之后的估值/滚动
+    仍用每个交易日的当日曲线；因此 policy 在起点看到的基准身份/条款不含 START
+    当日行情。
     """
-    curve0 = _curve_at(panel, tenors, start)
-    rolling = RollingUniverse.build(curve0, start, cfg=cfg)
+    curve0 = initial_curve if initial_curve is not None else _curve_at(panel, tenors, start)
+    terms_day = _to_date(curve0.as_of) if initial_curve is not None else _to_date(start)
+    rolling = RollingUniverse.build(curve0, terms_day, cfg=cfg)
     initial_bonds = rolling.active()
     benchmark0 = build_benchmark(curve0, start, bonds=initial_bonds, calendar=calendar, cfg=cfg)
     weights = {float(k): float(v) for k, v in benchmark0.weights.items()}
@@ -625,13 +796,17 @@ def _episode_benchmark_books(
 
 
 class _LaggedView:
-    """把 policy 可见信息截到 ``available_through``（R51/R57/R58/R59）。
+    """把 policy 可见信息截到 ``available_through``（R51/R57/R58/R59/R61/R62）。
 
     - **R57**：截止日只向过去回退；预热不足直接抛错，不再 clamp 到面板首日。
     - **R58**：基准身份在 episode 起点固定（与引擎同一配置/同一组券），滚动日按
       真实滚动事件替换券与面值；``benchmark(available)`` 只重估，不重新发行。
     - **R59**：policy 上下文中的持仓估值置 NaN；``nav/cash`` 取 ``available`` 日
       的账本状态（该日曾在引擎回调中出现，按交易日缓存）。
+    - **R61**：``positions`` 取**决策时点 t** 的账本持仓（与 ``Observation`` 同口径），
+      不再取 ``available`` 日的历史仓位。
+    - **R62**：初始券条款/基准身份由 ``begin_episode(initial_curve=...)`` 的已可用
+      曲线决定，不含 START 当日行情。
     """
 
     def __init__(
@@ -660,8 +835,12 @@ class _LaggedView:
         self._episode_end: date | None = None
 
     # ---- episode ------------------------------------------------------
-    def begin_episode(self, start: date, end: date) -> None:
-        """重置 episode 身份/状态缓存；基准只在 ``start`` 构造一次（R58）。"""
+    def begin_episode(self, start: date, end: date, *, initial_curve: Curve | None = None) -> None:
+        """重置 episode 身份/状态缓存；基准只在 ``start`` 构造一次（R58/R62）。
+
+        ``initial_curve`` 为起点**已可用**曲线时，初始券条款/基准身份由它决定（R62）；
+        缺省（``None``）保持旧行为，用 ``start`` 当日曲线。
+        """
         start = _to_date(start)
         end = _to_date(end)
         self._episode_start = start
@@ -670,7 +849,13 @@ class _LaggedView:
         self._benchmarks = {}
         self._actual_books = {}
         self._initial_book, self._books = _episode_benchmark_books(
-            self._panel, self._tenors, self._calendar, self._cfg, start, end
+            self._panel,
+            self._tenors,
+            self._calendar,
+            self._cfg,
+            start,
+            end,
+            initial_curve=initial_curve,
         )
 
     def _ensure_episode(self, day: date) -> None:
@@ -692,29 +877,24 @@ class _LaggedView:
 
     # ---- policy 状态 ---------------------------------------------------
     def observe(self, ctx: MarketContext) -> None:
-        """记录引擎在 ``ctx.as_of`` 的账本状态，供之后 lag 日回看。"""
+        """记录引擎在 ``ctx.as_of`` 的 NAV/现金，供之后 lag 日回看（R59）。"""
         self._states[_to_date(ctx.as_of)] = _PolicyState(
             nav=float(ctx.nav),
             cash=float(ctx.cash),
-            positions=tuple(ctx.positions),
         )
 
     def _state_at(self, day: date) -> _PolicyState:
-        """``day`` 的已观测账本状态；早于 episode 起点时为空仓/初始现金。"""
+        """``day`` 的已观测账户状态；早于 episode 起点时用初始现金。"""
         day = _to_date(day)
         if self._episode_start is not None and day < self._episode_start:
-            return _PolicyState(
-                nav=self._init_cash,
-                cash=self._init_cash,
-                positions=(),
-            )
+            return _PolicyState(nav=self._init_cash, cash=self._init_cash)
         state = self._states.get(day)
         if state is not None:
             return state
         earlier = [item for item in self._states if item <= day]
         if earlier:
             return self._states[max(earlier)]
-        return _PolicyState(nav=self._init_cash, cash=self._init_cash, positions=())
+        return _PolicyState(nav=self._init_cash, cash=self._init_cash)
 
     # ---- 基准 ----------------------------------------------------------
     def _book_at(self, day: date) -> _BenchmarkBook:
@@ -800,11 +980,15 @@ class _LaggedView:
 
     # ---- policy 上下文 -------------------------------------------------
     def context(self, ctx: MarketContext) -> MarketContext:
-        """返回 policy 可见的滞后上下文（R51/R57/R59）。
+        """返回 policy 可见的滞后上下文（R51/R57/R59/R61）。
 
         ``curve/history/benchmark`` 截到 ``available_through``；``nav/cash`` 取该日
-        账本状态；``positions`` 只保留数量/条款，估值字段全部 NaN。``as_of`` 仍是
-        决策日 t（信号日/成交日语义不变）。
+        账本状态；``positions`` 是**决策时点 t 的账本持仓**（成交/结算在 t 收盘即
+        已知），只保留数量/条款、估值字段全部 NaN。``as_of`` 仍是决策日 t
+        （信号日/成交日语义不变）。
+
+        R61：这里必须与 :meth:`RebalanceEnv._observation` 暴露同一时点（t）的持仓，
+        否则读取持仓数量的策略在 ``step`` 与 ``rollout`` 两入口会错开一个 lag 日。
         """
         as_of = _to_date(ctx.as_of)
         self.observe(ctx)
@@ -817,7 +1001,7 @@ class _LaggedView:
             benchmark=self.benchmark(available),
             nav=state.nav,
             cash=state.cash,
-            positions=tuple(_sanitize_position(position) for position in state.positions),
+            positions=_sanitize_positions(ctx.positions),
             cfg=ctx.cfg,
         )
 
@@ -1007,6 +1191,8 @@ class RebalanceEnv:
         self._end: date | None = None
         self._days: tuple[date, ...] = ()
         self._cursor: date | None = None
+        # R62：episode 起点已可用曲线；决定初始券条款/基准身份，不含 START 当日行情。
+        self._initial_curve: Curve | None = None
         self._strategy_name = "rl_env"
         self._schedule: dict[date, ActionSpec] = {}
         self._records: list[StepRecord] = []
@@ -1043,6 +1229,15 @@ class RebalanceEnv:
     def decision_step_days(self) -> int:
         """决策网格步长（R51；默认 1 = 每日可决策）。"""
         return self._decision_step_days
+
+    @property
+    def initial_curve(self) -> Curve | None:
+        """episode 起点已可用曲线（R62）；``reset/rollout`` 前为 ``None``。
+
+        该曲线决定引擎初始券条款/基准身份，也是 policy 在起点看到的基准来源；
+        与 START 当日曲线无关。
+        """
+        return self._initial_curve
 
     def available_through(self, day: date) -> date:
         """``day`` 决策可见的信息截止日（``day − lag`` 个交易日；越界抛错）。"""
@@ -1136,11 +1331,23 @@ class RebalanceEnv:
         self._lagged_view.available_through(first)
         return days
 
+    def _resolve_initial_curve(self, start: date) -> Curve:
+        """episode 起点已可用曲线：``available_through(start)``（R62）。
+
+        预热不足时 :meth:`_LaggedView.available_through` 直接抛错（R57），不会把
+        截止日向未来夹紧。该曲线用于引擎初始券条款/基准身份，与 policy 在 reset
+        时看到的基准同源；执行/估值仍用每个交易日的当日曲线。
+        """
+        available = self._lagged_view.available_through(start)[0]
+        return _curve_at(self._panel, self._tenors, available, allow_missing=True)
+
     def reset(self, start: date, end: date, strategy_name: str = "rl_env") -> Observation:
         """开始一个新 episode，返回**首日 as-of 观测**（曲线/基准 KRD/持仓/现金/NAV）。
 
         R57：``start`` 之前没有足够预热交易日时抛 :class:`ValueError`，不用面板
-        首日冒充截止日；基准身份在 ``start`` 构造一次（R58）。
+        首日冒充截止日；基准身份在 ``start`` 构造一次（R58）。R62：初始券条款与
+        基准身份来自 ``initial_curve = curve_at(available_through(start))``，不含
+        START 当日行情。
         """
         start = _coerce_date(start, name="start")
         end = _coerce_date(end, name="end")
@@ -1162,7 +1369,9 @@ class RebalanceEnv:
         self._last_nav = float(self._cfg.backtest.init_cash)
         self._replay_days = 0
         self._replay_cost_seconds = 0.0
-        self._lagged_view.begin_episode(days[0], days[-1])
+        # R62：初始券条款/基准身份从已可用曲线构造，不含 START 当日行情。
+        self._initial_curve = self._resolve_initial_curve(days[0])
+        self._lagged_view.begin_episode(days[0], days[-1], initial_curve=self._initial_curve)
         return self._observation(self._cursor)
 
     def step(self, action: ActionSpec) -> tuple[Observation, StepRecord]:
@@ -1216,6 +1425,7 @@ class RebalanceEnv:
             cfg=self._cfg,
             start=self._start,
             end=trade_date,
+            initial_curve=self._initial_curve,
         )
         replay_seconds = time.perf_counter() - replay_start
         step_replay_days = len(self._calendar.trading_days_between(self._start, trade_date))
@@ -1277,16 +1487,19 @@ class RebalanceEnv:
         无法观测被替代的原始动作，该日 ``original_action`` 回落为 hold；要逐字段对齐
         该类日期，需要引擎暴露被替代动作或在熔断日仍调用策略（与逐档 candidate 一并）。
 
-        R51/R59：policy 收到的是滞后 ``MarketContext``（``curve/history/benchmark``
-        截止 ``available_through``；``nav/cash`` 取该日账本状态；``positions`` 只有
-        数量/条款、估值 NaN）；非决策网格日不调用 policy，直接返回 None 并记录
-        ``off_grid_hold``。网格以本次 ``start`` 交易日为索引 0，与 :meth:`step`
-        （reset 起点）同一规则。
+        R51/R59/R61：policy 收到的是滞后 ``MarketContext``（``curve/history/benchmark``
+        截止 ``available_through``；``nav/cash`` 取该日账本状态；``positions`` 是决策
+        时点 t 的数量/条款、估值 NaN）；非决策网格日不调用 policy，直接返回 None 并
+        记录 ``off_grid_hold``。网格以本次 ``start`` 交易日为索引 0，与 :meth:`step`
+        （reset 起点）同一规则。R62：与 reset/step 共用同一 ``initial_curve``，引擎
+        初始券条款/基准身份不含 START 当日行情。
         """
         start = _coerce_date(start, name="start")
         end = _coerce_date(end, name="end")
         days = self._validate_episode_window(start, end)
-        self._lagged_view.begin_episode(days[0], days[-1])
+        # R62：与 reset/step 同一初始曲线（已可用数据），不含 START 当日行情。
+        self._initial_curve = self._resolve_initial_curve(days[0])
+        self._lagged_view.begin_episode(days[0], days[-1], initial_curve=self._initial_curve)
         actions: dict[date, ActionSpec] = {}
         day_index = {day: index for index, day in enumerate(days)}
         grid_days = frozenset(
@@ -1335,6 +1548,7 @@ class RebalanceEnv:
             cfg=self._cfg,
             start=start,
             end=end,
+            initial_curve=self._initial_curve,
         )
         replay_seconds = time.perf_counter() - replay_start
         self._lagged_view.sync_from_result(result)
@@ -1407,91 +1621,19 @@ class RebalanceEnv:
         return self._terminal
 
     def _terminal_state(self, result: BacktestResult, end: date) -> TerminalState:
-        """由 ``BacktestResult`` 构造终止义务快照（step/rollout 共用同一口径）。"""
-        nav = float(result.nav.loc[end])
-        exposure = result.exposure
-        exposure_row = exposure.loc[_dates_of(exposure["date"]) == end]
-        cash = float(exposure_row["cash"].iloc[0]) if len(exposure_row) else float("nan")
-        pending_cash = (
-            float(exposure_row["pending_cash"].iloc[0]) if len(exposure_row) else float("nan")
-        )
-        positions = (
-            result.positions.loc[_dates_of(result.positions["as_of"]) == end].copy()
-            if len(result.positions)
-            else result.positions.copy()
-        )
+        """由 ``BacktestResult`` 构造终止义务快照（step/rollout 共用同一口径）。
 
-        unsettled: list[dict[str, Any]] = []
-        unsettled_cash = 0.0
-        accrued_fees = 0.0
-        for _, trade in result.trades.iterrows():
-            settlement_date = _to_date(trade["settlement_date"])
-            if settlement_date <= end:
-                continue
-            bond = _bond_from_trade_row(trade)
-            ai = float(accrued_interest(bond, settlement_date, cfg=self._cfg))
-            face = float(trade["face_value"])
-            clean = float(trade["clean_price"])
-            gross = face / 100.0 * (clean + ai)
-            signed_cash = -gross if str(trade["side"]) == "buy" else gross
-            fee = _estimated_trade_fee(
-                cfg=self._cfg, face=face, clean_price=clean, contract_fee=float(trade["fee"])
+        R63：委托给公开函数 :func:`terminal_state_from_result`，脚本/测试因此可以
+        从任意一条路径的 ``BacktestResult`` 独立构造并比较终止义务，而不必复制
+        ``rollout.terminal``。
+        """
+        resolved_end = _to_date(result.end)
+        if resolved_end != _to_date(end):
+            raise ValueError(
+                f"result.end={resolved_end} 与请求终止日 {_to_date(end)} 不一致；"
+                "终止义务必须按 result 自身的末日构造"
             )
-            unsettled_cash += signed_cash
-            accrued_fees += fee
-            unsettled.append(
-                {
-                    "trade_id": str(trade["trade_id"]),
-                    "bond_code": str(trade["bond_code"]),
-                    "side": str(trade["side"]),
-                    "face_value": face,
-                    "clean_price": clean,
-                    "trade_date": _to_date(trade["trade_date"]),
-                    "settlement_date": settlement_date,
-                    "accrued_interest": ai,
-                    "settlement_amount": gross,
-                    "signed_cash": signed_cash,
-                    "fee": fee,
-                }
-            )
-
-        market_value = (
-            float(positions["market_value"].sum())
-            if len(positions) and "market_value" in positions
-            else 0.0
-        )
-        reconciliation = cash + market_value + unsettled_cash
-        pending_gap = unsettled_cash - pending_cash
-        note_parts = [
-            "终止口径：按市价 mark-to-market，不强制平仓；reward 取账本 NAV 逐日变化，"
-            "不追加终止变现收益/成本；半价差已在成交日按账本扣一次，终止时不重复扣",
-            (
-                f"未结算成交 {len(unsettled)} 笔，待结算现金 {unsettled_cash:,.2f} 元"
-                "（买入为负、卖出为正；已含在期末 NAV 的 pending_cash 内）"
-            ),
-            (
-                f"已发生未支付费用 {accrued_fees:,.2f} 元按 cfg.costs.fee_bp + 每笔结算费 + "
-                "TradeRecord.fee 估算；引擎在结算日才扣费，故未计入期末 NAV；"
-                f"净终值 = NAV − 未支付费用 = {nav - accrued_fees:,.2f} 元"
-            ),
-            (
-                f"NAV 对账：cash({cash:,.2f}) + ΣMV({market_value:,.2f}) + "
-                f"pending_cash({unsettled_cash:,.2f}) = {reconciliation:,.2f}，"
-                f"result.nav 末值 {nav:,.2f}"
-            ),
-        ]
-        if np.isfinite(pending_gap) and abs(pending_gap) > 1e-6:
-            note_parts.append(f"待结算现金与 exposure.pending_cash 差额 {pending_gap:,.6f} 元")
-        return TerminalState(
-            nav_mark_to_market=nav,
-            cash=cash,
-            positions=positions,
-            unsettled_trades=tuple(unsettled),
-            unsettled_cash=unsettled_cash,
-            accrued_fees=accrued_fees,
-            liquidation_assumption="mark_to_market_no_forced_liquidation",
-            notes="；".join(note_parts),
-        )
+        return terminal_state_from_result(result, calendar=self._calendar, cfg=self._cfg)
 
     # ---- 内部 ----------------------------------------------------------
     def _gate_decision(self, result: BacktestResult, day: date) -> dict[str, Any] | None:
@@ -2102,13 +2244,15 @@ class RebalanceEnv:
         )
 
     def _observation(self, day: date) -> Observation:
-        """``as_of=day`` 的观测：市场信息/持仓估值/NAV 截到 ``available_through``。
+        """``as_of=day`` 的观测：market 信息/持仓估值/NAV 截到 ``available_through``。
 
         R57：截止日不向前夹紧（预热不足时由 reset/rollout 提前抛错）。
         R58：``benchmark_krd`` 来自 episode 起点固定身份的真实基准在 ``available``
-        日的估值。
+        日的估值（R62：起点条款由已可用曲线决定）。
         R59：持仓只保留数量/条款（估值列 NaN）；``nav/cash`` 取 ``available`` 日
         账本状态，metadata 显式记录 ``valuation_available=False`` / ``nav_as_of``。
+        R61：``positions`` 是**as_of=t 日**的账本持仓快照（与 rollout 的 policy
+        上下文同一时点），不是 ``available`` 日的历史仓位。
         """
         available, _ = self._lagged_view.available_through(day)
         curve = _curve_at(self._panel, self._tenors, available, allow_missing=True)
@@ -2124,12 +2268,7 @@ class RebalanceEnv:
         else:
             result = self._result
             nav, cash, pending_cash = self._available_ledger_state(result, available)
-            positions = result.positions
-            positions = (
-                positions.loc[_dates_of(positions["as_of"]) == day].copy()
-                if len(positions)
-                else positions.copy()
-            )
+            positions = _positions_frame_at(result, day)
         positions = _sanitize_positions_frame(
             positions, nav=nav, cash=cash, pending_cash=pending_cash
         )
@@ -2159,6 +2298,11 @@ class RebalanceEnv:
                 "valuation_available": False,
                 "nav_as_of": available.isoformat(),
                 "positions_quantities_as_of": day.isoformat(),
+                "initial_curve_as_of": (
+                    self._initial_curve.as_of.isoformat()
+                    if self._initial_curve is not None
+                    else None
+                ),
                 "curve_partial": len(curve.tenors) < len(self._tenors),
                 "curve_tenors": tuple(float(t) for t in curve.tenors),
                 "decision_index": self._day_index.get(day),

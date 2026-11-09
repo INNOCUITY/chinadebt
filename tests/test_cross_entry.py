@@ -40,16 +40,21 @@ def market():
     return cfg, panel, funding, calendar
 
 
-def _faces(cfg, panel, calendar, day):
-    rates = panel.loc[pd.Timestamp(day)].reindex(list(CANONICAL_TENORS)).to_numpy(dtype=float)
-    curve = Curve(
-        as_of=day,
+def _terms_curve(panel, calendar, day):
+    terms_day = calendar.prev_trading_day(day, 1)
+    rates = panel.loc[pd.Timestamp(terms_day)].reindex(list(CANONICAL_TENORS)).to_numpy(dtype=float)
+    return Curve(
+        as_of=terms_day,
         tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
         rates=rates,
         method="linear",
     )
-    bonds = build_universe_bonds(curve, day, cfg=cfg)
-    bench = build_benchmark(curve, day, bonds=bonds, calendar=calendar, cfg=cfg)
+
+
+def _faces(cfg, panel, calendar, day):
+    curve = _terms_curve(panel, calendar, day)
+    bonds = build_universe_bonds(curve, curve.as_of, cfg=cfg)
+    bench = build_benchmark(curve, curve.as_of, bonds=bonds, calendar=calendar, cfg=cfg)
     return {code: float(face) for code, face in bench.faces.items()}
 
 
@@ -62,7 +67,15 @@ def test_cross_entry_ml_rollout_step_agree(market) -> None:
     targets = {day: faces for day in grid}
 
     ml = evaluate_target_faces(
-        targets, panel, funding, calendar, cfg, protocol=protocol, start=START, end=END
+        targets,
+        panel,
+        funding,
+        calendar,
+        cfg,
+        protocol=protocol,
+        start=START,
+        end=END,
+        initial_curve=_terms_curve(panel, calendar, START),
     )
 
     env = RebalanceEnv(
@@ -140,3 +153,30 @@ def test_cross_entry_script_runs(tmp_path) -> None:
     out = pd.read_csv(tmp_path / "cross" / "cross_entry_check.csv")
     assert (out["nav_max_abs_diff"] <= 1e-6).all()
     assert (out["order_diff"] <= 1e-6).all()
+
+
+def test_cross_entry_script_detects_terminal_fee_tamper(tmp_path) -> None:
+    """R63：人为把 rollout 终止费用 +1 元，跨入口脚本必须 exit 1（独立终止对照）。"""
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_cross_entry_check.py",
+            "--start",
+            "2019-02-01",
+            "--end",
+            "2019-02-15",
+            "--out-dir",
+            str(tmp_path / "tamper"),
+            "--tamper-fee",
+            "1.0",
+        ],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "未通过" in proc.stderr or "未通过" in proc.stdout
