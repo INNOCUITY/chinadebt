@@ -106,10 +106,15 @@ def test_zero_action_equivalence(market) -> None:
     assert env.result.nav.index.equals(direct.nav.index)
     assert env.result.nav.index[-1] == obs2.as_of
 
-    # as-of：观测只含 ≤ as_of 的数据
-    assert obs2.history.index.max() == pd.Timestamp(obs2.as_of)
-    assert obs2.curve.as_of == obs2.as_of
-    assert obs2.history.equals(panel.loc[: pd.Timestamp(obs2.as_of)])
+    # as-of / R51：曲线/历史截止 available_through（默认 lag=1），持仓/NAV 仍是 as_of
+    available = env.available_through(obs2.as_of)
+    assert available < obs2.as_of
+    assert obs2.history.index.max() == pd.Timestamp(available)
+    assert obs2.curve.as_of == available
+    assert obs2.history.equals(panel.loc[: pd.Timestamp(available)])
+    assert obs2.metadata["as_of"] == obs2.as_of.isoformat()
+    assert obs2.metadata["available_through"] == available.isoformat()
+    assert obs2.metadata["information_lag_days"] == 1
     assert env.done is False
 
 

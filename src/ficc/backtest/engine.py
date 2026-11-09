@@ -424,6 +424,7 @@ def run_backtest(
         force_min_lot: bool = False,
         forced_orders: tuple[Any, ...] | None = None,
         attempts_log: list[dict[str, Any]] | None = None,
+        forced_stage: str = "target_faces",
     ) -> tuple[tuple[Any, ...] | None, list[TargetKRD], str, bool, float]:
         """成交前完整校验（R31/R32 修复版）。
 
@@ -492,10 +493,12 @@ def run_backtest(
                 if attempts_log is not None:
                     attempts_log.append(
                         {
-                            "stage": "policy_roll",
+                            "stage": forced_stage,
                             "scale": scale,
-                            "target_total_dv01": float(sum(o.face_value for o in scaled)),
+                            "target_total_dv01": None,
+                            "target_total_face": float(sum(abs(o.face_value) for o in scaled)),
                             "order_faces": {o.bond.code: float(o.face_value) for o in scaled},
+                            "order_sides": {o.bond.code: str(o.side) for o in scaled},
                             "feasible": bool(feasible),
                             "violation_codes": sorted(
                                 {v.code for report in reports for v in report.violations}
@@ -558,6 +561,10 @@ def run_backtest(
                             "order_faces": {
                                 order.bond.code: float(order.face_value) for order in orders
                             },
+                            "order_sides": {order.bond.code: str(order.side) for order in orders},
+                            "target_total_face": float(
+                                sum(abs(order.face_value) for order in orders)
+                            ),
                             "feasible": bool(feasible),
                             "violation_codes": sorted(
                                 {v.code for report in reports for v in report.violations}
@@ -815,6 +822,7 @@ def run_backtest(
         attempts_log: list[dict[str, Any]] = []
         active_proposed = pending_proposed if pending is not None else None
         gate_projected_faces: tuple[tuple[str, float], ...] = ()
+        gate_accepted_orders: tuple[dict[str, Any], ...] = ()
         if face_target is not None:
             # 精确基准回放：按目标面值直接构造订单（不经 KRD 求解），仍走同一成交前闸门
             face_orders = _orders_from_faces(face_target.faces, last_snapshot, curve_d, d)
@@ -835,6 +843,7 @@ def run_backtest(
                 force_min_lot=policy_roll_target is not None,
                 forced_orders=policy_orders,
                 attempts_log=attempts_log,
+                forced_stage=("policy_roll" if policy_roll_target is not None else "target_faces"),
             )
             if accepted_orders is None:
                 rejected_reason = reason or "成交前约束不可行"
@@ -853,7 +862,21 @@ def run_backtest(
             else:
                 gate_target = attempted[-1] if attempted else active_target
                 gate_projected_faces = tuple(
-                    (order.bond.code, float(order.face_value)) for order in accepted_orders
+                    (
+                        order.bond.code,
+                        float(order.face_value) * (1.0 if order.side == "buy" else -1.0),
+                    )
+                    for order in accepted_orders
+                )
+                gate_accepted_orders = tuple(
+                    {
+                        "bond_code": order.bond.code,
+                        "side": str(order.side),
+                        "face_value": float(order.face_value),
+                        "clean_price": float(order.clean_price),
+                        "spread_cost": float(order.spread_cost),
+                    }
+                    for order in accepted_orders
                 )
                 settle = settlement_for(calendar, d, cfg=cfg)
                 for order in accepted_orders:
@@ -903,6 +926,7 @@ def run_backtest(
             "gate_level": gate_level,
             "risk_off": risk_off,
             "attempts_detail": tuple(attempts_log),
+            "accepted_orders": gate_accepted_orders,
             "proposed_target": active_proposed,
         }
         if policy_roll_target is not None:
@@ -911,7 +935,21 @@ def run_backtest(
                 signal_date=policy_roll_target.as_of,
                 projected_target=policy_roll_target,
                 projected_faces=tuple(
-                    (order.bond.code, float(order.face_value)) for order in (policy_orders or ())
+                    (
+                        order.bond.code,
+                        float(order.face_value) * (1.0 if order.side == "buy" else -1.0),
+                    )
+                    for order in (policy_orders or ())
+                ),
+                accepted_orders=tuple(
+                    {
+                        "bond_code": order.bond.code,
+                        "side": str(order.side),
+                        "face_value": float(order.face_value),
+                        "clean_price": float(order.clean_price),
+                        "spread_cost": float(order.spread_cost),
+                    }
+                    for order in (policy_orders or ())
                 ),
                 status=(
                     "executed"

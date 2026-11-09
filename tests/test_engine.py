@@ -569,3 +569,57 @@ def test_r38_weekly_strategy_rolls_same_day_as_benchmark(market) -> None:
         set(pd.to_datetime(result.rejected["date"]).dt.date) if len(result.rejected) else set()
     )
     assert not (bench_dates & rejected_dates)
+
+
+# ---------------------------------------------------------------------------
+# R54：候选记录单位/方向/阶段可独立重建
+# ---------------------------------------------------------------------------
+def test_r54_attempts_detail_units_and_sides(market) -> None:
+    from ficc.portfolio.types import TargetFaces
+
+    cfg, panel, funding, calendar = market
+    rolling = cfg.portfolio.rolling.model_copy(update={"enabled": True})
+    rolling_cfg = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(update={"rolling": rolling}),
+            "backtest": cfg.backtest.model_copy(update={"benchmark_version": "rolling"}),
+        }
+    )
+
+    class _ExactFaces:
+        name = "exact_faces"
+
+        def target_krd(self, ctx):
+            return TargetFaces(
+                as_of=ctx.as_of,
+                faces={leg.bond.code: leg.face_value for leg in ctx.benchmark.legs},
+            )
+
+    result = run_backtest(
+        _ExactFaces(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=rolling_cfg,
+        start=START,
+        end=date(2019, 2, 15),
+    )
+    decisions = [item for item in result.gate_decisions if item["attempts_detail"]]
+    assert decisions
+    for item in decisions:
+        for attempt in item["attempts_detail"]:
+            assert "order_sides" in attempt
+            assert set(attempt["order_sides"].values()) <= {"buy", "sell"}
+            if attempt["stage"] == "target_faces":
+                assert attempt["target_total_dv01"] is None
+                assert attempt["target_total_face"] >= 0.0
+                if attempt["order_faces"]:
+                    assert attempt["target_total_face"] > 0.0
+            if attempt["stage"] == "policy_roll":
+                assert attempt["target_total_face"] > 0.0
+    # TargetFaces 信号分支的最终接受订单必须可重建（R55）
+    face_decisions = [d for d in result.gate_decisions if d.get("accepted_orders")]
+    assert face_decisions
+    first = face_decisions[0]["accepted_orders"][0]
+    assert {"bond_code", "side", "face_value"} <= set(first)
+    assert float(first["face_value"]) > 0

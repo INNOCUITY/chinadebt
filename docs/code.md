@@ -151,7 +151,15 @@
 | C-114 | 2026-11-09 | [fix] | RL | R49：Rollout 返回 TerminalState；新/复用 env 可 terminate |
 | C-115 | 2026-11-09 | [fix] | ML | R50：train_mean/literal_zero 基线命名、重叠实测、holding 定义明确 |
 | C-116 | 2026-11-09 | [feat] | 协议 | protocol_v1 冻结 + 逐档 attempts_detail + 成本后评估器 |
-| C-117 | 2026-11-09 | [test] | 测试 | 测试基线 663 → **673 项全绿** |
+| C-117 | 2026-11-09 | [test] | 测试 | 测试基线 663 → 673 项全绿 |
+| C-119 | 2026-11-09 | [fix] | 协议 | R51：公共决策网格强制 + RL lag=1/网格 |
+| C-120 | 2026-11-09 | [fix] | 协议 | R52：协议冻结经济字段 + 实际配置指纹 |
+| C-121 | 2026-11-09 | [fix] | RL | R53：KRD 逐桶投影偏差 → scaled |
+| C-122 | 2026-11-09 | [fix] | 执行 | R54：候选记录单位/方向/阶段可重建 |
+| C-123 | 2026-11-09 | [fix] | RL | R55：requested/accepted/post-trade 面值分离 |
+| C-124 | 2026-11-09 | [fix] | 测试 | R56：冒烟产物隔离（--out-dir） |
+| C-125 | 2026-11-09 | [test] | 测试 | 测试基线 673 → **684 项全绿** |
+| C-118 | 2026-11-09 | [docs] | 独立审查 | 复核 R47–R50；登记 R51–R56：协议执行约束、投影审计与冒烟产物隔离 |
 | C-110 | 2026-11-08 | [docs] | 独立审查 | R47–R50：RL 快速路径奖励/动作/终止缺口，ML 基线及重叠口径 |
 | C-111 | 2026-11-08 | [docs] | 计算资源规划 | Mac 示例验证；单卡/8 卡 A800 40GB 正式训练与验收分工 |
 | C-098 | 2026-11-08 | [docs] | 独立审查 | 复核 R37–R41 修复与 ML/RL 原型；登记 R42–R46，多日风险/逐行因果性/动作语义/成本边界 |
@@ -169,7 +177,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：673 passed / 0 failed / 1 deselected（network）/ 约 11 分钟（含真实数据回归与回测）
+基线：684 passed / 0 failed / 1 deselected（network）/ 约 12 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1207,10 +1215,10 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前新增阻塞项（2026-11-08，审查 HEAD `329ff8b`）**：R47（rollout Hold 奖励为 NaN）、
-R48（快速路径动作/政策审计不等价）、R49（rollout 未接终止义务）须在 RL 训练前关闭；
-R50 为 ML 基线名称及标签重叠披露修正。R37–R46 的既有修复按后续复验记录读取，
-不要把历史未修状态当作当前状态。C-110 记录本轮证据与范围。
+**当前状态（2026-11-09，审查 HEAD `8ebf2aa`）**：R47/R49 旧反例已通过，R48 两路径一致性与
+R50 默认结果有实质修复；仍需关闭 R51（共同信息时钟/调度未执行）、R52（协议版本/实际配置不绑定）
+及 R53–R55（投影审计内容不准确）。R56 是测试覆盖冒烟产物问题。C-118 记录最新证据与范围；
+历史轮次的未修状态不要当作当前状态。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -2300,6 +2308,184 @@ TargetFaces 最终提交面值已由 `gate_decisions.projected_faces` 暴露；�
 
 ---
 
+### C-118 [docs] 第十四轮修复与共同协议的独立审查
+
+- **日期 / 范围**：2026-11-09，HEAD `8ebf2aa`；重点为轨迹/动作/终止契约与共同实验协议。
+- **变更**：仅文档；业务修复留待下一轮。隔离探针、全量 ML 与协议冒烟输出在 `/tmp/debt_r14`。
+- **阶段判断**：轨迹核心修复成立，但“共用构造器”不等于记录内容已正确；共同协议已有声明与评估入口，
+  尚未形成执行时的强制契约，不能整体宣布冻结为训练验收基线。
+
+**R51 [P1 / 协议信息集] lag=1 与 5 日调度没有在策略入口强制执行**
+
+- **位置**：`research/protocol.py:116–124, 193–199`；`rl/env.py:748`、`_observation`；
+  引擎构造 `MarketContext.history=panel.loc[:d]`。
+- **实测**：在 `protocol_config` 后的 RL rollout，2019-01-28 的 policy 仍拿到 01-28 曲线/历史，
+  而 lag=1 截止日应为 01-25。只把 01-28 的 10Y 从 3.1397 改成 4.1397，policy 当日即可读到并改变动作。
+  这证明信息集比所宣称的 lag=1 多一天；不是把估值价格对 NAV 的正常影响误判为泄漏。
+- **调度实测**：默认协议声明 step=5，但向 evaluate_predictions 传 01-28/29/30/31 的每日预测，
+  四天均产生信号，既不拒绝也不强制 Hold。仅由冒烟脚本自行 days[::5] 不能保证所有调用方一致。
+- **验收**：策略专用观测截到 t−1，实际执行/估值/风险闸门仍可用执行时点价格；共用带 anchor 的
+  decision calendar，非决策日强制 Hold 或拒绝输入。预测载荷携带 decision/available_through/
+  model_fit_cutoff/split，入口检查范围、可用性及末日不可执行样本。加“修改决策截止之后数据不改
+  policy 特征/原始动作”和错位决策日拒绝测试，不能只检查 describe 中的字符串。
+
+**R52 [P2 / 冻结契约] 同一个 protocol_v1 可表示不同目标和滚动政策，manifest 不绑定实际配置**
+
+- **位置**：`research/protocol.py:56–91, 130–148`；`run_protocol_smoke.py` manifest 构造。
+- **实测**：`ExperimentProtocol(label_target='active_excess_vs_benchmark', holding_days_from_decision=20,
+  decision_step_days=1)` 仍使用 `protocol_v1_2026-11-08`。将 cfg 的 roll_trigger_years 改为 **1.99**，
+  protocol_config 仍执行该值且继续宣称 `roll_v1_trigger1y_parissue`。
+- **原因**：protocol_config 实际 `del proto`，只开启 rolling/daily；describe 为声明，不校验实际
+  rolling 参数、成本/风险预算或标签定义。评估 manifest 也没有 resolved config/data/split hash。
+- **验收**：版本注册表或内容指纹绑定经济参数；不同协议必须生成可区分 ID，声明与 resolved config
+  不一致时报错。当前未实现的 active-excess 版本显式拒绝；允许成本消融时另记 variant/config hash，
+  不能沿用一个看起来完全相同的冻结 manifest。不同输出目录无需改变科学协议 ID。
+
+**R53 [P2 / 动作归因] KRD 投影仅比较总量，漏掉总 DV01 不变的形状缩放**
+
+- **位置**：`rl/env.py:1025–1028, 1168–1172`。
+- **反例**：默认约束，合成平坦 3% 曲线，2019-01-28→01-29；把基准 10Y 桶的 90% KRD
+  转入 30Y 桶，保持总 DV01。闸门尝试 **3** 档，最终相对原目标的单桶最大改动
+  **14,692.73 元/bp**，但 action_scale=**0.9998288656**，action_outcome=**executed**。
+- **影响**：NAV/成交仍来自同一引擎，但“原动作被执行”的审计结论错误；RL 动作替代率/缩放率会失真。
+- **验收**：分别记录总 DV01 比例、主动偏离的逐桶变动和实际 tilt 缩放档；用向量变化或引擎接受档
+  判定 projected/scaled，不能靠总和比值。两路径对拍外，再与原动作、接受候选独立比对。
+
+**R54 [P2 / 候选审计] attempts_detail 的 DV01 字段装入面值，且订单缺方向**
+
+- **位置**：`backtest/engine.py:495–498, 555–560`。
+- **反例**：TargetFaces 四腿各请求 25M→最终各 22M，两个候选的 target_total_dv01 分别为
+  **100,000,000 / 88,000,000**，实际是订单面值总和（元），不是组合 DV01（元/bp）；该普通
+  TargetFaces 交易还被标为 stage=policy_roll。
+- **影响**：同一个字段在 KRD 分支是真 DV01，在 forced 分支是面值；order_faces 全为正且无 side，
+  无法从候选记录独立重建卖旧买新/减仓候选，未成交候选也没有实际交易表可补方向。
+- **验收**：拆分 gross_order_face、target/realized_dv01，明确单位与基准；订单记录 code/side/face，
+  区分 signal_faces 与 policy_roll；记录被接受档、partial_de_risk 与模拟失败原因，候选数与尝试数对齐。
+
+**R55 [P2 / 投影面值] TargetFaces 的 StepRecord 仍把原请求写成最终提交面值**
+
+- **位置**：`rl/env.py:1136–1143`；`_substitution_detail` 的 submitted_faces。
+- **反例**：min_cash_fraction=0，四腿各 25M→22M。引擎 gate_decisions.projected_faces 已正确
+  写 22M，StepRecord.projected_faces 和 substitution_detail.submitted_faces 却都写 25M。
+  scale=0.88 虽已修复，原始→投影→成交三阶段仍不一致；两路径共用同一错误所以对拍通过。
+- **验收**：分别命名 requested_position_faces、accepted_order_faces（有方向）、post_trade_faces；
+  后两者从真实接受候选与交易前持仓推导。不要直接把当前引擎“订单增量”字段当作“目标持仓”替换；
+  独立核对老仓调增/调减、卖光、部分缩放、拒单与政策换券。更新当前把原始 face_target 当作
+  projected_faces 的测试预期。
+
+**R56 [P2 / 产物隔离] make check 中的协议冒烟测试会写仓库正式报告路径**
+
+- **位置**：`tests/test_protocol.py:106–127`；`scripts/run_protocol_smoke.py:94–100`。
+- **证据**：test_protocol_smoke_script_quick 接收 tmp_path 却未使用，子进程以项目根运行
+  `--quick` 并写 `reports/protocol_smoke.csv`、`protocol_manifest.json`。默认完整运行与 quick
+  共享文件名，正式产物会在后续 make check 中被短窗产物覆盖。
+- **核对**：本次提交的报告本来就是 quick：2019-01-28→06-28、104 日、21 决策、zero 成本
+  **79,915.68 元**。隔离重跑默认完整冒烟：至 2021-12-31、731 日、147 决策、zero 成本
+  **85,601.84 元**。二者 zero 超额均为 0，数字并不矛盾，但范围必须随报告给出。
+- **验收**：脚本支持 --out-dir/--config，测试使用 tmp_path；完整/quick 分目录或文件名，并带
+  resolved config/data/code/protocol hash。完整冒烟→make check 前后正式产物 SHA256 不变。
+
+**其他边界与训练前尚需明确的事项（不推翻默认结果）**
+
+- R50 重叠统计使用 `s2 <= e1`，但窗口定义为 `(s,e]`；decision_step=4、holding=5 时相邻窗口
+  (2019-01-29,02-02] 与 (02-02,02-13] 仅接触，不共享收益增量，却被计重叠。应为 s2 < e1；
+  默认 step=5 的重叠数 0 和已提交 ML 指标不受影响。
+- 带 notes 的 Hold 动作在 rollout 无 signal_date 时被重建为默认 ActionSpec，notes 丢失；
+  该日应从实际前一决策动作表读取。示例 step 原 notes='audit_hold_note'，rollout 为 ''。
+- TerminalState.net_terminal_value 已提供费用调整，但当前累计 reward 仍与账本 NAV 而非净终值闭合。
+  22M×4 的末日建仓反例，两者差 **2,304.86 元**，正是未付费用；这是已披露口径，不是重复扣价差。
+  正式训练前明确末端费用调整或跨 episode 结转，避免末日交易逃费。raw accounting_reward 可保留。
+- z 的输入单位尚需冻结：Ridge 预测的是小数收益，映射直接 clip 输入；若将 0.002 原样传入，
+  只产生 0.02% 相对 DV01 倾斜，不能与 z=0.5 冒烟的 5% 倾斜当作同尺度比较。
+  选择原始收益直映或训练窗内校准/固定尺度均可，但必须写入协议，不用 OOS 数据归一化。
+
+**本轮验证记录**
+
+- `make check` 实跑 **exit 0**，lint/format 与当前 673 项测试基线通过。现有测试未拦住 R51–R56；
+  本轮未重跑 buyhold/rolling/extended 三套统一验收或 make recon，不能把此前结果改称本轮复跑。
+- 审查开始已保存提交的两份协议产物；make check 完成后与开始时字节一致，因为提交版本本身就是 quick。
+  本轮完整冒烟输出隔离至 /tmp，未覆盖仓库产物；“测试会覆盖完整结果”来自明确的同路径写入代码，
+  不声称本次审查丢失了用户的完整报告。
+- 独立重放旧 R47：step/rollout NAV 最大差 0、逐日 reward 最大差 0、所有 reward 有限，累计闭合差 0；
+  旧 R49：新 rollout 返回的 terminal 与随后 terminate() 为同一快照。原有修复有实质进展。
+- 全量 ML 重建 exit 0：dataset（344 行）及 metrics（22 split）读取后与提交 CSV 逐值相同；
+  OOS 277，Ridge IC=0.0198059101、R²=−0.1197755837，train_mean=−0.0556639500、
+  literal_zero=−0.0450956746；默认重叠为 0。负结果方向成立。
+- 默认完整协议冒烟隔离重跑 exit 0；zero 超额 0bp、TE 0、成本 85,601.84 元；常数场景仅作映射验证。
+  本轮没有新增模型/调参研究，也未连接 A800。
+
+### R51–R56 修复对照（2026-11-09 第十六轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R51 | P1 | 协议决策网格公共入口强制；RL `information_lag_days=1`、`decision_step_days`，观测/策略上下文截止 t−lag，非网格日 hold | C-119；01-28 可见 01-25；连续预测被 ProtocolError 拒；5 日网格 12 日仅 3 信号、8 个 off-grid 日 0 成交 |
+| R52 | P2 | `protocol_v1` 冻结经济字段；`protocol_config` 对齐并校验实际 rolling trigger/版本；`protocol_fingerprint` 绑定配置 | C-120；20 日持有/主动目标/1.99 触发均被拒或指纹变化 |
+| R53 | P2 | KRD 逐桶偏差；形状改变即使总 DV01 不变也记 scaled | C-121；单桶 14,692.73 元/bp、ratio 0.99983 → scaled（scale 0.834） |
+| R54 | P2 | attempts 单位/方向/阶段分离（`target_total_dv01` 仅 tilt；faces 有 `target_total_face`/`order_sides`；TargetFaces 不标 policy_roll） | C-122；R54 单测通过 |
+| R55 | P2 | requested/accepted/post-trade 面值分离；projected_faces 用最终接受订单带符号面值 | C-123；25M→22M：requested 25M、projected +22M、accepted 4 笔、post_trade 22M |
+| R56 | P2 | `run_protocol_smoke.py --out-dir`；测试写 tmp；正式产物为全量 731 日/147 决策 | C-124；测试不再覆盖仓库 reports |
+| z/费用 | — | `z=clip(raw/0.01,−1,1)`；`training_objective` 扣终止未付费用 | C-120/C-116；gross 口径需升版本 |
+
+**验收**：make check exit 0（684 项）；buyhold 71/71、rolling 92/92、extended 2019–2025 92/92；
+协议全量冒烟 zero 超额 0bp、成本 85,601.84 元。
+
+### C-119 [fix] R51：统一决策网格与信息截止
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/research/protocol.py`、`src/ficc/rl/env.py`、`tests/test_protocol.py`、`tests/test_rl_clock.py`
+- **变更内容**：`ExperimentProtocol.decision_dates` 成为唯一网格；`evaluate_predictions` 拒绝网格外预测；RL 新增 `information_lag_days=1`、`decision_step_days`，观测/策略上下文截止 t−lag，非网格日 hold（`off_grid_hold`）。
+- **验证方式**：01-28 观测截止 01-25；连续预测抛 `ProtocolError`；5 日网格 12 日仅 3 信号、8 日 0 成交；step/rollout 一致。
+- **风险/遗留**：lag 回退越过 panel 起点时截到首日并标记 `lag_clamped`。
+
+### C-120 [fix] R52：协议绑定实际经济配置
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/research/protocol.py`、`tests/test_protocol.py`
+- **变更内容**：`protocol_v1` 冻结 market 目标/next-close/decision+5/step5/tilt0.10/rolling trigger1.0/z_scale0.01/费用口径；`protocol_config` 对齐并校验 rolling trigger、版本、基准；`protocol_fingerprint` 哈希协议+实际配置（lot/死区/阈值/价差/费率）。新增 `prediction_to_z`、`training_objective`。
+- **验证方式**：自定义持有 20 日/主动目标/1.99 触发被拒或指纹变化；z 映射与费用扣减单测。
+- **风险/遗留**：修改经济设定必须升协议版本并重跑；主动超额版本未冻结。
+
+### C-121 [fix] R53：KRD 形状投影
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：对 target_krd 比较逐桶投影偏差，`bucket_tolerance=1e-6×max(1,Σ|orig|)`；超容差时 `action_scale=min(total_ratio,1−maxdev/magnitude)` 且 outcome 必为 scaled；`substitution_detail` 增 requested/projected KRD、逐桶差、maxdev。
+- **验证方式**：flat 3% 10Y→30Y 单桶改变 14,692.73 元/bp、total ratio 0.99983 → `scaled`（scale 0.834）。
+- **风险/遗留**：缺失 tenor 按引擎语义取基准值，不是 0。
+
+### C-122 [fix] R54：候选记录单位/方向/阶段
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/backtest/engine.py`、`tests/test_engine.py`
+- **变更内容**：attempts_detail 按阶段（tilt/target_faces/policy_roll）记录 `target_total_dv01`（仅 tilt）或 `target_total_face`；每档带 `order_faces/order_sides`；gate_decisions 增 `accepted_orders`；TargetFaces 不再标 policy_roll。
+- **验证方式**：R54 单测检查单位/方向/阶段与 accepted_orders 可重建。
+- **风险/遗留**：`target_total_face` 为绝对面值合计，不含方向；方向见 order_sides。
+
+### C-123 [fix] R55：面值请求/接受/交易后分离
+
+- **日期**：2026-11-09
+- **文件**：`src/ficc/rl/env.py`、`tests/test_rl_contract.py`
+- **变更内容**：StepRecord 增 `requested_faces`/`accepted_orders`/`post_trade_faces`；`projected_faces` 改为 engine 最终接受订单的带符号面值，不再用原请求冒充。
+- **验证方式**：25M→22M 反例三组字段正确（requested 25M、projected +22M、accepted 4 笔、post_trade 22M），step/rollout 一致。
+- **风险/遗留**：TargetKRD 无 requested_faces；post_trade 只含多头持仓。
+
+### C-124 [fix] R56：冒烟产物隔离
+
+- **日期**：2026-11-09
+- **文件**：`scripts/run_protocol_smoke.py`、`tests/test_protocol.py`
+- **变更内容**：新增 `--out-dir`；测试用 tmp_path；正式产物全量 2019-2021（731 日/147 决策、zero 0bp、成本 85,601.84），quick 104 日仅隔离测试。
+- **验证方式**：测试断言 tmp 输出存在且不触仓库 reports。
+- **风险/遗留**：默认全量冒烟约 1 分钟；文档须区分全量与 quick 范围。
+
+### C-125 [test] 测试基线 673 → 684
+
+- **日期**：2026-11-09
+- **变更内容**：新增 RL 时钟 5、协议网格/指纹/z/费用 6 等。
+- **验证方式**：`make check`（684 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 12 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -2307,7 +2493,7 @@ TargetFaces 最终提交面值已由 `gate_decisions.projected_faces` 暴露；�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **673** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **684** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

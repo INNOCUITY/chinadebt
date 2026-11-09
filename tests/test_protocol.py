@@ -15,9 +15,13 @@ from ficc.data.schema import CANONICAL_TENORS
 from ficc.research.protocol import (
     ExperimentProtocol,
     PredictionStrategy,
+    ProtocolError,
     evaluate_predictions,
     prediction_to_target,
+    prediction_to_z,
     protocol_config,
+    protocol_fingerprint,
+    training_objective,
 )
 from ficc.utils.calendar import TradingCalendar
 
@@ -106,22 +110,82 @@ def test_evaluate_rejects_nonfinite_prediction(market) -> None:
         prediction_to_target(float("nan"), bench, as_of=START)
 
 
-def test_protocol_smoke_script_quick(tmp_path) -> None:
-    """冒烟脚本可跑通并产出 CSV（短窗，验证协议链路而非结果）。"""
+def test_protocol_decision_grid_enforced(market) -> None:
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol()
+    days = list(calendar.trading_days_between(START, END))
+    grid = proto.decision_dates(calendar, START, END)
+    assert len(grid) == len(days[::5])
+    # 连续四天预测（不在 5 日网格上）必须被公共入口拒绝，而不是各自产生信号
+    bad = {d: 0.0 for d in days[:4]}
+    with pytest.raises(ProtocolError, match="决策网格"):
+        evaluate_predictions(bad, panel, funding, calendar, cfg, start=START, end=END)
+
+
+def test_protocol_frozen_version_rejects_custom_economics() -> None:
+    with pytest.raises(ProtocolError, match="冻结字段"):
+        ExperimentProtocol(holding_days_from_decision=20)
+    with pytest.raises(ProtocolError, match="冻结字段"):
+        ExperimentProtocol(label_target="active_excess_vs_benchmark")
+    # 自定义版本可显式声明，但不得再称为 v1
+    custom = ExperimentProtocol(version="protocol_custom", holding_days_from_decision=20)
+    assert custom.version == "protocol_custom"
+
+
+def test_protocol_fingerprint_binds_config(market) -> None:
+    cfg, _panel, _funding, _calendar = market
+    proto = ExperimentProtocol()
+    fp1 = protocol_fingerprint(cfg, proto)
+    changed = cfg.model_copy(
+        update={"constraints": cfg.constraints.model_copy(update={"min_trade_lot": 2e6})}
+    )
+    assert protocol_fingerprint(changed, proto) != fp1
+    trigger_changed = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(
+                update={
+                    "rolling": cfg.portfolio.rolling.model_copy(update={"roll_trigger_years": 1.99})
+                }
+            )
+        }
+    )
+    assert protocol_fingerprint(trigger_changed, proto) != fp1
+
+
+def test_z_scale_and_training_objective() -> None:
+    proto = ExperimentProtocol()
+    assert prediction_to_z(0.0, proto) == 0.0
+    assert prediction_to_z(0.005, proto) == pytest.approx(0.5)
+    assert prediction_to_z(0.05, proto) == pytest.approx(1.0)  # 裁剪
+    assert prediction_to_z(-0.05, proto) == pytest.approx(-1.0)
+    assert training_objective(100.0, 2.5, proto) == pytest.approx(97.5)
+    gross = ExperimentProtocol(version="protocol_custom", terminal_fee_treatment="gross_reward")
+    assert training_objective(100.0, 2.5, gross) == pytest.approx(100.0)
+
+
+def test_protocol_smoke_script_isolated(tmp_path) -> None:
+    """冒烟脚本写入 --out-dir，不得覆盖仓库 reports（R56）。"""
     import subprocess
     import sys
 
+    out = tmp_path / "protocol_out"
     proc = subprocess.run(
-        [sys.executable, "scripts/run_protocol_smoke.py", "--quick"],
+        [
+            sys.executable,
+            "scripts/run_protocol_smoke.py",
+            "--quick",
+            "--out-dir",
+            str(out),
+        ],
         cwd=str(Path(__file__).resolve().parents[1]),
         capture_output=True,
         text=True,
         check=False,
     )
-    assert proc.returncode == 0, proc.stderr[-1000:]
-    csv = Path(__file__).resolve().parents[1] / "reports" / "protocol_smoke.csv"
-    assert csv.exists()
-    table = pd.read_csv(csv)
+    assert proc.returncode == 0, proc.stderr[-1200:]
+    assert (out / "protocol_smoke.csv").exists()
+    assert (out / "protocol_manifest.json").exists()
+    table = pd.read_csv(out / "protocol_smoke.csv")
     assert {"zero", "const_plus_one"} <= set(table["scenario"])
     zero = table.loc[table["scenario"] == "zero"].iloc[0]
     assert abs(float(zero["active_excess_bp"])) < 1.0

@@ -197,16 +197,26 @@ def test_target_faces_executes_exact_faces(market) -> None:
     assert record.original_action.action_type == "target_faces"
     assert record.action_outcome == "executed"
     assert record.projected_target is None  # 面值动作不伪造内部基准 KRD 为提交目标
-    assert dict(record.projected_faces) == target
+    # R55：请求目标 vs 最终接受订单（只有被调增的腿）分开记录
+    assert dict(record.requested_faces) == target
+    assert dict(record.projected_faces) == {code: 1_000_000.0}  # 带符号：+buy
+    assert len(record.accepted_orders) == 1
+    assert record.accepted_orders[0]["bond_code"] == code
+    assert record.accepted_orders[0]["side"] == "buy"
+    assert record.accepted_orders[0]["face_value"] == pytest.approx(1_000_000.0)
+    assert dict(record.post_trade_faces) == pytest.approx(target)
     assert record.executed_face == pytest.approx(1_000_000.0)
     assert record.executed_trades[0]["bond_code"] == code
     assert record.executed_trades[0]["side"] == "buy"
     assert record.action_scale == pytest.approx(1.0, abs=1e-12)
     detail = record.substitution_detail
     assert detail["original_faces"] == target
-    assert detail["submitted_faces"] == target
-    assert detail["projected_delta_faces"][code] == pytest.approx(1_000_000.0)
+    assert detail["requested_faces"] == target
+    assert detail["projected_faces"] == {code: 1_000_000.0}
+    assert detail["projected_faces_source"] == "accepted_orders"
+    assert detail["requested_delta_faces"][code] == pytest.approx(1_000_000.0)
     assert detail["executed_faces"][code] == pytest.approx(1_000_000.0)
+    assert detail["post_trade_faces"] == pytest.approx(target)
     assert detail["face_diff"] == pytest.approx(0.0, abs=1e-6)
 
     # 精确面值执行：成交后持仓面值等于目标
@@ -222,7 +232,11 @@ def test_target_faces_noop_is_no_trade(market) -> None:
     _obs, record = env.step(ActionSpec(target_faces=dict(current)))
     assert record.executed_trades == ()
     assert record.action_outcome == "no_trade_deadband"
-    assert record.projected_faces  # 提交目标仍被记录
+    # R55：请求目标仍被记录；无成交 → 接受订单/投影面值为空；期末持仓等于目标
+    assert dict(record.requested_faces) == current
+    assert record.projected_faces == ()
+    assert record.accepted_orders == ()
+    assert dict(record.post_trade_faces) == current
     assert record.action_scale == 1.0
 
 
@@ -301,14 +315,19 @@ def test_roll_day_cancels_original_action_and_records_policy_actions(market) -> 
     assert record.pending_status == "cancelled_by_roll"
     assert record.action_outcome == "cancelled_by_policy"
     assert record.projected_target is None  # policy roll 不挂到原动作下
-    # 机械换券实际提交的逐腿面值只出现在 projected_faces（披露用途），不伪造原动作目标
+    # 机械换券的接受订单只出现在 projected_faces（带符号披露），不伪造原动作目标；
+    # 原动作是 target_krd，因此没有 requested_faces
+    assert record.requested_faces == ()
     assert record.projected_faces
     submitted_codes = {code for code, _face in record.projected_faces}
     policy_codes = {action.retired_code for action in record.policy_actions} | {
         action.issued_code for action in record.policy_actions
     }
     assert submitted_codes <= policy_codes
-    assert all(isinstance(code, str) and face > 0.0 for code, face in record.projected_faces)
+    assert all(isinstance(code, str) and face != 0.0 for code, face in record.projected_faces)
+    assert any(face < 0.0 for _code, face in record.projected_faces)  # 卖旧券
+    assert record.accepted_orders
+    assert record.substitution_detail["projected_faces_source"] == "policy_roll"
     assert "policy_actions" in record.notes
 
     # policy_actions 与 result.roll_events 一一对应
@@ -530,7 +549,18 @@ def _assert_records_equivalent(
         assert step.date == rollout.date
         assert step.original_action == rollout.original_action
         assert step.projected_target == rollout.projected_target
+        assert step.requested_faces == rollout.requested_faces
         assert step.projected_faces == rollout.projected_faces
+        assert step.accepted_orders == rollout.accepted_orders
+        assert step.post_trade_faces == rollout.post_trade_faces
+        # R55 不变量：projected_faces 必须能由 accepted_orders 的带符号面值独立重建
+        signed: dict[str, float] = {}
+        for order in rollout.accepted_orders:
+            face = float(order["face_value"]) * (1.0 if order["side"] == "buy" else -1.0)
+            signed[str(order["bond_code"])] = signed.get(str(order["bond_code"]), 0.0) + face
+        assert dict(rollout.projected_faces) == signed
+        if not rollout.projected_faces:
+            assert rollout.accepted_orders == ()
         assert step.rejected == rollout.rejected
         assert step.reject_reason == rollout.reject_reason
         assert step.gate_level == pytest.approx(rollout.gate_level)
@@ -644,7 +674,14 @@ def test_rollout_matches_step_across_action_types(market) -> None:
     assert rollout.records[1].action_outcome in {"executed", "scaled"}
     assert rollout.records[2].action_outcome in {"executed", "scaled"}
     assert rollout.records[2].projected_target is None
-    assert dict(rollout.records[2].projected_faces) == face_target
+    face_record = rollout.records[2]
+    # R55：请求是目标持仓面值；投影/接受订单是有方向的成交腿（本例只调增 10Y 1M）
+    assert dict(face_record.requested_faces) == face_target
+    assert dict(face_record.projected_faces) == {
+        face_record.accepted_orders[0]["bond_code"]: 1_000_000.0
+    }
+    assert face_record.accepted_orders[0]["side"] == "buy"
+    assert dict(face_record.post_trade_faces) == pytest.approx(face_target)
     rejected = rollout.records[3]
     assert rejected.rejected is True
     assert rejected.action_outcome == "rejected"
@@ -672,6 +709,7 @@ def test_rollout_scaled_faces_matches_step(market) -> None:
     rollout = env_roll.rollout(_native_policy(schedule), START, days[-1])
     _assert_records_equivalent(step_records, rollout.records)
 
+    accepted_22m = {code: 22_000_000.0 for code in requested}
     for record in (step_records[0], rollout.records[0]):
         assert record.action_outcome == "scaled"
         assert record.action_scale == pytest.approx(0.88, abs=1e-12)
@@ -681,11 +719,23 @@ def test_rollout_scaled_faces_matches_step(market) -> None:
         assert all(
             trade["scale"] == pytest.approx(0.88, abs=1e-12) for trade in record.executed_trades
         )
+        # R55 三阶段：请求 25M/腿、接受订单 22M/腿（+buy）、交易后期末持仓 22M/腿
+        assert dict(record.requested_faces) == requested
+        assert dict(record.projected_faces) == accepted_22m  # 带符号 +buy
+        assert len(record.accepted_orders) == 4
+        assert {order["side"] for order in record.accepted_orders} == {"buy"}
+        assert {order["face_value"] for order in record.accepted_orders} == {22_000_000.0}
+        assert {
+            order["bond_code"]: order["face_value"] for order in record.accepted_orders
+        } == accepted_22m
+        assert dict(record.post_trade_faces) == accepted_22m
         detail = record.substitution_detail
-        assert detail["projected_delta_faces"] == requested
-        assert detail["executed_faces"] == pytest.approx(
-            {code: 22_000_000.0 for code in requested}, abs=1e-9
-        )
+        assert detail["requested_faces"] == requested
+        assert detail["projected_faces"] == accepted_22m
+        assert detail["projected_faces_source"] == "accepted_orders"
+        assert detail["requested_delta_faces"] == requested  # 期初空仓 → 请求增量=目标
+        assert detail["post_trade_faces"] == accepted_22m
+        assert detail["executed_faces"] == pytest.approx(accepted_22m, abs=1e-9)
 
 
 def test_rollout_roll_cancellation_matches_step(market) -> None:
@@ -789,3 +839,72 @@ def test_rollout_terminal_state_and_lifecycle(market) -> None:
     assert reused.result is rollout2.result
     assert reused.terminate() is rollout2.terminal
     assert rollout2.terminal.nav_mark_to_market == pytest.approx(state.nav_mark_to_market, abs=1e-9)
+
+
+def test_krd_shape_projection_is_scaled_not_executed() -> None:
+    """R53：总 DV01 不变的 10Y→30Y 单桶转移，形状被闸门改变时不得记 executed。
+
+    构造：合成平坦 3% 曲线、默认约束、2019-01-28→02-01。目标 = 基准 KRD 但把
+    10Y 桶的 90% DV01 转入 30Y，保持总 DV01 不变。闸门按档位缩放 tilt 后总 DV01
+    比例仍 ≈1（旧实现因此记 executed），但逐桶最大偏差 >0 必须记 scaled，且
+    action_scale 不得为 1；step 与 rollout 同一场景逐字段一致。
+    """
+    cfg = get_config()
+    start, end = date(2019, 1, 28), date(2019, 2, 1)
+    # 曲线面板延伸到 episode 之后，保证末日成交的 T+1 结算日仍在日历覆盖内
+    index = pd.bdate_range(start, date(2019, 2, 8))
+    panel = pd.DataFrame(3.0, index=index, columns=sorted(CANONICAL_TENORS))
+    calendar = TradingCalendar.from_dates(panel.index)
+    days = calendar.trading_days_between(start, end)
+
+    probe = RebalanceEnv(panel, calendar, None, cfg, information_lag_days=0)
+    bench = dict(probe.reset(start, end).benchmark_krd)
+    moved = 0.9 * bench[10.0]
+    requested = dict(bench)
+    requested[10.0] = bench[10.0] - moved
+    requested[30.0] = bench[30.0] + moved
+    assert sum(requested.values()) == pytest.approx(sum(bench.values()), abs=1e-9)
+    notes = "R53 10Y→30Y 保持总 DV01"
+
+    step_env = RebalanceEnv(panel, calendar, None, cfg, information_lag_days=0)
+    step_env.reset(start, end)
+    _obs, step_record = step_env.step(ActionSpec(target_krd=requested, notes=notes))
+
+    def _check_shape_record(record: StepRecord) -> None:
+        assert record.action_outcome == "scaled"
+        assert record.action_outcome != "executed"
+        assert record.executed_trades
+        assert 0.0 < record.action_scale < 0.999
+        detail = record.substitution_detail
+        # 总 DV01 比例仍 ≈1（这正是旧实现误记 executed 的原因）
+        assert detail["total_dv01_ratio"] == pytest.approx(1.0, abs=1e-3)
+        deviation = detail["max_bucket_deviation"]
+        assert deviation > 0.0
+        assert deviation > detail["bucket_tolerance"]
+        assert detail["requested_krd"] == pytest.approx(requested)
+        # 单桶可定位：10Y 桶被改回（远超 1 元/bp），30Y 桶同样改变
+        assert abs(detail["projected_krd"][10.0] - requested[10.0]) > 1.0
+        assert abs(detail["projected_krd"][30.0] - requested[30.0]) > 1.0
+        assert "KRD 逐桶形状改变" in record.notes
+        assert "max_bucket_deviation" in record.notes
+
+    _check_shape_record(step_record)
+
+    # rollout 同一动作序列：逐字段一致，且首条记录同样是 scaled
+    def policy(ctx):
+        if ctx.as_of == start:
+            return TargetKRD(as_of=ctx.as_of, krd=requested, notes=notes)
+        return None
+
+    step_env2 = RebalanceEnv(panel, calendar, None, cfg, information_lag_days=0)
+    step_env2.reset(start, end)
+    step_records = [
+        step_env2.step(
+            ActionSpec(target_krd=requested, notes=notes) if day == start else ActionSpec()
+        )[1]
+        for day in days[:-1]
+    ]
+    roll_env = RebalanceEnv(panel, calendar, None, cfg, information_lag_days=0)
+    rollout = roll_env.rollout(policy, start, end)
+    _assert_records_equivalent(step_records, rollout.records)
+    _check_shape_record(rollout.records[0])

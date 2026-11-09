@@ -45,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", type=date.fromisoformat, default=None)
     parser.add_argument("--step", type=int, default=5)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument(
+        "--out-dir", type=Path, default=None, help="输出目录（默认 reports；测试用临时目录）"
+    )
     args = parser.parse_args(argv)
 
     cfg = get_config()
@@ -59,11 +62,12 @@ def main(argv: list[str] | None = None) -> int:
         metadata={"script": "scripts/run_protocol_smoke.py", "quick": args.quick},
     )
 
+    # 输入是**原始预期收益**（小数），协议用 z_scale=0.01 转 z：±0.005→±0.5，±0.01→±1
     scenarios = {
         "zero": 0.0,
-        "const_plus_half": 0.5,
-        "const_minus_half": -0.5,
-        "const_plus_one": 1.0,
+        "const_plus_half": 0.005,
+        "const_minus_half": -0.005,
+        "const_plus_one": 0.01,
     }
     rows: list[dict] = []
     for name, value in scenarios.items():
@@ -91,11 +95,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     table = pd.DataFrame(rows)
-    out = cfg.paths.abs("reports")
+    out = Path(args.out_dir) if args.out_dir is not None else cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
     table.to_csv(out / "protocol_smoke.csv", index=False, encoding="utf-8-sig")
+    from ficc.research.protocol import protocol_fingerprint
+
     manifest = {
         "protocol": protocol.describe(),
+        "fingerprint": protocol_fingerprint(cfg, protocol),
         "start": args.start.isoformat(),
         "end": end.isoformat(),
         "n_decision_days": len(decision_days),

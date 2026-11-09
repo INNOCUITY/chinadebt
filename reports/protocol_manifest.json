@@ -7,13 +7,16 @@
     "decision_step_days": 5,
     "label_target": "market_benchmark_net_return",
     "tilt_strength": 0.1,
+    "z_scale": 0.01,
+    "terminal_fee_treatment": "deduct_terminal_fees",
     "benchmark_version": "rolling",
     "rolling_policy_version": "roll_v1_trigger1y_parissue",
+    "rolling_trigger_years": 1.0,
     "sample_tag": "researched_sample",
     "cost_model": "engine_ledger_default",
     "metadata": {
       "script": "scripts/run_protocol_smoke.py",
-      "quick": true
+      "quick": false
     },
     "return_window_trading_days": 4,
     "clocks": {
@@ -33,9 +36,10 @@
       "comparison_rule": "跨模型比较时把所有策略采样到 decision_step_days 的同一决策日；RL 非决策日返回 hold（不主动交易）"
     }
   },
+  "fingerprint": "b6c17b9a97a342e089ece381508d1924dd59056fc5367f0d10dc4b62c7181043",
   "start": "2019-01-28",
-  "end": "2019-06-28",
-  "n_decision_days": 21,
+  "end": "2021-12-31",
+  "n_decision_days": 147,
   "scenarios": [
     "zero",
     "const_plus_half",

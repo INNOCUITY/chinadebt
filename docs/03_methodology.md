@@ -1286,9 +1286,13 @@ unsettled_cash/accrued_fees/liquidation_assumption`），默认**不强制平仓
 顺序见计划 §12.19。ML lag=1 与规则/RL 同日收盘后观察仍是不同政策信息集，公平比较前必须显式对齐。
 
 
-### 10.23 共同实验协议（protocol_v1_2026-11-08，冻结）
+### 10.23 共同实验协议（protocol_v1_2026-11-08，声明版，执行契约待验收）
 
 ML 与 RL 的跨模型比较必须先冻结同一协议；本模块只做协议与评估器，**不做模型研究**。
+
+**2026-11-09 独立复核**：下表属于设计约定，不表示所有约束已由代码强制执行。
+当前 RL 仍读取 ≤t，预测评估器不强制 5 日决策网格；不同目标/滚动参数可沿用同一版本。
+因此“时钟已经对齐、共同协议已冻结为训练基线”的结论暂不成立，详见 §10.24 / R51–R52。
 
 | 项目 | ML（监督学习） | RL（轨迹） | 共同约定 |
 |------|----------------|------------|----------|
@@ -1300,7 +1304,54 @@ ML 与 RL 的跨模型比较必须先冻结同一协议；本模块只做协议�
 | 成本/风险 | 同一引擎账本（价差/费用/融资/滚动） | 同一引擎 | 价差只扣一次 |
 | 样本 | `researched_sample`（2019–2025） | 同 | 不得改称 untouched holdout |
 
-**评估器**：`evaluate_predictions(predictions, panel, funding, calendar, cfg, protocol)` 把冻结
-预测映射成仓位、用同一 `run_backtest` 跑 rolling 基准，报告净收益、active excess、TE、成本、
-换手、暴露、拒单率；`run_protocol_smoke.py` 只用零/常数预测验证映射与成本口径
-（`reports/protocol_smoke.csv`、`protocol_manifest.json`），**不是模型研究**。
+**强制约束（R51/R52）**：
+
+- **决策网格公共入口**：`ExperimentProtocol.decision_dates(calendar,start,end)` 是唯一网格；
+  `evaluate_predictions` 对网格外的预测日期直接抛 `ProtocolError`（连续四天预测不再各自产生信号）；
+  RL 侧 `RebalanceEnv(information_lag_days=1, decision_step_days=k)` 也在同一网格上调用 policy，
+  非网格日强制 hold（`off_grid_hold`）。
+- **信息截止**：ML as-of 只看到 ≤t−1；RL 观测/策略上下文同样截止到 t−lag（2019-01-28 决策可见
+  截止 2019-01-25），持仓/NAV 仍为 t 日收盘状态。
+- **协议绑定实际配置**：`protocol_v1` 冻结 market 目标、holding=decision+5、step=5、tilt=0.10、
+  rolling_trigger=1.0、z_scale=0.01、终止费用口径；修改任一项必须升版本，否则抛 `ProtocolError`。
+  `protocol_config` 会把实际 cfg 的 rolling trigger/基准版本对齐并**校验**（1.99 年触发不再能宣称
+  trigger1y）；`protocol_fingerprint(cfg, protocol)` 把协议 + 实际经济配置（lot/死区/阈值/价差/费率）
+  一起哈希，配置变化指纹必变。
+- **预测→z**：模型输出是**原始预期收益（小数）**，`z = clip(raw / z_scale, −1, 1)`，z_scale=0.01
+  表示 +1% 预期收益→满倾斜；该尺度属于协议，不按验证集结果调整。
+- **终止费用**：训练回报 `training_objective(ledger_reward, accrued_terminal_fees)` 默认
+  `ledger_reward − fees`（`deduct_terminal_fees`），与累计 reward 仅按 NAV 闭合的口径显式区分；
+  gross 口径需另立协议版本。
+- **产物范围**：`run_protocol_smoke.py` 默认全量 2019-01-28→2021-12-31（731 日、147 个决策日，
+  zero 超额 0bp、成本 85,601.84 元）；`--quick` 仅 104 日、成本 79,915.68 元，测试用 `--out-dir`
+  隔离，不得覆盖仓库正式冒烟产物。
+
+**评估器**：`evaluate_predictions(...)` 把冻结预测映射成仓位、用同一 `run_backtest` 跑 rolling 基准，
+报告净收益、active excess、TE、成本、换手、暴露、拒单率；`run_protocol_smoke.py` 只用零/常数预测
+验证映射与成本口径，**不是模型研究**。
+
+### 10.24 轨迹修复与共同协议独立复核（2026-11-09）
+
+审查 `8ebf2aa`。R47 相邻 NAV 奖励、R49 终止快照生命周期和 R50 默认基线/重叠披露已取得
+可复现修复；R48 原生动作、Hold/换券与面值缩放的两路径一致性有实质改善。全量 ML dataset/
+metrics 与提交产物一致；Ridge 仍差于 train_mean 和 literal_zero，这不构成交易 alpha。
+
+**尚未关闭的执行契约**：
+
+- R51：ML 的 lag=1 与 RL 的当日 MarketContext 信息集不同。统一 policy 观测截止和决策日 anchor，
+  同时保留执行/估值引擎的正确当日价格；禁止用“都使用同一个引擎”代替信息集一致证明。
+- R52：协议 ID 必须绑定实际经济配置。当前可在同一 v1 下切换 active-excess、持有期或 1.99 年
+  换券触发；manifest 只反映声明。需要配置校验与内容指纹后才能作为冻结基线。
+- R53：KRD 总量比值无法判断形状投影。平 3% 反例中总量近似不变，单桶目标改动 14,692.73 元/bp，
+  动作仍记 executed；需分别记录总风险、主动向量变化与接受档。
+- R54–R55：候选的 DV01 字段不能填面值，订单必须有方向；TargetFaces 原始持仓目标、接受订单增量
+  和交易后持仓必须分列。25M→22M 的 scale 已正确，但 StepRecord 的 submitted_faces 仍是 25M。
+- R56：冒烟测试不应覆盖正式产物。quick 为 104 日、成本 79,915.68 元；完整默认为 731 日、
+  成本 85,601.84 元，zero 超额均为 0。必须连同范围报告；本次提交产物实际是 quick。
+
+**训练前还需选定**：收益预测到 z 的单位/尺度；未付费用如何调整最终训练回报；持有/标签与再平衡
+窗口的关系。当前 net_terminal_value 已扣未付费用，逐日 reward 仍按账本 NAV 闭合，二者不可混称。
+默认 label step=5 无重叠；step=4 接触端点不能计作共享收益增量。两路径对拍之外，验收应直接对照
+信息截止、接受候选、最终交易与单位，避免共同错误通过对拍。
+
+详细反例与实跑范围见 code.md C-118/R51–R56，推进顺序见计划 §12.22。本轮只修改文档。

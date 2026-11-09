@@ -17,8 +17,16 @@
 - **终止义务**：``terminate()`` 按市价估值、不强制平仓，单独披露未结算成交、
   待结算现金（买入负/卖出正）与未结算费用；reward 只取账本 NAV 的逐日变化，
   不额外计入终止清算收益；
-- **as-of**：观测只包含 ``≤ 当前交易日`` 的曲线/持仓/NAV，step 日之后的数据
-  不进入 ``Observation``。
+- **as-of / 信息滞后（R51）**：持仓/现金/NAV 是当天收盘状态（t 日已知）；而
+  **曲线/历史/基准**只能看到 ``available_through = t − information_lag_days``
+  （默认 1 个交易日，中债 t 日收盘估值当日不可用）。``Observation.as_of`` 仍是
+  episode 当前交易日，另用 ``metadata["available_through"]`` 披露信息截止日。
+  策略调用上下文（step 的 scripted wrapper 与 rollout 的 policy wrapper）同样只把
+  ``curve/history/benchmark`` 截到 ``available_through``；执行/估值/闸门仍用当日价格。
+- **决策网格（R51）**：episode 起始交易日为索引 0；``decision_step_days > 1`` 时只有
+  ``索引 % step == 0`` 的交易日允许策略给出目标，其余交易日强制 hold（不调用 policy、
+  不产生主动订单），记录 ``notes`` 含 ``off_grid_hold``。step 与 rollout 共用该网格，
+  避免调用方各自 ``days[::5]`` 造成错位。滚动换券/风控熔断是引擎外生事件，不受网格约束。
 
 实现方式与代价（**必须披露**）
 ------------------------------
@@ -54,7 +62,7 @@ from ficc.ml.asof import _coerce_date
 from ficc.portfolio.benchmark import build_benchmark
 from ficc.portfolio.constraints import portfolio_risk
 from ficc.portfolio.rolling import RollingUniverse
-from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
+from ficc.portfolio.types import BenchmarkPortfolio, MarketContext, TargetFaces, TargetKRD
 from ficc.pricing.conventions import accrued_interest
 from ficc.utils.calendar import TradingCalendar
 
@@ -268,14 +276,18 @@ class TerminalState:
 
 @dataclass(frozen=True)
 class Observation:
-    """``as_of`` 时点的观测（**不含任何未来数据**）。
+    """``as_of`` 时点的观测（**信息截止早于 as_of，R51**）。
 
-    - ``curve``：当日曲线；
-    - ``benchmark_krd``：基准的 KRD 向量（元/bp）；
-    - ``positions``：当日持仓快照（债券级长表；reset 首日为空表）；
-    - ``cash`` / ``nav``：同一账本的已结算现金与 NAV；
-    - ``history``：截至当日（含）的曲线面板切片，index.max() ≤ as_of；
-    - ``metadata``：episode 名、剩余步数、来源说明等。
+    - ``as_of``：episode 当前交易日（持仓/NAV 的时点）；
+    - ``curve``：``available_through = as_of − information_lag_days`` 的曲线，
+      因此 ``curve.as_of == available_through ≤ as_of``；
+    - ``benchmark_krd``：用 ``available_through`` 曲线与滚动券池估值的基准 KRD（元/bp）；
+    - ``positions``：``as_of`` 当日持仓快照（债券级长表；reset 首日为空表）；
+    - ``cash`` / ``nav``：同一账本在 ``as_of`` 的已结算现金与 NAV；
+    - ``history``：截至 ``available_through``（含）的曲线面板切片，
+      ``index.max() == available_through``；
+    - ``metadata``：episode 名、``as_of`` / ``available_through`` /
+      ``information_lag_days`` / ``decision_step_days`` / 网格索引等。
     """
 
     as_of: date
@@ -298,16 +310,33 @@ class StepRecord:
     ``policy_actions``；当日机械换券实际提交的面值另记在 ``projected_faces``（仅作
     披露，不属于原动作），原动作若被取消则 ``action_outcome="cancelled_by_policy"``。
 
+    **三阶段面值（R55）**——不能再用原请求冒充最终提交/成交：
+
+    - ``requested_faces``：原动作的**目标持仓面值**（仅 ``target_faces`` 动作；
+      ``target_krd``/hold 为空）；
+    - ``projected_faces``：**最终接受订单的带符号面值**（``(code, +buy/−sell)``，
+      来自引擎 ``gate_decisions.projected_faces``）。无成交/拒单/被风控替代时为空；
+      滚动政策日保留机械换券订单披露，并由 ``substitution_detail.projected_faces_source``
+      标注 ``policy_roll``，不得混入原动作；
+    - ``accepted_orders``：最终接受订单明细（``bond_code/side/face_value/clean_price/
+      spread_cost``，来自 ``gate_decisions.accepted_orders``）；
+    - ``post_trade_faces``：该交易日 ``result.positions`` 的**期末多头面值**（不是请求值，
+      也不是订单增量）。
+
     ``executed_trades`` 是账本实际提交的成交（可能为空），每条带当日闸门尝试次数
     ``attempted`` 与动作规模比 ``scale``（与 ``action_scale`` 相同）。``substitution_detail``
-    记录原始动作、提交目标与实际成交的 face/dv01 差异；``action_scale`` 是提交
-    目标相对原始动作的规模比（KRD 用 ``attempted[-1]`` 的 total_dv01 / 原始 total_dv01；
-    faces 用实际买入面值 / 请求买入面值）。
+    记录原始动作、接受订单与实际成交的 face/dv01/逐桶差异。
+    ``action_scale`` 是提交目标相对原始动作的**保守**规模比：KRD 取总 DV01 比例，
+    但若逐桶形状有改动（``max_bucket_deviation > bucket_tolerance``，R53）则取
+    ``min(total_ratio, 1 − max_bucket_deviation / max(1, Σ|orig|))``，保证形状缩放不会
+    被记为 ``executed``；faces 用实际买入面值 / 请求买入面值。
+
     ``reward = nav_after - nav_before``：``nav_before`` 是**该交易日的前一交易日 NAV**
     （step 中即上一记录 NAV），与订单 ``signal_date`` 无关，因此 hold/无订单日也有
     有限 reward；同一账本、同一成本口径，价差不重复扣。
     动作结果：cancelled_by_policy > rejected > hold（持仓不动）> no_trade_deadband
-    （非 hold 且无成交）> scaled（``action_scale`` 明显小于 1）> executed。
+    （非 hold 且无成交）> scaled（``action_scale`` 明显小于 1 或 KRD 逐桶形状改变）>
+    executed。非决策网格日强制 hold，``notes`` 含 ``off_grid_hold``（R51）。
     """
 
     date: date
@@ -332,6 +361,10 @@ class StepRecord:
     action_scale: float = 1.0
     policy_actions: tuple[PolicyAction, ...] = ()
     substitution_detail: dict[str, Any] = field(default_factory=dict)
+    # R55：原始请求面值 / 接受订单 / 交易后期末面值（三者独立）
+    requested_faces: tuple[tuple[str, float], ...] = ()
+    accepted_orders: tuple[dict[str, Any], ...] = ()
+    post_trade_faces: tuple[tuple[str, float], ...] = ()
     # 性能披露：本步从 episode 起点重放的交易日数与耗时（O(n²) 接口原型的证据）
     replay_days: int = 0
     replay_cost_seconds: float = 0.0
@@ -351,8 +384,10 @@ class Rollout:
     ``records`` 与 ``step`` 的 :class:`StepRecord` 同契约（共用同一轨迹构造器）；
     ``result`` 是完整 :class:`BacktestResult`（NAV/成交/约束/归因输入）；``terminal``
     是本次 episode 的 :class:`TerminalState`（与随后 ``env.terminate()`` 返回同一快照）。
-    policy 在引擎的每个信号日（收盘后）被调用，只看到该日及之前的 ``MarketContext``；
-    执行仍按 t+1 成交与同一闸门。
+    policy 只在该 episode 的决策网格日（索引 % ``decision_step_days`` == 0，R51）被
+    调用；收到的 ``MarketContext`` 已按 ``information_lag_days`` 截断
+    （``curve/history/benchmark`` 截止 ``available_through``，``nav/cash/positions``
+    仍是决策日 t 收盘状态）。执行仍按 t+1 成交与同一闸门。
     """
 
     records: tuple[StepRecord, ...]
@@ -371,13 +406,30 @@ class Event(NamedTuple):
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
-def _curve_at(panel: pd.DataFrame, tenors: tuple[float, ...], day: date) -> Curve:
+def _curve_at(
+    panel: pd.DataFrame,
+    tenors: tuple[float, ...],
+    day: date,
+    *,
+    allow_missing: bool = False,
+) -> Curve:
+    """取 ``day`` 的曲线；``allow_missing`` 时只用当日有报价的期限点。
+
+    R51 的滞后视图会遇到真实数据缺口（例如 2019-01-25 缺 2Y 报价，2Y 自 01-28
+    才有）。此时不能退回更早的完整曲线（那会破坏 lag=1 语义），而是用当日可得
+    期限点的 Hermite 插值求缺失期限——这是信息截止日内可计算的，不是未来数据。
+    非滞后路径保持严格校验（``allow_missing=False``），缺期限仍报错。
+    """
     row = panel.loc[pd.Timestamp(day)].reindex(list(tenors))
     if row.isna().any():
-        raise ValueError(f"{day} 曲线存在缺失期限：{row[row.isna()].index.tolist()}")
+        if not allow_missing:
+            raise ValueError(f"{day} 曲线存在缺失期限：{row[row.isna()].index.tolist()}")
+        row = row.dropna()
+        if row.empty:
+            raise ValueError(f"{day} 曲线没有任何期限报价")
     return Curve(
         as_of=day,
-        tenors=np.asarray(tenors),
+        tenors=np.asarray([float(t) for t in row.index]),
         rates=tuple(row.values),
         method="hermite",
     )
@@ -402,6 +454,112 @@ def _to_date(value: Any) -> date:
 
 def _empty_frame() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+# 非决策网格日强制 hold 的机器可读前缀（R51，测试/审计按子串检索）
+_OFF_GRID_NOTE = "off_grid_hold"
+
+
+def _lagged_day(
+    day: date,
+    *,
+    calendar: TradingCalendar,
+    lag: int,
+    panel_first: date,
+) -> tuple[date, bool]:
+    """返回 ``(available_through, clamped)``：``day − lag`` 个交易日的信息截止日。
+
+    ``lag <= 0`` 时等于 ``day`` 且不截断（向后兼容旧 as-of 行为）。若回退越过
+    panel/日历起点，则截到 ``panel_first`` 并标记 ``clamped=True``——宁可少一天
+    信息也不抛异常，metadata 会显式披露该截断。
+    """
+    if lag <= 0:
+        return day, False
+    out = day
+    for _ in range(lag):
+        try:
+            out = calendar.prev_trading_day(out, 1)
+        except ValueError:
+            return panel_first, True
+    if out < panel_first:
+        return panel_first, True
+    return out, False
+
+
+def _benchmark_portfolio(
+    panel: pd.DataFrame,
+    tenors: tuple[float, ...],
+    calendar: TradingCalendar,
+    cfg: Config,
+    day: date,
+) -> BenchmarkPortfolio:
+    """在 ``day`` 的曲线/滚动券池上重建基准组合（供滞后策略上下文使用）。
+
+    允许当日部分期限缺报价（R51 真实数据缺口）：缺失点由当日可得节点插值，不使用
+    未来数据，也不退回更早日期。
+    """
+    curve = _curve_at(panel, tenors, day, allow_missing=True)
+    universe = RollingUniverse.build(curve, day, cfg=cfg).active()
+    return build_benchmark(curve, day, bonds=universe, calendar=calendar, cfg=cfg)
+
+
+class _LaggedView:
+    """把引擎当日 ``MarketContext`` 的信息集截到 ``available_through``（R51）。
+
+    只替换 ``curve/history/benchmark``；``nav/cash/positions`` 仍是决策日 t 的收盘
+    状态（持仓是 t 日已知）。``as_of`` 保留引擎的决策日 t（信号日/成交日语义不变），
+    信息截止由 ``curve.as_of``/``history.index.max()`` 唯一表达。``lag == 0`` 时
+    原样返回，保证旧行为逐位不变。基准组合按交易日缓存，避免逐日重复构建。
+    """
+
+    def __init__(
+        self,
+        *,
+        panel: pd.DataFrame,
+        tenors: tuple[float, ...],
+        calendar: TradingCalendar,
+        cfg: Config,
+        information_lag_days: int,
+    ) -> None:
+        self._panel = panel
+        self._tenors = tenors
+        self._calendar = calendar
+        self._cfg = cfg
+        self._lag = int(information_lag_days)
+        self._panel_first = _to_date(panel.index[0])
+        self._benchmarks: dict[date, BenchmarkPortfolio] = {}
+
+    def available_through(self, day: date) -> tuple[date, bool]:
+        """``day`` 的信息截止日与该日是否因面板起点被截断。"""
+        return _lagged_day(
+            day, calendar=self._calendar, lag=self._lag, panel_first=self._panel_first
+        )
+
+    def benchmark(self, day: date) -> BenchmarkPortfolio:
+        """``day`` 的基准组合（按日缓存）。"""
+        bench = self._benchmarks.get(day)
+        if bench is None:
+            bench = _benchmark_portfolio(self._panel, self._tenors, self._calendar, self._cfg, day)
+            self._benchmarks[day] = bench
+        return bench
+
+    def context(self, ctx: MarketContext) -> MarketContext:
+        """返回策略可见的滞后上下文；``lag == 0`` 或已截到起点时原样返回。"""
+        if self._lag <= 0:
+            return ctx
+        available, _clamped = self.available_through(ctx.as_of)
+        if available == ctx.as_of:
+            return ctx
+        return MarketContext(
+            as_of=ctx.as_of,
+            curve=_curve_at(self._panel, self._tenors, available, allow_missing=True),
+            history=self._panel.loc[: pd.Timestamp(available)],
+            benchmark=self.benchmark(available),
+            nav=ctx.nav,
+            cash=ctx.cash,
+            positions=ctx.positions,
+            cfg=ctx.cfg,
+        )
 
 
 def _normalise_action(raw: Any) -> ActionSpec:
@@ -452,7 +610,12 @@ def hold_target_krd(ctx: MarketContext, *, calendar: TradingCalendar, cfg: Confi
 
 
 class _ScriptedStrategy:
-    """按 signal_date 查表输出目标的策略（环境内部使用；不对外承诺 API）。"""
+    """按 signal_date 查表输出目标的策略（环境内部使用；不对外承诺 API）。
+
+    ``lagged_view`` 非空时，策略实际收到的是 R51 的滞后 ``MarketContext``
+    （``curve/history/benchmark`` 截止 ``available_through``）；schedule 仍按决策日
+    ``ctx.as_of`` 查表，因此信号日/成交日语义不变。
+    """
 
     def __init__(
         self,
@@ -461,14 +624,18 @@ class _ScriptedStrategy:
         *,
         calendar: TradingCalendar,
         cfg: Config,
+        lagged_view: _LaggedView | None = None,
     ) -> None:
         self.name = name
         self._schedule = schedule
         self._calendar = calendar
         self._cfg = cfg
+        self._lagged_view = lagged_view
         self.emitted: dict[date, TargetKRD | TargetFaces | None] = {}
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD | TargetFaces | None:
+        if self._lagged_view is not None:
+            ctx = self._lagged_view.context(ctx)
         action = self._schedule.get(ctx.as_of)
         if action is None or action.action_type == "hold":
             # hold：返回 None，引擎不生成 pending（不主动交易）；不是"保持 KRD"求解。
@@ -503,6 +670,14 @@ class RebalanceEnv:
         与 :func:`run_backtest` 完全相同的输入；``cfg=None`` 时读全局配置。
     force_daily_rebalance : bool, default True
         把决策频率覆写为 daily，使每个 ``step`` 都能生成一个待执行信号。
+    information_lag_days : int, default 1
+        信息滞后（交易日数，R51）。观测/策略上下文中的 ``curve/history/benchmark``
+        只到 ``t − information_lag_days``；持仓/现金/NAV 仍是 t 日收盘状态。
+        ``0`` = 旧行为（策略可见当日曲线），仅用于对照/回归测试。
+    decision_step_days : int, default 1
+        决策网格步长（R51）。episode 起始交易日为索引 0，只有
+        ``索引 % decision_step_days == 0`` 的交易日允许策略给出目标；其余日强制
+        hold 且记录 ``off_grid_hold``。``1`` = 每个交易日都可决策（旧行为）。
     """
 
     def __init__(
@@ -513,6 +688,8 @@ class RebalanceEnv:
         cfg: Config | None = None,
         *,
         force_daily_rebalance: bool = True,
+        information_lag_days: int = 1,
+        decision_step_days: int = 1,
     ) -> None:
         if not isinstance(panel, pd.DataFrame) or panel.empty:
             raise ValueError("panel 必须是非空 DataFrame")
@@ -520,6 +697,14 @@ class RebalanceEnv:
             raise TypeError("calendar 必须是 TradingCalendar")
         if funding is not None and not isinstance(funding, pd.Series):
             raise TypeError("funding 必须是 pandas.Series 或 None")
+        if isinstance(information_lag_days, bool) or not isinstance(information_lag_days, int):
+            raise TypeError("information_lag_days 必须是整数")
+        if information_lag_days < 0:
+            raise ValueError("information_lag_days 不能为负")
+        if isinstance(decision_step_days, bool) or not isinstance(decision_step_days, int):
+            raise TypeError("decision_step_days 必须是整数")
+        if decision_step_days < 1:
+            raise ValueError("decision_step_days 必须 >= 1")
 
         resolved = get_config() if cfg is None else cfg
         if force_daily_rebalance and resolved.backtest.rebalance != "daily":
@@ -531,6 +716,16 @@ class RebalanceEnv:
         self._funding = funding
         self._cfg = resolved
         self._tenors = tuple(float(t) for t in CANONICAL_TENORS)
+        self._information_lag_days = information_lag_days
+        self._decision_step_days = decision_step_days
+        self._lagged_view = _LaggedView(
+            panel=self._panel,
+            tenors=self._tenors,
+            calendar=self._calendar,
+            cfg=self._cfg,
+            information_lag_days=information_lag_days,
+        )
+        self._day_index: dict[date, int] = {}
 
         self._start: date | None = None
         self._end: date | None = None
@@ -552,6 +747,32 @@ class RebalanceEnv:
     def cfg(self) -> Config:
         """环境实际使用的配置（已把 rebalance 覆写为 daily；对照实验必须用它）。"""
         return self._cfg
+
+    @property
+    def information_lag_days(self) -> int:
+        """信息滞后交易日数（R51；默认 1）。"""
+        return self._information_lag_days
+
+    @property
+    def decision_step_days(self) -> int:
+        """决策网格步长（R51；默认 1 = 每日可决策）。"""
+        return self._decision_step_days
+
+    def available_through(self, day: date) -> date:
+        """``day`` 决策可见的信息截止日（``day − lag`` 个交易日，必要时截到面板起点）。"""
+        return self._lagged_view.available_through(day)[0]
+
+    def is_decision_day(self, day: date) -> bool:
+        """``day`` 是否落在 episode 决策网格上（以 reset/rollout 起点为索引 0）。"""
+        if self._decision_step_days <= 1:
+            return True
+        index = self._day_index.get(day)
+        if index is not None:
+            return index % self._decision_step_days == 0
+        if self._start is None:
+            return True
+        offset = len(self._calendar.trading_days_between(self._start, day)) - 1
+        return offset >= 0 and offset % self._decision_step_days == 0
 
     @property
     def result(self) -> BacktestResult | None:
@@ -621,6 +842,7 @@ class RebalanceEnv:
         self._start = days[0]
         self._end = days[-1]
         self._days = tuple(days)
+        self._day_index = {day: index for index, day in enumerate(days)}
         self._cursor = days[0]
         self._strategy_name = strategy_name
         self._schedule = {}
@@ -644,6 +866,10 @@ class RebalanceEnv:
         滚动日：原 action 的 pending 被机械换券取消时，``projected_target`` 为
         ``None``、``action_outcome="cancelled_by_policy"``；机械换券只出现在
         ``policy_actions``。风控熔断替代原 action 时同样记 ``cancelled_by_policy``。
+
+        R51：``decision_step_days > 1`` 且当前信号日不在网格上时，传入的动作被强制
+        替换为 hold（不进入 schedule、不产生主动订单），记录 ``notes`` 含
+        ``off_grid_hold``；与 :meth:`rollout` 的网格判定完全一致。
         """
         if self._cursor is None or self._start is None or self._end is None:
             raise RuntimeError("必须先调用 reset 再 step")
@@ -658,9 +884,18 @@ class RebalanceEnv:
             raise RuntimeError(f"下一交易日 {trade_date} 超出 episode 终点 {self._end}")
         previous_faces = self._positions_at(signal_date)
 
+        off_grid = not self.is_decision_day(signal_date)
+        if off_grid:
+            # 非决策日：忽略调用方动作，强制 hold；不进入 schedule → 引擎无 pending。
+            action = ActionSpec(notes=_OFF_GRID_NOTE)
+
         self._schedule[signal_date] = action
         strategy = _ScriptedStrategy(
-            self._strategy_name, self._schedule, calendar=self._calendar, cfg=self._cfg
+            self._strategy_name,
+            self._schedule,
+            calendar=self._calendar,
+            cfg=self._cfg,
+            lagged_view=self._lagged_view,
         )
         replay_start = time.perf_counter()
         result = run_backtest(
@@ -693,6 +928,7 @@ class RebalanceEnv:
             emitted=strategy.emitted.get(signal_date),
             replay_days=step_replay_days,
             replay_cost_seconds=replay_seconds,
+            off_grid=off_grid,
         )
 
         self._records.append(record)
@@ -729,6 +965,11 @@ class RebalanceEnv:
         限制：引擎在风控熔断日**不调用策略**（直接以基准中性目标替代），rollout 因此
         无法观测被替代的原始动作，该日 ``original_action`` 回落为 hold；要逐字段对齐
         该类日期，需要引擎暴露被替代动作或在熔断日仍调用策略（与逐档 candidate 一并）。
+
+        R51：policy 收到的是滞后 ``MarketContext``（``curve/history/benchmark`` 截止
+        ``available_through``，``nav/cash/positions`` 为决策日 t 收盘状态）；非决策网格
+        日不调用 policy，直接返回 None 并记录 ``off_grid_hold``。网格以本次 ``start``
+        交易日为索引 0，与 :meth:`step`（reset 起点）同一规则。
         """
         start = _coerce_date(start, name="start")
         end = _coerce_date(end, name="end")
@@ -736,8 +977,13 @@ class RebalanceEnv:
         if len(days) < 2:
             raise ValueError(f"rollout [{start}, {end}] 内交易日不足 2 天")
         actions: dict[date, ActionSpec] = {}
+        day_index = {day: index for index, day in enumerate(days)}
+        grid_days = frozenset(
+            days[index] for index in range(0, len(days), self._decision_step_days)
+        )
 
         rollout_name = name
+        lagged_view = self._lagged_view
 
         class _PolicyStrategy:
             @property
@@ -745,7 +991,12 @@ class RebalanceEnv:
                 return rollout_name
 
             def target_krd(self, ctx: MarketContext) -> TargetKRD | TargetFaces | None:
-                action = _normalise_action(policy(ctx))
+                if ctx.as_of not in grid_days:
+                    # 非决策日：不调用 policy，强制 hold（无 pending → 无主动订单）。
+                    actions[ctx.as_of] = ActionSpec(notes=_OFF_GRID_NOTE)
+                    return None
+                decision_ctx = lagged_view.context(ctx)
+                action = _normalise_action(policy(decision_ctx))
                 actions[ctx.as_of] = action
                 if action.is_hold:
                     return None
@@ -778,16 +1029,17 @@ class RebalanceEnv:
         for index, day in enumerate(days[1:], start=1):
             decision = decisions.get(day)
             signal_date = decision.get("signal_date") if decision is not None else None
-            action = actions.get(signal_date) if signal_date is not None else None
-            if action is None and decision is not None and decision.get("source") == "policy_roll":
+            prior_day = days[index - 1]
+            if decision is not None and signal_date is not None:
+                decision_day = _to_date(signal_date)
+            else:
                 # 滚动政策目标以 pending.as_of 为信号日；无 pending 时引擎回落到前一交易日。
-                action = actions.get(self._calendar.prev_trading_day(day, 1))
+                decision_day = prior_day
+            action = actions.get(decision_day)
             if action is None:
                 action = ActionSpec()
-            prior_day = days[index - 1]
-            previous_faces = self._positions_in(
-                result, signal_date if signal_date is not None else prior_day
-            )
+            off_grid = day_index.get(decision_day, 0) % self._decision_step_days != 0
+            previous_faces = self._positions_in(result, decision_day)
             # R47：reward 一律取相邻估值日 NAV 差，与订单 signal_date 无关。
             records.append(
                 self._build_step_record(
@@ -800,6 +1052,7 @@ class RebalanceEnv:
                     decision=decision,
                     replay_days=len(days),
                     replay_cost_seconds=0.0,
+                    off_grid=off_grid,
                 )
             )
         terminal = self._terminal_state(result, days[-1])
@@ -807,6 +1060,7 @@ class RebalanceEnv:
         self._start = days[0]
         self._end = days[-1]
         self._days = tuple(days)
+        self._day_index = dict(day_index)
         self._cursor = days[-1]
         self._strategy_name = name
         self._schedule = dict(actions)
@@ -945,12 +1199,19 @@ class RebalanceEnv:
         decision: dict[str, Any] | None = None,
         replay_days: int = 0,
         replay_cost_seconds: float = 0.0,
+        off_grid: bool = False,
     ) -> StepRecord:
-        """共用轨迹构造器（R47/R48）：gate decision + trades + rolls + nav → StepRecord。
+        """共用轨迹构造器（R47/R48/R51/R53/R55）：decision + trades + rolls + nav → record。
 
         ``step``（逐日重放）与 ``rollout``（单次回放）**都调用本函数**，因此 record 的
         语义逐项相同；唯一允许不同的是 ``replay_days/replay_cost_seconds``（性能披露）
         以及成交 ``trade_id``（含策略名）。
+
+        - R51：``off_grid`` 为真时在 ``notes`` 追加 ``off_grid_hold``，且调用方已把
+          动作替换为 hold；
+        - R53：KRD 动作同时比较**逐桶**投影偏差，形状改变即使总 DV01 不变也记 ``scaled``；
+        - R55：``requested_faces``（原请求）与 ``projected_faces``（最终接受订单的带符号
+          面值）/``accepted_orders``/``post_trade_faces``（期末持仓）分开记录。
         """
         decision = self._gate_decision(result, day) if decision is None else decision
         constraints = result.constraints
@@ -989,11 +1250,17 @@ class RebalanceEnv:
         cancelled_by_policy = bool(
             (not action.is_hold and policy_source == "policy_roll") or risk_off
         )
-        projected_target, projected_faces = self._projected_action_target(
+        projected_target, requested_faces, projected_faces, accepted_orders = self._action_views(
             action,
             decision=decision,
             cancelled_by_policy=cancelled_by_policy,
             emitted=emitted,
+        )
+        krd_shape = self._krd_shape_deviation(
+            result=result,
+            day=day,
+            action=action,
+            projected_target=projected_target,
         )
         rejected = bool(gate_rejected and not cancelled_by_policy and not action.is_hold)
         reject_reason = gate_reject_reason if rejected else ""
@@ -1006,6 +1273,7 @@ class RebalanceEnv:
                 projected_faces=projected_faces,
                 executed_trades=executed_trades,
                 previous_faces=previous_faces,
+                krd_shape=krd_shape,
             )
         )
         # 每笔成交同时带上当日闸门尝试次数与动作规模比（审计可独立读取）。
@@ -1022,7 +1290,14 @@ class RebalanceEnv:
             action_outcome = "hold"
         elif not executed_trades:
             action_outcome = "no_trade_deadband"
-        elif action_scale < 0.999 or action_scale > 1.001:
+        elif (
+            action_scale < 0.999
+            or action_scale > 1.001
+            or (
+                krd_shape is not None
+                and krd_shape["max_bucket_deviation"] > krd_shape["bucket_tolerance"]
+            )
+        ):
             action_outcome = "scaled"
         else:
             action_outcome = "executed"
@@ -1040,19 +1315,26 @@ class RebalanceEnv:
             gate_attempts=gate_attempts,
             action_scale=action_scale,
             risk_off=risk_off,
+            off_grid=off_grid,
+            krd_shape=krd_shape,
         )
+        post_trade_faces = tuple(sorted(self._positions_in(result, day).items()))
         substitution_detail = self._substitution_detail(
             action=action,
             action_outcome=action_outcome,
             policy_source=policy_source,
             projected_target=projected_target,
+            requested_faces=requested_faces,
             projected_faces=projected_faces,
+            accepted_orders=accepted_orders,
+            post_trade_faces=post_trade_faces,
             executed_trades=executed_trades,
             previous_faces=previous_faces,
             action_scale=action_scale,
             gate_attempts=gate_attempts,
             reject_reason=reject_reason,
             cancelled_by_policy=cancelled_by_policy,
+            krd_shape=krd_shape,
         )
         return StepRecord(
             date=day,
@@ -1076,6 +1358,9 @@ class RebalanceEnv:
             action_scale=action_scale,
             policy_actions=policy_actions,
             substitution_detail=substitution_detail,
+            requested_faces=requested_faces,
+            accepted_orders=accepted_orders,
+            post_trade_faces=post_trade_faces,
             replay_days=replay_days,
             replay_cost_seconds=replay_cost_seconds,
             attempts_detail=tuple(decision.get("attempts_detail") or ()) if decision else (),
@@ -1110,43 +1395,108 @@ class RebalanceEnv:
             out[str(code)] = face
         return out
 
-    def _projected_action_target(
+    def _action_views(
         self,
         action: ActionSpec,
         *,
         decision: dict[str, Any] | None,
         cancelled_by_policy: bool,
         emitted: TargetKRD | TargetFaces | None = None,
-    ) -> tuple[TargetKRD | None, tuple[tuple[str, float], ...]]:
-        """只返回**原动作**经闸门后的提交目标；政策换券目标不写入 projected_target。
+    ) -> tuple[
+        TargetKRD | None,
+        tuple[tuple[str, float], ...],
+        tuple[tuple[str, float], ...],
+        tuple[dict[str, Any], ...],
+    ]:
+        """返回 ``(projected_target, requested_faces, projected_faces, accepted_orders)``。
 
-        滚动日（``source == "policy_roll"``）``projected_target`` 恒为 ``None``；当日机械
-        换券实际提交的逐腿面值记入 ``projected_faces``（披露用途，不属于原动作），
-        政策目标本身只通过 ``policy_actions`` / ``projected_faces`` 可见。
+        R55：``requested_faces`` 只来自原动作（``target_faces`` 的目标持仓面值）；
+        ``projected_faces`` 是**最终接受订单的带符号面值**（``+buy/−sell``），来自引擎
+        ``gate_decisions.projected_faces``，不再用原请求冒充。拒单/无成交为空；滚动政策
+        日保留机械换券订单披露（与 ``policy_actions`` 一致），由 substitution_detail 标注
+        ``projected_faces_source="policy_roll"``，不混入原动作。
+
+        ``projected_target`` 只表示原动作经闸门后的 KRD 目标：``target_faces`` 动作绕过
+        KRD 求解，恒为 ``None``（不把引擎内部为复用闸门而构造的基准 KRD 当成用户目标）；
+        滚动日/风控替代日也为 ``None``。
         """
         source = str(decision.get("source", "none")) if decision is not None else "none"
-        policy_faces = tuple(
+        accepted_orders = tuple(
+            dict(item) for item in ((decision.get("accepted_orders") if decision else None) or ())
+        )
+        decision_faces = tuple(
             (str(code), float(face))
             for code, face in ((decision.get("projected_faces") if decision else None) or ())
         )
-        if cancelled_by_policy:
-            return None, (policy_faces if source == "policy_roll" else ())
+        requested_faces = (
+            tuple((str(code), float(face)) for code, face in (action.target_faces or {}).items())
+            if action.action_type == "target_faces"
+            else ()
+        )
+        if cancelled_by_policy and source != "policy_roll":
+            # 风控熔断替代：当天的成交是引擎的基准中性目标，不属于原动作。
+            return None, requested_faces, (), ()
+        if source == "policy_roll":
+            # 机械换券目标不是原动作的提交目标：只披露政策订单（projected_faces/
+            # accepted_orders），绝不再返回 decision["projected_target"]（政策目标本身）。
+            return None, requested_faces, decision_faces, accepted_orders
         if action.is_hold:
-            return None, (policy_faces if source == "policy_roll" else ())
+            return None, (), (), ()
         if action.action_type == "target_faces":
-            # 面值动作绕过 KRD 求解；提交的“目标”就是逐券面值，而不是引擎内部
-            # 为复用闸门而构造的基准 KRD。引擎决策日志不保存 signal 分支的 faces，
-            # 这里用原动作面值（它正是 _orders_from_faces 的输入）。
-            faces = tuple((str(k), float(v)) for k, v in (action.target_faces or {}).items())
-            if decision is None and isinstance(emitted, TargetFaces):
-                faces = tuple((str(k), float(v)) for k, v in emitted.faces.items())
-            return None, faces
+            return None, requested_faces, decision_faces, accepted_orders
         if decision is not None:
             raw = decision.get("projected_target")
-            return (raw if isinstance(raw, TargetKRD) else None), ()
+            return (
+                raw if isinstance(raw, TargetKRD) else None,
+                requested_faces,
+                decision_faces,
+                accepted_orders,
+            )
         if isinstance(emitted, TargetKRD):
-            return emitted, ()
-        return None, ()
+            return emitted, requested_faces, (), ()
+        return None, requested_faces, (), ()
+
+    def _krd_shape_deviation(
+        self,
+        *,
+        result: BacktestResult,
+        day: date,
+        action: ActionSpec,
+        projected_target: TargetKRD | None,
+    ) -> dict[str, Any] | None:
+        """KRD 动作的总量/逐桶偏差（R53）；非 KRD 动作返回 None。
+
+        原动作缺失的 tenor 仍按引擎语义取**当日基准**（不是 0），否则部分键动作会被
+        误判为巨大形状偏离。``max_bucket_deviation = max_t |proj[t] − orig[t]|``
+        （t 为原始/投影键并集）；``bucket_tolerance = 1e-6 × max(1, Σ|orig[t]|)``。
+        即使总 DV01 比例 = 1，只要单桶偏差超容差就必须记 ``scaled``。
+        """
+        if action.action_type != "target_krd" or projected_target is None:
+            return None
+        requested = {float(k): float(v) for k, v in (action.target_krd or {}).items()}
+        projected = {float(k): float(v) for k, v in projected_target.krd.items()}
+        benchmark = _bench_krd_from_result(result, day)
+        tenors = sorted(set(requested) | set(projected))
+        if not tenors:
+            return None
+        effective = {
+            tenor: requested.get(tenor, float(benchmark.get(tenor, 0.0))) for tenor in tenors
+        }
+        deviations = {
+            tenor: float(projected.get(tenor, 0.0)) - float(effective[tenor]) for tenor in tenors
+        }
+        max_deviation = max(abs(value) for value in deviations.values())
+        magnitude = float(sum(abs(value) for value in effective.values()))
+        tolerance = 1e-6 * max(1.0, magnitude)
+        return {
+            "requested_krd": requested,
+            "effective_requested_krd": effective,
+            "projected_krd": projected,
+            "bucket_deviation": deviations,
+            "max_bucket_deviation": float(max_deviation),
+            "bucket_tolerance": float(tolerance),
+            "requested_magnitude": magnitude,
+        }
 
     def _action_scale(
         self,
@@ -1156,12 +1506,19 @@ class RebalanceEnv:
         projected_faces: tuple[tuple[str, float], ...],
         executed_trades: tuple[dict[str, Any], ...],
         previous_faces: Mapping[str, float],
+        krd_shape: Mapping[str, Any] | None = None,
     ) -> float:
         """提交/执行规模相对原始动作的比例（>1 表示向基准回撤时被放大）。
 
-        KRD：``attempted[-1]``（gate_decision.projected_target）的 total_dv01 / 原始
-        动作 total_dv01；faces：机械闸门只缩放买入腿，用实际成交买入面值 / 请求买入
-        面值（闸门取整后提交，成交即提交值）。
+        KRD（R53）：先算总 DV01 比例 ``total_ratio = proj.total_dv01 / orig.total``；
+        若逐桶形状有超容差改动（``max_bucket_deviation > bucket_tolerance``），返回
+        ``min(total_ratio, 1 − max_bucket_deviation / max(1, Σ|orig|))``。选择该式而非
+        "保留 total_ratio 只改 outcome"，是因为缩放率本身也应反映形状替代程度（与
+        faces 分支"实际/请求"的保守口径一致），且数学上保证 < 1，不会与
+        ``action_outcome="executed"`` 矛盾。总 DV01 不变时该值约为 1 − 形状替代率。
+
+        faces：机械闸门只缩放买入腿，用实际成交买入面值 / 请求买入面值（闸门取整后
+        提交，成交即提交值）。
         """
         if action.is_hold:
             return 1.0
@@ -1169,7 +1526,15 @@ class RebalanceEnv:
             original = float(sum((action.target_krd or {}).values()))
             if projected_target is None or abs(original) <= 1e-12:
                 return 1.0
-            return float(projected_target.total_dv01) / original
+            total_ratio = float(projected_target.total_dv01) / original
+            if krd_shape is not None:
+                max_deviation = float(krd_shape["max_bucket_deviation"])
+                tolerance = float(krd_shape["bucket_tolerance"])
+                if max_deviation > tolerance:
+                    magnitude = max(1.0, float(krd_shape["requested_magnitude"]))
+                    shape_cap = max(0.0, 1.0 - max_deviation / magnitude)
+                    return min(total_ratio, shape_cap)
+            return total_ratio
         # target_faces：机械闸门只缩放买入腿；用"实际买入面值/请求买入面值"度量。
         requested_buy = 0.0
         for code, target_face in (action.target_faces or {}).items():
@@ -1229,8 +1594,15 @@ class RebalanceEnv:
         gate_attempts: int,
         action_scale: float,
         risk_off: bool,
+        off_grid: bool = False,
+        krd_shape: Mapping[str, Any] | None = None,
     ) -> str:
         parts: list[str] = []
+        if off_grid:
+            parts.append(
+                f"{_OFF_GRID_NOTE}：非决策日（决策步长={self._decision_step_days}）"
+                "强制 hold，忽略调用方动作；无主动订单"
+            )
         if cancelled_by_policy:
             if policy_source == "policy_roll" or decision_pending == "cancelled_by_roll":
                 parts.append(
@@ -1253,6 +1625,14 @@ class RebalanceEnv:
                 parts.append(
                     f"闸门缩放：提交/原始规模={action_scale:.6g}，gate_attempts={gate_attempts}"
                 )
+                if krd_shape is not None and float(krd_shape["max_bucket_deviation"]) > float(
+                    krd_shape["bucket_tolerance"]
+                ):
+                    parts.append(
+                        "KRD 逐桶形状改变：max_bucket_deviation="
+                        f"{float(krd_shape['max_bucket_deviation']):,.2f} 元/bp"
+                        f"（容差 {float(krd_shape['bucket_tolerance']):.6g}）"
+                    )
             else:
                 parts.append(f"原动作经闸门执行（gate_attempts={gate_attempts}）")
         else:
@@ -1268,15 +1648,25 @@ class RebalanceEnv:
         action_outcome: ActionOutcome,
         policy_source: str,
         projected_target: TargetKRD | None,
+        requested_faces: tuple[tuple[str, float], ...],
         projected_faces: tuple[tuple[str, float], ...],
+        accepted_orders: tuple[dict[str, Any], ...],
+        post_trade_faces: tuple[tuple[str, float], ...],
         executed_trades: tuple[dict[str, Any], ...],
         previous_faces: Mapping[str, float],
         action_scale: float,
         gate_attempts: int,
         reject_reason: str,
         cancelled_by_policy: bool,
+        krd_shape: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """原始动作 vs 提交目标 vs 实际成交（face/dv01 差）。"""
+        """原始请求 vs 接受订单 vs 交易后期末持仓（face/dv01/逐桶差，R53/R55）。
+
+        三阶段面值不再混用：``requested_faces`` 是原动作的目标持仓面值；
+        ``projected_faces`` 是最终接受订单的带符号面值（``+buy/−sell``）；
+        ``post_trade_faces`` 是账本期末多头面值。``projected_faces_source`` 标明
+        “接受订单”还是“滚动政策披露”，避免把政策换券当成原动作提交值。
+        """
         executed_faces: dict[str, float] = {}
         for item in executed_trades:
             code = str(item["bond_code"])
@@ -1287,32 +1677,45 @@ class RebalanceEnv:
             if action.action_type == "target_faces"
             else None
         )
-        submitted_faces = {str(code): float(face) for code, face in projected_faces}
+        requested = {str(code): float(face) for code, face in requested_faces}
+        accepted_faces = {str(code): float(face) for code, face in projected_faces}
+        post_trade = {str(code): float(face) for code, face in post_trade_faces}
         original_total = action.target_total
-        projected_total = (
-            float(projected_target.total_dv01)
-            if projected_target is not None
-            else (float(sum(submitted_faces.values())) if submitted_faces else None)
-        )
+        projected_total: float | None
+        if action.action_type == "target_krd":
+            projected_total = (
+                float(projected_target.total_dv01) if projected_target is not None else None
+            )
+        elif accepted_faces:
+            projected_total = float(sum(abs(face) for face in accepted_faces.values()))
+        elif requested:
+            projected_total = float(sum(abs(face) for face in requested.values()))
+        else:
+            projected_total = None
         executed_gross = float(sum(abs(item["face_value"]) for item in executed_trades))
-        projected_delta_faces: dict[str, float] | None = None
+        requested_delta_faces: dict[str, float] | None = None
         if original_faces is not None:
-            projected_delta_faces = {
+            requested_delta_faces = {
                 code: float(target) - float(previous_faces.get(code, 0.0))
                 for code, target in original_faces.items()
             }
         face_diff: float | None = None
-        if projected_delta_faces is not None:
+        if requested_delta_faces is not None:
             executed_net = float(sum(executed_faces.values()))
-            face_diff = executed_net - float(sum(projected_delta_faces.values()))
-        elif submitted_faces:
-            face_diff = executed_gross - float(sum(submitted_faces.values()))
+            face_diff = executed_net - float(sum(requested_delta_faces.values()))
         dv01_diff = (
             projected_total - original_total
             if projected_total is not None and action.action_type == "target_krd"
             else None
         )
-        return {
+        total_ratio = (
+            projected_total / original_total
+            if projected_total is not None
+            and action.action_type == "target_krd"
+            and abs(original_total) > 1e-12
+            else None
+        )
+        detail: dict[str, Any] = {
             "action_type": action.action_type,
             "action_outcome": action_outcome,
             "policy_source": policy_source,
@@ -1320,18 +1723,40 @@ class RebalanceEnv:
             "original_total": original_total,
             "original_faces": original_faces,
             "projected_total": projected_total,
-            "submitted_faces": submitted_faces,
-            "projected_delta_faces": projected_delta_faces,
+            "requested_faces": requested,
+            "projected_faces": accepted_faces,
+            "projected_faces_source": (
+                "policy_roll"
+                if policy_source == "policy_roll"
+                else ("accepted_orders" if accepted_faces else "none")
+            ),
+            "accepted_orders": accepted_orders,
+            "post_trade_faces": post_trade,
+            "requested_delta_faces": requested_delta_faces,
             "executed_faces": executed_faces,
             "executed_gross_face": executed_gross,
             "face_diff": face_diff,
             "dv01_diff": dv01_diff,
+            "total_dv01_ratio": total_ratio,
             "action_scale": action_scale,
             "gate_attempts": gate_attempts,
             "executed_trade_ids": tuple(str(item["trade_id"]) for item in executed_trades),
             "reject_reason": reject_reason,
             "previous_faces": dict(previous_faces),
+            # R53：逐桶形状偏差（非 KRD 动作为 None）
+            "max_bucket_deviation": (
+                float(krd_shape["max_bucket_deviation"]) if krd_shape is not None else None
+            ),
+            "bucket_tolerance": (
+                float(krd_shape["bucket_tolerance"]) if krd_shape is not None else None
+            ),
+            "requested_krd": dict(krd_shape["requested_krd"]) if krd_shape is not None else None,
+            "projected_krd": dict(krd_shape["projected_krd"]) if krd_shape is not None else None,
+            "krd_bucket_deviation": (
+                dict(krd_shape["bucket_deviation"]) if krd_shape is not None else None
+            ),
         }
+        return detail
 
     def _roll_rows(self, result: BacktestResult, day: date) -> pd.DataFrame:
         rolls = result.roll_events
@@ -1340,24 +1765,27 @@ class RebalanceEnv:
         return rolls.loc[pd.to_datetime(rolls["date"]).dt.date == day]
 
     def _benchmark_krd(self, day: date) -> dict[float, float]:
-        curve = _curve_at(self._panel, self._tenors, day)
-        universe = RollingUniverse.build(curve, day, cfg=self._cfg).active()
-        benchmark = build_benchmark(
-            curve, day, bonds=universe, calendar=self._calendar, cfg=self._cfg
-        )
+        benchmark = self._lagged_view.benchmark(day)
         return {float(tenor): float(value) for tenor, value in benchmark.krd.items()}
 
     def _observation(self, day: date) -> Observation:
-        curve = _curve_at(self._panel, self._tenors, day)
-        history = self._panel.loc[: pd.Timestamp(day)]
-        if history.index.max() > pd.Timestamp(day):
+        """``as_of=day`` 的观测：曲线/历史/基准截止 ``available_through``（R51）。
+
+        持仓/现金/NAV 仍是 ``day`` 收盘状态（t 日已知）；``lag == 0`` 时与旧实现逐位
+        一致（曲线/历史/基准都用当日）。若 lag 回退越过 panel 起点，截到面板首日并在
+        metadata 标 ``lag_clamped=True``。
+        """
+        available, lag_clamped = self._lagged_view.available_through(day)
+        curve = _curve_at(self._panel, self._tenors, available, allow_missing=True)
+        history = self._panel.loc[: pd.Timestamp(available)]
+        if history.index.max() > pd.Timestamp(available):
             raise AssertionError(f"as-of 观测包含 {history.index.max()} 之后的未来数据")
 
         if self._result is None:
             positions = _empty_frame()
             cash = float(self._cfg.backtest.init_cash)
             nav = float(self._cfg.backtest.init_cash)
-            benchmark_krd = self._benchmark_krd(day)
+            benchmark_krd = self._benchmark_krd(available)
         else:
             result = self._result
             positions = result.positions
@@ -1370,9 +1798,13 @@ class RebalanceEnv:
             exposure_row = exposure.loc[_dates_of(exposure["date"]) == day]
             nav = float(result.nav.loc[day])
             cash = float(exposure_row["cash"].iloc[0]) if len(exposure_row) else float("nan")
-            benchmark_krd = _bench_krd_from_result(result, day)
-            if not benchmark_krd:
-                benchmark_krd = self._benchmark_krd(day)
+            if available == day:
+                # lag=0（或已在面板起点）：保持旧口径，优先用回测结果里的基准 KRD。
+                benchmark_krd = _bench_krd_from_result(result, day)
+                if not benchmark_krd:
+                    benchmark_krd = self._benchmark_krd(day)
+            else:
+                benchmark_krd = self._benchmark_krd(available)
 
         return Observation(
             as_of=day,
@@ -1388,7 +1820,19 @@ class RebalanceEnv:
                 "end": self._end.isoformat() if self._end else None,
                 "n_steps": len(self._records),
                 "done": self.done,
-                "asof_note": "观测只含 ≤ as_of 的数据；step 日之后的数据不可见",
+                "as_of": day.isoformat(),
+                "available_through": available.isoformat(),
+                "information_lag_days": self._information_lag_days,
+                "decision_step_days": self._decision_step_days,
+                "lag_clamped": lag_clamped,
+                "curve_partial": len(curve.tenors) < len(self._tenors),
+                "curve_tenors": tuple(float(t) for t in curve.tenors),
+                "decision_index": self._day_index.get(day),
+                "on_decision_grid": self.is_decision_day(day),
+                "asof_note": (
+                    "观测只含 ≤ available_through 的曲线/历史/基准；持仓/NAV 为 as_of 收盘"
+                    "状态（t 日已知）；执行/估值/闸门仍用当日价格"
+                ),
                 "roll_note": "滚动换券来自同一回测引擎的 roll_events",
                 "performance_note": "每次 step 从 episode 起点重放 run_backtest（O(n²) 原型）",
                 "replay_days": self._replay_days,

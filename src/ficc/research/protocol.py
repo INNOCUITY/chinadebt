@@ -32,6 +32,8 @@ ML（监督学习）与 RL 必须使用**同一信息时钟、同一目标定义
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -50,14 +52,27 @@ __all__ = [
     "ExperimentProtocol",
     "PredictionEvaluation",
     "PredictionStrategy",
+    "ProtocolError",
+    "ProtocolMismatchError",
     "evaluate_predictions",
     "prediction_to_target",
+    "prediction_to_z",
     "protocol_config",
+    "protocol_fingerprint",
+    "training_objective",
 ]
 
 log = get_logger("research.protocol")
 
 PROTOCOL_VERSION = "protocol_v1_2026-11-08"
+
+
+class ProtocolError(ValueError):
+    """协议使用错误（网格/目标/字段不符合冻结契约）。"""
+
+
+class ProtocolMismatchError(ProtocolError):
+    """实际经济配置与协议声明不一致（滚动政策/基准版本/阈值等）。"""
 
 
 @dataclass(frozen=True)
@@ -71,8 +86,11 @@ class ExperimentProtocol:
     decision_step_days: int = 5
     label_target: str = "market_benchmark_net_return"
     tilt_strength: float = 0.10
+    z_scale: float = 0.01  # 原始预期收益（小数）→ z：z=clip(raw/z_scale,-1,1)
+    terminal_fee_treatment: str = "deduct_terminal_fees"
     benchmark_version: str = "rolling"
     rolling_policy_version: str = "roll_v1_trigger1y_parissue"
+    rolling_trigger_years: float = 1.0
     sample_tag: str = "researched_sample"
     cost_model: str = "engine_ledger_default"
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -93,11 +111,41 @@ class ExperimentProtocol:
             "active_excess_vs_benchmark",
         }:
             raise ValueError(f"未知 label_target: {self.label_target!r}")
+        if not (self.z_scale > 0.0):
+            raise ValueError("z_scale 必须为正数")
+        if self.terminal_fee_treatment not in {"deduct_terminal_fees", "gross_reward"}:
+            raise ValueError(f"未知 terminal_fee_treatment: {self.terminal_fee_treatment!r}")
+        if self.version == PROTOCOL_VERSION:
+            frozen = {
+                "label_target": "market_benchmark_net_return",
+                "execution": "next_close",
+                "holding_days_from_decision": 5,
+                "decision_step_days": 5,
+                "tilt_strength": 0.10,
+                "benchmark_version": "rolling",
+                "rolling_trigger_years": 1.0,
+                "z_scale": 0.01,
+                "terminal_fee_treatment": "deduct_terminal_fees",
+            }
+            for name, expected in frozen.items():
+                actual = getattr(self, name)
+                if actual != expected:
+                    raise ProtocolError(
+                        f"{PROTOCOL_VERSION} 冻结字段 {name}={actual!r}，期望 {expected!r}；"
+                        "修改经济设定必须升协议版本并重跑全部结果"
+                    )
 
     @property
     def return_window_trading_days(self) -> int:
         """标签/目标的实际收益窗口（决策+5、执行+1 → 4 个交易日）。"""
         return self.holding_days_from_decision - 1
+
+    def decision_dates(self, calendar: TradingCalendar, start: date, end: date) -> list[date]:
+        """协议决策网格：自 start 起每 ``decision_step_days`` 个交易日一个决策日。"""
+        days = list(calendar.trading_days_between(start, end))
+        if not days:
+            raise ProtocolError(f"[{start}, {end}] 无交易日")
+        return days[:: self.decision_step_days]
 
     def describe(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -127,25 +175,95 @@ class ExperimentProtocol:
         return payload
 
 
+def _config_economics(cfg: Config) -> dict[str, Any]:
+    """协议指纹包含的实际经济配置子集（不把路径/日志等无关项算进去）。"""
+    c = cfg.constraints
+    return {
+        "benchmark_version": str(cfg.backtest.benchmark_version),
+        "rebalance": str(cfg.backtest.rebalance),
+        "rolling_trigger_years": float(cfg.portfolio.rolling.roll_trigger_years),
+        "rolling_version": str(cfg.portfolio.rolling.version),
+        "rolling_enabled": bool(cfg.portfolio.rolling.enabled),
+        "min_trade_lot": float(c.min_trade_lot),
+        "rebalance_band_lots": float(c.rebalance_band_lots),
+        "min_cash_fraction": float(c.min_cash_fraction),
+        "relative_krd_tol": float(c.relative_krd_tol),
+        "spread_bp_active": float(getattr(cfg.costs, "spread_bp_active", 0.0)),
+        "fee_bp": float(getattr(cfg.costs, "fee_bp", 0.0)),
+    }
+
+
+def protocol_fingerprint(
+    cfg: Config | None = None, protocol: ExperimentProtocol | None = None
+) -> str:
+    """协议 + 实际经济配置的指纹（配置变化后指纹必须变化）。"""
+    proto = protocol or ExperimentProtocol()
+    resolved = get_config() if cfg is None else cfg
+    payload = {
+        "protocol": proto.describe(),
+        "economics": _config_economics(resolved),
+    }
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def protocol_config(
     cfg: Config | None = None, protocol: ExperimentProtocol | None = None
 ) -> Config:
     """把协议要求的 rolling 基准/日频调仓写入配置副本（不改全局配置）。"""
     resolved = get_config() if cfg is None else cfg
     proto = protocol or ExperimentProtocol()
-    rolling = resolved.portfolio.rolling.model_copy(update={"enabled": True})
-    del proto  # 协议版本已写入 describe；此函数只负责配置对齐
-    return resolved.model_copy(
+    rolling = resolved.portfolio.rolling.model_copy(
+        update={
+            "enabled": True,
+            "roll_trigger_years": proto.rolling_trigger_years,
+            "version": proto.rolling_policy_version,
+        }
+    )
+    aligned = resolved.model_copy(
         update={
             "portfolio": resolved.portfolio.model_copy(update={"rolling": rolling}),
             "backtest": resolved.backtest.model_copy(
                 update={
-                    "benchmark_version": "rolling",
+                    "benchmark_version": proto.benchmark_version,
                     "rebalance": "daily",
                 }
             ),
         }
     )
+    # 实际配置必须与声明一致（不能只改一个标志就宣称冻结）
+    if aligned.backtest.benchmark_version != proto.benchmark_version:
+        raise ProtocolMismatchError("基准版本与协议不一致")
+    if abs(aligned.portfolio.rolling.roll_trigger_years - proto.rolling_trigger_years) > 1e-12:
+        raise ProtocolMismatchError(
+            f"滚动触发={aligned.portfolio.rolling.roll_trigger_years} 与协议 "
+            f"{proto.rolling_trigger_years} 不一致"
+        )
+    return aligned
+
+
+def prediction_to_z(raw_prediction: float, protocol: ExperimentProtocol | None = None) -> float:
+    """原始收益预测（小数）→ 冻结的 z∈[−1,1]：``clip(raw/z_scale, −1, 1)``。
+
+    例：z_scale=0.01 表示预测 +1% 收益 → z=+1（最大 10% DV01 倾斜）。该尺度属于协议，
+    不得按验证集结果调整；模型训练目标应输出与 z_scale 同单位的收益预测。
+    """
+    proto = protocol or ExperimentProtocol()
+    if not np.isfinite(raw_prediction):
+        raise ValueError(f"raw_prediction 必须是有限数：{raw_prediction!r}")
+    return float(np.clip(float(raw_prediction) / proto.z_scale, -1.0, 1.0))
+
+
+def training_objective(
+    total_ledger_reward: float,
+    accrued_terminal_fees: float,
+    protocol: ExperimentProtocol | None = None,
+) -> float:
+    """训练回报的最终口径：账本 NAV 累计 reward 扣除终止未付费用（协议冻结）。"""
+    proto = protocol or ExperimentProtocol()
+    if proto.terminal_fee_treatment == "gross_reward":
+        return float(total_ledger_reward)
+    return float(total_ledger_reward) - float(accrued_terminal_fees)
 
 
 def prediction_to_target(
@@ -186,17 +304,22 @@ class PredictionStrategy:
         predictions: Mapping[date, float],
         *,
         protocol: ExperimentProtocol,
+        prediction_is_z: bool = False,
     ) -> None:
         self._predictions = {pd.Timestamp(k).date(): float(v) for k, v in predictions.items()}
         self._protocol = protocol
+        self._prediction_is_z = bool(prediction_is_z)
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         prediction = self._predictions.get(ctx.as_of)
         if prediction is None:
             return None
-        return prediction_to_target(
-            prediction, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of
+        z = (
+            float(np.clip(prediction, -1.0, 1.0))
+            if self._prediction_is_z
+            else prediction_to_z(prediction, self._protocol)
         )
+        return prediction_to_target(z, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of)
 
 
 @dataclass(frozen=True)
@@ -218,6 +341,7 @@ def evaluate_predictions(
     protocol: ExperimentProtocol | None = None,
     start: date | None = None,
     end: date | None = None,
+    prediction_is_z: bool = False,
 ) -> PredictionEvaluation:
     """用**同一回测引擎**把预测映射成仓位，评估成本后净收益与风险。
 
@@ -226,7 +350,17 @@ def evaluate_predictions(
     """
     proto = protocol or ExperimentProtocol()
     resolved = protocol_config(cfg, proto)
-    strategy = PredictionStrategy(predictions, protocol=proto)
+    decision_start = start or resolved.backtest.start_date
+    decision_end = end or (resolved.backtest.end_date or panel.index.max().date())
+    grid = proto.decision_dates(calendar, decision_start, decision_end)
+    supplied = {pd.Timestamp(k).date() for k in predictions}
+    off_grid = sorted(supplied - set(grid))
+    if off_grid:
+        raise ProtocolError(
+            f"{len(off_grid)} 个预测日期不在协议决策网格（每 {proto.decision_step_days} 交易日）上，"
+            f"例如 {off_grid[:5]}；连续/每日预测不能绕过公共入口的网格约束"
+        )
+    strategy = PredictionStrategy(predictions, protocol=proto, prediction_is_z=prediction_is_z)
     result = run_backtest(
         strategy,
         panel=panel,
@@ -264,4 +398,11 @@ def evaluate_predictions(
         "violation_days_held": float((~held["ok"]).sum()),
         "n_decisions": float(len(predictions)),
     }
-    return PredictionEvaluation(protocol=proto.describe(), metrics=metrics, result=result)
+    return PredictionEvaluation(
+        protocol={
+            **proto.describe(),
+            "fingerprint": protocol_fingerprint(resolved, proto),
+        },
+        metrics=metrics,
+        result=result,
+    )
