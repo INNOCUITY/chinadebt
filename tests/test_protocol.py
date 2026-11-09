@@ -189,3 +189,34 @@ def test_protocol_smoke_script_isolated(tmp_path) -> None:
     assert {"zero", "const_plus_one"} <= set(table["scenario"])
     zero = table.loc[table["scenario"] == "zero"].iloc[0]
     assert abs(float(zero["active_excess_bp"])) < 1.0
+
+
+def test_r60_fingerprint_covers_full_economics(market) -> None:
+    cfg, _panel, _funding, _calendar = market
+    proto = ExperimentProtocol()
+    base = protocol_fingerprint(cfg, proto)
+    variants = [
+        cfg.model_copy(
+            update={"costs": cfg.costs.model_copy(update={"settlement_fee_cny_per_trade": 1350.0})}
+        ),
+        cfg.model_copy(
+            update={"costs": cfg.costs.model_copy(update={"spread_bp_ultra_long": 9.0})}
+        ),
+        cfg.model_copy(
+            update={"backtest": cfg.backtest.model_copy(update={"init_cash": 200_000_000.0})}
+        ),
+        cfg.model_copy(update={"backtest": cfg.backtest.model_copy(update={"max_leverage": 1.5})}),
+        cfg.model_copy(
+            update={"constraints": cfg.constraints.model_copy(update={"relative_krd_tol": 0.25})}
+        ),
+    ]
+    fingerprints = {protocol_fingerprint(item, proto) for item in variants}
+    assert len(fingerprints) == len(variants)
+    assert base not in fingerprints
+
+
+def test_r60_lag_is_frozen_in_v1() -> None:
+    with pytest.raises(ProtocolError, match="冻结字段"):
+        ExperimentProtocol(information_lag_days=2)
+    custom = ExperimentProtocol(version="protocol_custom", information_lag_days=2)
+    assert custom.information_lag_days == 2

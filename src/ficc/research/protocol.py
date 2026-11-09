@@ -45,7 +45,7 @@ import pandas as pd
 from ficc.backtest.engine import BacktestResult, run_backtest
 from ficc.config import Config, get_config
 from ficc.logging import get_logger
-from ficc.portfolio.types import MarketContext, TargetKRD
+from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
 from ficc.utils.calendar import TradingCalendar
 
 __all__ = [
@@ -55,6 +55,7 @@ __all__ = [
     "ProtocolError",
     "ProtocolMismatchError",
     "evaluate_predictions",
+    "evaluate_target_faces",
     "prediction_to_target",
     "prediction_to_z",
     "protocol_config",
@@ -124,6 +125,7 @@ class ExperimentProtocol:
                 "tilt_strength": 0.10,
                 "benchmark_version": "rolling",
                 "rolling_trigger_years": 1.0,
+                "information_lag_days": 1,
                 "z_scale": 0.01,
                 "terminal_fee_treatment": "deduct_terminal_fees",
             }
@@ -176,20 +178,23 @@ class ExperimentProtocol:
 
 
 def _config_economics(cfg: Config) -> dict[str, Any]:
-    """协议指纹包含的实际经济配置子集（不把路径/日志等无关项算进去）。"""
-    c = cfg.constraints
+    """协议指纹包含的**完整经济配置**（审查 R60：费率/资金/杠杆/风险限制均须入指纹）。"""
     return {
-        "benchmark_version": str(cfg.backtest.benchmark_version),
-        "rebalance": str(cfg.backtest.rebalance),
-        "rolling_trigger_years": float(cfg.portfolio.rolling.roll_trigger_years),
-        "rolling_version": str(cfg.portfolio.rolling.version),
-        "rolling_enabled": bool(cfg.portfolio.rolling.enabled),
-        "min_trade_lot": float(c.min_trade_lot),
-        "rebalance_band_lots": float(c.rebalance_band_lots),
-        "min_cash_fraction": float(c.min_cash_fraction),
-        "relative_krd_tol": float(c.relative_krd_tol),
-        "spread_bp_active": float(getattr(cfg.costs, "spread_bp_active", 0.0)),
-        "fee_bp": float(getattr(cfg.costs, "fee_bp", 0.0)),
+        "backtest": {
+            "init_cash": float(cfg.backtest.init_cash),
+            "max_leverage": float(cfg.backtest.max_leverage),
+            "rebalance": str(cfg.backtest.rebalance),
+            "benchmark_version": str(cfg.backtest.benchmark_version),
+            "annual_days": int(cfg.backtest.annual_days),
+            "accrual_days": int(cfg.backtest.accrual_days),
+            "roll_down_step_years": float(cfg.backtest.roll_down_step_years),
+        },
+        "portfolio": cfg.portfolio.model_dump(mode="json"),
+        "constraints": cfg.constraints.model_dump(mode="json"),
+        "costs": cfg.costs.model_dump(mode="json"),
+        "risk": cfg.risk.model_dump(mode="json"),
+        "benchmark": cfg.benchmark.model_dump(mode="json"),
+        "curve": cfg.curve.model_dump(mode="json"),
     }
 
 
@@ -322,6 +327,63 @@ class PredictionStrategy:
         return prediction_to_target(z, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of)
 
 
+class FixedFaceStrategy:
+    """跨入口控制实验：在协议网格日返回**预先固定**的逐券目标面值，其余日 hold。"""
+
+    name = "protocol_fixed_faces"
+
+    def __init__(self, targets: Mapping[date, Mapping[str, float]]) -> None:
+        self._targets = {
+            pd.Timestamp(k).date(): {str(c): float(v) for c, v in faces.items()}
+            for k, faces in targets.items()
+        }
+
+    def target_krd(self, ctx: MarketContext) -> Any:
+        faces = self._targets.get(ctx.as_of)
+        if faces is None:
+            return None
+        return TargetFaces(as_of=ctx.as_of, faces=dict(faces), notes="cross_entry_fixed_faces")
+
+
+def _evaluation_metrics(
+    result: BacktestResult,
+    *,
+    n_decisions: int,
+    protocol: ExperimentProtocol,
+    n_rejected: int | None = None,
+) -> dict[str, float]:
+    nav = result.nav
+    bench = result.benchmark_nav
+    active = nav.pct_change().dropna() - bench.pct_change().dropna()
+    ann = int(getattr(result, "annual_days", 250) or 250)
+    total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1.0)
+    bench_ret = float(bench.iloc[-1] / bench.iloc[0] - 1.0)
+    held = result.constraints[result.constraints["n_positions"] > 0]
+    return {
+        "n_days": float(len(nav)),
+        "total_return": total_ret,
+        "benchmark_total_return": bench_ret,
+        "active_excess_bp": float((total_ret - bench_ret) * 1e4),
+        "tracking_error_bp": float(active.std(ddof=0) * np.sqrt(ann) * 1e4)
+        if len(active) > 1
+        else float("nan"),
+        "max_drawdown": float((nav / nav.cummax() - 1.0).min()),
+        "total_fee": float(result.costs["fee"].sum()),
+        "total_funding": float(result.costs["funding"].sum()),
+        "total_spread": float(result.costs["spread"].sum()),
+        "total_cost": float(result.costs["total"].sum()),
+        "total_turnover": float(result.turnover.sum()),
+        "n_trades": float(len(result.trades)),
+        "n_rejected": float(len(result.rejected) if n_rejected is None else int(n_rejected)),
+        "reject_rate_per_decision": float(
+            (len(result.rejected) if n_rejected is None else int(n_rejected)) / max(n_decisions, 1)
+        ),
+        "avg_abs_dv01_ratio_dev": float((result.exposure["dv01_ratio"] - 1.0).abs().mean()),
+        "violation_days_held": float((~held["ok"]).sum()),
+        "n_decisions": float(n_decisions),
+    }
+
+
 @dataclass(frozen=True)
 class PredictionEvaluation:
     """同一引擎/成本/基准下的预测→组合评估结果。"""
@@ -404,5 +466,42 @@ def evaluate_predictions(
             "fingerprint": protocol_fingerprint(resolved, proto),
         },
         metrics=metrics,
+        result=result,
+    )
+
+
+def evaluate_target_faces(
+    targets: Mapping[date, Mapping[str, float]],
+    panel: pd.DataFrame,
+    funding: pd.Series | None,
+    calendar: TradingCalendar,
+    cfg: Config | None = None,
+    *,
+    protocol: ExperimentProtocol | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> PredictionEvaluation:
+    """跨入口控制：把**固定目标面值**经同一引擎/成本口径跑成组合轨迹。"""
+    proto = protocol or ExperimentProtocol()
+    resolved = protocol_config(cfg, proto)
+    decision_start = start or resolved.backtest.start_date
+    decision_end = end or (resolved.backtest.end_date or panel.index.max().date())
+    grid = set(proto.decision_dates(calendar, decision_start, decision_end))
+    supplied = {pd.Timestamp(k).date() for k in targets}
+    off_grid = sorted(supplied - grid)
+    if off_grid:
+        raise ProtocolError(f"{len(off_grid)} 个目标日期不在协议决策网格上，例如 {off_grid[:5]}")
+    result = run_backtest(
+        FixedFaceStrategy(targets),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=resolved,
+        start=decision_start,
+        end=decision_end,
+    )
+    return PredictionEvaluation(
+        protocol={**proto.describe(), "fingerprint": protocol_fingerprint(resolved, proto)},
+        metrics=_evaluation_metrics(result, n_decisions=len(targets), protocol=proto),
         result=result,
     )

@@ -85,7 +85,12 @@ def test_zero_action_equivalence(market) -> None:
     assert rec2.executed_face == 0.0  # 零动作不得产生主动交易
     assert rec2.projected_target is None
     assert rec2.reward == pytest.approx(rec2.nav_after - rec2.nav_before, abs=0.0)
-    assert obs2.nav == pytest.approx(rec2.nav_after, abs=1e-12)
+    # R59：观测 NAV 是 available_through 日账本状态，不是 t 日 NAV
+    available = date.fromisoformat(obs2.metadata["available_through"])
+    available_nav = float(env.result.nav.loc[available])
+    assert obs2.metadata["nav_as_of"] == obs2.metadata["available_through"]
+    assert obs2.metadata["valuation_available"] is False
+    assert obs2.nav == pytest.approx(available_nav, abs=1e-12)
     assert isinstance(obs1, Observation) and isinstance(rec2, StepRecord)
 
     # 对照：直接跑一次同区间、同 schedule 的回测
@@ -106,7 +111,7 @@ def test_zero_action_equivalence(market) -> None:
     assert env.result.nav.index.equals(direct.nav.index)
     assert env.result.nav.index[-1] == obs2.as_of
 
-    # as-of / R51：曲线/历史截止 available_through（默认 lag=1），持仓/NAV 仍是 as_of
+    # as-of / R51/R59：曲线/历史/基准与 NAV 截止 available_through（默认 lag=1）
     available = env.available_through(obs2.as_of)
     assert available < obs2.as_of
     assert obs2.history.index.max() == pd.Timestamp(available)
@@ -161,7 +166,9 @@ def test_rejected_action_records_difference(market) -> None:
     assert record.executed_face == 0.0
     # 动作与执行差异被显式记录：原始动作非零、实际成交为空、原因非空
     assert record.reward == pytest.approx(record.nav_after - record.nav_before, abs=0.0)
-    assert obs1.nav == pytest.approx(record.nav_after, abs=1e-12)
+    available = date.fromisoformat(obs1.metadata["available_through"])
+    available_nav = float(env.result.nav.loc[available])
+    assert obs1.nav == pytest.approx(available_nav, abs=1e-12)
 
     events = env.events
     assert any(event.kind == "reject" and event.date == record.date for event in events)
@@ -208,7 +215,9 @@ def test_reward_matches_ledger_nav_and_roll_events(market) -> None:
             break
         obs, record = env.step(ActionSpec())  # 零动作，只让基准/政策滚动
         assert record.reward == pytest.approx(record.nav_after - record.nav_before, abs=0.0)
-        assert obs.nav == pytest.approx(record.nav_after, abs=1e-12)
+        available = date.fromisoformat(obs.metadata["available_through"])
+        available_nav = float(env.result.nav.loc[available])
+        assert obs.nav == pytest.approx(available_nav, abs=1e-12)
         assert obs.as_of == record.date
         assert obs.history.index.max() <= pd.Timestamp(obs.as_of)
         if any(event.kind == "roll" for event in env.events):
@@ -282,7 +291,8 @@ def test_hold_action_does_not_trade_on_flat_curve() -> None:
     calendar = TradingCalendar.from_dates(panel.index)
     funding = pd.Series(2.0, index=idx)
     env = RebalanceEnv(panel, calendar, funding, cfg)
-    obs0 = env.reset(idx[0].date(), idx[-1].date())
+    # R57：lag=1 需要 start 前至少 2 个交易日；用 idx[2] 提供预热
+    obs0 = env.reset(idx[2].date(), idx[-1].date())
     # 1) 建仓到基准 KRD（平曲线 3%）
     env.step(ActionSpec(target_krd=dict(obs0.benchmark_krd)))
     # 2) hold：持仓不动，不得有主动成交

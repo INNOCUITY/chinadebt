@@ -2,14 +2,16 @@
 
 与 ``test_rl.py`` / ``test_rl_contract.py`` 一样只断言**接口纪律**：
 
-- ``RebalanceEnv.reset`` 的观测：持仓/现金/NAV 是 as_of 当日收盘状态，而
-  ``curve/history/benchmark`` 截止 ``available_through = as_of − lag``；
+- ``RebalanceEnv.reset`` 的观测：``curve/history/benchmark`` 截止
+  ``available_through = as_of − lag``；持仓只保留数量、估值 NaN，NAV/现金取
+  ``available_through`` 日账本状态（R59）；
 - 策略调用上下文（rollout wrapper；step 的 scripted wrapper 共用 ``_LaggedView``）
   也只看到滞后信息；修改 ``available_through`` 之后的曲线不得改变决策日 t 的
   policy 特征或原始动作；
+- R57：预热不足的 episode 被拒绝，截止日绝不向未来移动；
 - ``decision_step_days=5`` 时只有索引 % 5 == 0 的交易日产生目标，其余日强制
   ``off_grid_hold``（无主动成交），且 step 与 rollout 逐字段一致；
-- ``information_lag_days=0`` 时保持旧 as-of 行为（回归兼容）。
+- ``information_lag_days=0`` 时曲线/历史仍为当日（回归兼容）。
 
 2019–2025 是已研究样本，本测试不评价策略好坏。
 """
@@ -23,10 +25,13 @@ import pytest
 
 from ficc.config import Config, get_config
 from ficc.data.loader import load_curve_long, load_funding_series
-from ficc.data.schema import CANONICAL_TENORS
+from ficc.data.schema import CANONICAL_TENORS, BondStatic
+from ficc.portfolio.benchmark import build_benchmark, mark_faces
+from ficc.portfolio.ledger import PositionView
+from ficc.portfolio.rolling import RollingUniverse
 from ficc.portfolio.types import MarketContext, TargetKRD
 from ficc.rl import ActionSpec, RebalanceEnv, StepRecord
-from ficc.rl.env import _benchmark_portfolio, _curve_at, _LaggedView
+from ficc.rl.env import _curve_at, _LaggedView
 from ficc.utils.calendar import TradingCalendar
 
 START = date(2019, 1, 28)
@@ -46,6 +51,30 @@ def market() -> tuple[Config, pd.DataFrame, pd.Series, TradingCalendar]:
     funding = load_funding_series(cfg=cfg).set_index("date")["FDR007"].sort_index()
     calendar = TradingCalendar.from_dates(panel.index)
     return cfg, panel, funding, calendar
+
+
+def _fixed_benchmark_at(
+    panel: pd.DataFrame,
+    calendar: TradingCalendar,
+    cfg: Config,
+    start: date,
+    available: date,
+):
+    """独立期望值：起点构造一次基准，只把同一组券/面值重估到 available。"""
+    tenors = tuple(float(t) for t in CANONICAL_TENORS)
+    curve_start = _curve_at(panel, tenors, start)
+    universe = RollingUniverse.build(curve_start, start, cfg=cfg).active()
+    benchmark0 = build_benchmark(curve_start, start, bonds=universe, calendar=calendar, cfg=cfg)
+    return mark_faces(
+        dict(benchmark0.faces),
+        bonds=universe,
+        curve=_curve_at(panel, tenors, available, allow_missing=True),
+        as_of=available,
+        calendar=calendar,
+        cfg=cfg,
+        weights=dict(benchmark0.weights),
+        notional=float(benchmark0.notional or benchmark0.market_value),
+    )
 
 
 def _recording_policy(sink: dict[date, dict[str, object]], notes: str = "clock"):
@@ -88,16 +117,21 @@ def test_reset_observation_cutoff_and_metadata(market) -> None:
     assert obs.curve.as_of == AVAILABLE
     assert obs.history.equals(panel.loc[: pd.Timestamp(AVAILABLE)])
 
-    # 持仓/现金/NAV 仍可用 t 日收盘状态（reset 首日为空仓、初始现金）
+    # reset 首日为空仓、初始现金；NAV 也是 available 日账本状态
     assert obs.nav == pytest.approx(float(cfg.backtest.init_cash))
     assert obs.cash == pytest.approx(float(cfg.backtest.init_cash))
     assert obs.positions.empty
+    assert obs.metadata["valuation_available"] is False
+    assert obs.metadata["nav_as_of"] == AVAILABLE.isoformat()
 
-    # 滞后基准 KRD 由 01-25 曲线/券池重建，不是 01-28 的
-    tenors = tuple(float(t) for t in CANONICAL_TENORS)
-    lagged_benchmark = _benchmark_portfolio(panel, tenors, calendar, cfg, AVAILABLE)
+    # R58：基准身份在 episode 起点构造一次，只把同一组券/面值重估到 01-25；
+    # 不是用 01-25 的 RollingUniverse.build 重新发行一组券。
+    lagged_benchmark = _fixed_benchmark_at(panel, calendar, cfg, START, AVAILABLE)
     assert env.available_through(START) == AVAILABLE
     assert obs.benchmark_krd == pytest.approx(dict(lagged_benchmark.krd))
+    start_book = _fixed_benchmark_at(panel, calendar, cfg, START, START)
+    assert set(obs.metadata["curve_tenors"])  # 曲线仍可读
+    assert {leg.bond.code for leg in lagged_benchmark.legs} == set(start_book.faces)
 
     # lag=0 回归：与旧实现一致（曲线/历史/基准都用当日）
     legacy = RebalanceEnv(panel, calendar, funding, cfg, information_lag_days=0)
@@ -108,10 +142,66 @@ def test_reset_observation_cutoff_and_metadata(market) -> None:
     assert obs0.metadata["available_through"] == START.isoformat()
 
 
-def test_lagged_view_keeps_current_positions_and_nav(market) -> None:
-    """滞后上下文只替换 curve/history/benchmark；nav/cash/positions 保持 t 日状态。"""
+def test_r57_warmup_rejection_and_valid_window(market) -> None:
+    """R57：panel 从 01-28 开始时，lag=1 必须拒绝不足预热的 start，且截止日只向过去。"""
+    cfg, panel, _funding, _calendar = market
+    truncated = panel.loc[pd.Timestamp("2019-01-28") : pd.Timestamp("2019-02-03")]
+    calendar = TradingCalendar.from_dates(truncated.index)
+    env = RebalanceEnv(truncated, calendar, None, cfg)
+
+    with pytest.raises(ValueError, match="预热"):
+        env.reset(date(2019, 1, 28), date(2019, 2, 3))
+    with pytest.raises(ValueError, match="预热"):
+        env.reset(date(2019, 1, 29), date(2019, 2, 3))
+
+    start = date(2019, 2, 1)
+    obs = env.reset(start, date(2019, 2, 3))
+    available = env.available_through(start)
+    assert available == date(2019, 1, 31)
+    assert available < start
+    assert obs.history.index.max() == pd.Timestamp(available)
+    assert obs.history.index.max() <= pd.Timestamp(available)
+    assert obs.curve.as_of == available
+    assert env.episode_required_warmup == 2
+
+    # 直接调用滞后视图也不能把越界截止日夹到 panel 首日
+    view = _LaggedView(
+        panel=truncated,
+        tenors=tuple(float(t) for t in CANONICAL_TENORS),
+        calendar=calendar,
+        cfg=cfg,
+        information_lag_days=1,
+    )
+    with pytest.raises(ValueError, match="预热"):
+        view.available_through(date(2019, 1, 28))
+
+
+def test_lagged_view_sanitizes_positions_and_uses_available_ledger(market) -> None:
+    """R59：滞后上下文 nav/cash 取 available 日；持仓估值 NaN，数量/条款保留。"""
     cfg, panel, _funding, calendar = market
     tenors = tuple(float(t) for t in CANONICAL_TENORS)
+    day = date(2019, 1, 30)
+    available = date(2019, 1, 29)
+    bond = BondStatic(
+        code="SYN-10Y-20190128",
+        issue_date=date(2019, 1, 28),
+        maturity_date=date(2029, 1, 28),
+        coupon_pct=3.0,
+        freq=2,
+    )
+    position = PositionView(
+        bond=bond,
+        face_value=100_000_000.0,
+        remaining_years=8.99,
+        ytm_pct=3.1,
+        clean_price=99.0,
+        accrued_interest=1.0,
+        dirty_price=100.0,
+        market_value=100_000_000.0,
+        mod_duration=8.0,
+        dv01=80_000.0,
+        settled_face=100_000_000.0,
+    )
     view = _LaggedView(
         panel=panel,
         tenors=tenors,
@@ -119,38 +209,77 @@ def test_lagged_view_keeps_current_positions_and_nav(market) -> None:
         cfg=cfg,
         information_lag_days=1,
     )
-    day = date(2019, 1, 29)
+    view.begin_episode(available, day)
+    ctx_available = MarketContext(
+        as_of=available,
+        curve=_curve_at(panel, tenors, available),
+        history=panel.loc[: pd.Timestamp(available)],
+        benchmark=_fixed_benchmark_at(panel, calendar, cfg, available, available),
+        nav=123.0,
+        cash=45.0,
+        positions=(position,),
+        cfg=cfg,
+    )
+    view.observe(ctx_available)
     ctx = MarketContext(
         as_of=day,
         curve=_curve_at(panel, tenors, day),
         history=panel.loc[: pd.Timestamp(day)],
-        benchmark=_benchmark_portfolio(panel, tenors, calendar, cfg, day),
-        nav=123.0,
-        cash=45.0,
-        positions=(),
+        benchmark=_fixed_benchmark_at(panel, calendar, cfg, available, day),
+        nav=999.0,
+        cash=888.0,
+        positions=(position,),
         cfg=cfg,
     )
     lagged = view.context(ctx)
     assert lagged.as_of == day  # 决策日/信号日语义不变
-    assert lagged.curve.as_of == date(2019, 1, 28)
-    assert lagged.history.index.max() == pd.Timestamp(date(2019, 1, 28))
-    assert lagged.benchmark.as_of == date(2019, 1, 28)
+    assert lagged.curve.as_of == available
+    assert lagged.history.index.max() == pd.Timestamp(available)
+    assert lagged.benchmark.as_of == available
+    # R59：NAV/现金是 available 日账本状态，不是 t 日
     assert lagged.nav == 123.0
     assert lagged.cash == 45.0
-    assert lagged.positions is ctx.positions
-    # lag=0 时原样返回同一对象（旧行为逐位不变）
+    assert len(lagged.positions) == 1
+    visible = lagged.positions[0]
+    assert visible.bond == position.bond
+    assert visible.face_value == position.face_value
+    assert visible.settled_face == position.settled_face
+    assert visible.accrued_interest == position.accrued_interest
+    for field_name in (
+        "remaining_years",
+        "ytm_pct",
+        "clean_price",
+        "dirty_price",
+        "market_value",
+        "mod_duration",
+        "dv01",
+    ):
+        assert pd.isna(getattr(visible, field_name)), field_name
+
+    # lag=0：曲线仍为当日，但持仓估值同样不暴露（valuation_available=False 语义）
     same = _LaggedView(
         panel=panel, tenors=tenors, calendar=calendar, cfg=cfg, information_lag_days=0
     )
-    assert same.context(ctx) is ctx
+    same.begin_episode(day, day)
+    same.observe(ctx)
+    lagged0 = same.context(ctx)
+    assert lagged0.curve.as_of == day
+    assert lagged0.nav == 999.0
+    assert pd.isna(lagged0.positions[0].ytm_pct)
 
 
 def test_policy_context_is_lagged_and_future_data_does_not_leak(market) -> None:
-    """01-28 决策看不到 01-28 曲线：改动 01-28 的 10Y 不改变 policy 特征/原始动作。"""
+    """改动 01-29 的 10Y 不改变 01-28/01-29 的 policy 特征，只在 01-30 可见。
+
+    注：R58 基准身份在 episode 起点（01-28）构造，因此不能扰动 START 当天的
+    起点曲线来检验“截止日之后”的隔离；这里扰动第一个真正的滞后可见日。
+    """
     cfg, panel, funding, calendar = market
+    perturbed_day = date(2019, 1, 29)
     perturbed = panel.copy()
-    # 只改决策截止日（available_through=01-25）之后的数据
-    perturbed.loc[pd.Timestamp(START), 10.0] = float(panel.loc[pd.Timestamp(START), 10.0]) + 1.0
+    perturbed.loc[pd.Timestamp(perturbed_day), 10.0] = (
+        float(panel.loc[pd.Timestamp(perturbed_day), 10.0]) + 1.0
+    )
 
     sink_a: dict[date, dict[str, object]] = {}
     sink_b: dict[date, dict[str, object]] = {}
@@ -172,12 +301,17 @@ def test_policy_context_is_lagged_and_future_data_does_not_leak(market) -> None:
     assert first_a["action"] == first_b["action"]
     assert rollout_a.records[0].original_action == rollout_b.records[0].original_action
 
-    # 边界恰为 lag=1：01-28 的扰动在 01-29 的决策视图（curve.as_of=01-28）中可见
+    # 01-29 的决策仍看不到 01-29 曲线（curve.as_of=01-28），特征不变
     second_day = date(2019, 1, 29)
     assert sink_a[second_day]["curve_as_of"] == START
-    assert sink_a[second_day]["rate_10y"] != sink_b[second_day]["rate_10y"]
+    assert sink_a[second_day]["rate_10y"] == sink_b[second_day]["rate_10y"]
 
-    # 01-28 的 policy 看到的是 01-25 的 10Y，而非被改动的 01-28 值
+    # 边界恰为 lag=1：01-29 的扰动在 01-30 的决策视图（curve.as_of=01-29）中可见
+    third_day = date(2019, 1, 30)
+    assert sink_a[third_day]["curve_as_of"] == perturbed_day
+    assert sink_a[third_day]["rate_10y"] != sink_b[third_day]["rate_10y"]
+
+    # 01-28 的 policy 看到的是 01-25 的 10Y
     assert sink_a[START]["rate_10y"] == pytest.approx(
         float(panel.loc[pd.Timestamp(AVAILABLE), 10.0])
     )

@@ -798,7 +798,10 @@ def test_rollout_terminal_state_and_lifecycle(market) -> None:
     assert env_roll.done is True
     assert env_roll.current_date == end
     assert env_roll.result is rollout.result
-    assert env_roll.observation.nav == pytest.approx(float(rollout.result.nav.loc[end]))
+    # R59：观测 NAV 是 available_through 日账本状态，不是 end 日 NAV
+    available = env_roll.available_through(end)
+    assert env_roll.observation.metadata["nav_as_of"] == available.isoformat()
+    assert env_roll.observation.nav == pytest.approx(float(rollout.result.nav.loc[available]))
     state = rollout.terminal
     assert isinstance(state, TerminalState)
     assert env_roll.terminate() is state  # 已缓存的本次 rollout 终止状态
@@ -908,3 +911,188 @@ def test_krd_shape_projection_is_scaled_not_executed() -> None:
     rollout = roll_env.rollout(policy, start, end)
     _assert_records_equivalent(step_records, rollout.records)
     _check_shape_record(rollout.records[0])
+
+
+# ---------------------------------------------------------------------------
+# R58/R59：基准身份固定 + policy 可见估值截断
+# ---------------------------------------------------------------------------
+def test_r58_zero_tilt_tracks_fixed_benchmark_for_lag0_and_lag1(market) -> None:
+    """R58：零倾斜策略在 lag=0/1 下都买同一组起点券，不再因每日重发券被拒单。
+
+    旧实现 lag=1 时 01-29/01-31 的请求因目标券不在实际宇宙而被拒，仅 01-30 建仓，
+    末 NAV 100,017,330.65（较基准少 80,877.64 元 / 8.0878bp）。修复后两条路径都在
+    01-29 一次建仓四腿 25M，末 NAV 与真实基准只差现金流舍入量级。
+    """
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(START, date(2019, 1, 31))
+    end = days[-1]
+
+    def policy(ctx: MarketContext) -> TargetFaces:
+        return TargetFaces(
+            as_of=ctx.as_of,
+            faces=dict(ctx.benchmark.faces),
+            notes="零倾斜：每日目标=真实基准面值",
+        )
+
+    finals: list[float] = []
+    for lag in (0, 1):
+        env = RebalanceEnv(panel, calendar, funding, cfg, information_lag_days=lag)
+        rollout = env.rollout(policy, START, end)
+        assert rollout.records[0].action_outcome == "executed"
+        assert len(rollout.records[0].executed_trades) == 4
+        assert all(
+            trade["face_value"] == pytest.approx(25_000_000.0)
+            for trade in rollout.records[0].executed_trades
+        )
+        # 首个交易日建仓，后续无需再交易；不得出现拒单/延迟建仓
+        assert all(record.rejected is False for record in rollout.records)
+        assert all(record.executed_trades == () for record in rollout.records[1:])
+        final_nav = float(rollout.result.nav.loc[end])
+        benchmark_nav = float(rollout.result.benchmark_nav.loc[end])
+        assert final_nav == pytest.approx(benchmark_nav, abs=0.01)
+        finals.append(final_nav)
+
+    assert finals[0] == pytest.approx(finals[1], abs=0.01)
+    assert finals[0] == pytest.approx(100_098_208.29, abs=0.01)
+
+
+def test_r58_rolling_identity_syncs_real_benchmark_holdings(market) -> None:
+    """R58：滚动日按引擎真实基准持仓换券；policy 在滞后日看到同一身份/面值。"""
+    cfg, panel, funding, calendar = market
+    rolling = cfg.portfolio.rolling.model_copy(update={"enabled": True, "roll_trigger_years": 1.99})
+    cfg_roll = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(update={"rolling": rolling}),
+            "backtest": cfg.backtest.model_copy(update={"benchmark_version": "rolling"}),
+        }
+    )
+    end = date(2019, 2, 15)
+    seen: dict[date, tuple[date, tuple[str, ...], dict[str, float]]] = {}
+
+    def policy(ctx: MarketContext) -> TargetFaces | None:
+        seen[ctx.as_of] = (
+            ctx.benchmark.as_of,
+            ctx.benchmark.codes,
+            dict(ctx.benchmark.faces),
+        )
+        if ctx.as_of == START:
+            return TargetFaces(as_of=ctx.as_of, faces=dict(ctx.benchmark.faces))
+        return None
+
+    env = RebalanceEnv(panel, calendar, funding, cfg_roll)
+    rollout = env.rollout(policy, START, end)
+    rolls = rollout.result.roll_events
+    assert len(rolls) > 0
+    first_roll = rolls.iloc[0]
+    retired = str(first_roll["retired_code"])
+    issued = str(first_roll["issued_code"])
+    roll_day = pd.Timestamp(first_roll["date"]).date()
+    next_day = calendar.next_trading_day(roll_day, 1)
+
+    # 滚动日当天 policy 的 available 仍是前一日（旧券）；下一决策日才看到新券
+    assert seen[roll_day][0] < roll_day
+    assert retired in seen[roll_day][1]
+    assert issued not in seen[roll_day][1]
+    assert seen[next_day][0] == roll_day
+    assert issued in seen[next_day][1]
+    assert retired not in seen[next_day][1]
+    # 换券沿用旧腿面值（25M），不是按 available 日重新发行/重新定面值
+    assert seen[next_day][2][issued] == pytest.approx(25_000_000.0)
+
+    # 每个 policy 滞后视图的身份/面值必须等于引擎在该 available 日的真实基准持仓
+    benchmark_positions = rollout.result.benchmark_positions
+    actual: dict[date, dict[str, float]] = {}
+    for day, rows in benchmark_positions.groupby(
+        pd.to_datetime(benchmark_positions["as_of"]).dt.date
+    ):
+        faces = {
+            str(row["bond_code"]): float(row["face_value"])
+            for _, row in rows.iterrows()
+            if row["bond_code"] is not None and np.isfinite(float(row["face_value"]))
+        }
+        if faces:
+            actual[day] = faces
+    for _decision_day, (available, codes, faces) in seen.items():
+        expected = actual.get(available)
+        if not expected:
+            continue
+        assert set(codes) == set(expected)
+        assert faces == pytest.approx(expected)
+
+    # 已有仓位 + 换券后：策略期末持有滚动后的新券，不再持有已退休旧券
+    final_faces = env._positions_in(rollout.result, end)
+    assert final_faces
+    assert retired not in final_faces
+
+
+def test_r59_policy_positions_and_nav_do_not_leak_current_curve(market) -> None:
+    """R59：只扰动 01-30 曲线时，01-30 policy 的持仓估值/NAV 与原始动作不变。"""
+    cfg, panel, funding, calendar = market
+    perturbed_day = date(2019, 1, 30)
+    perturbed = panel.copy()
+    perturbed.loc[pd.Timestamp(perturbed_day), 10.0] = (
+        float(panel.loc[pd.Timestamp(perturbed_day), 10.0]) + 0.10
+    )
+    end = date(2019, 2, 1)
+
+    def run(data: pd.DataFrame) -> tuple[object, dict[str, object]]:
+        env = RebalanceEnv(data, calendar, funding, cfg)
+        sink: dict[str, object] = {}
+
+        def policy(ctx: MarketContext) -> TargetFaces | TargetKRD | None:
+            if ctx.as_of == START:
+                return TargetFaces(as_of=ctx.as_of, faces=dict(ctx.benchmark.faces))
+            if ctx.as_of == perturbed_day:
+                position = ctx.positions[0] if ctx.positions else None
+                ytm = float(position.ytm_pct) if position is not None else float("nan")
+                scale = 1.1 if (ytm == ytm and ytm > 3.16) else 0.9
+                base = {float(t): float(v) for t, v in ctx.benchmark.krd.items()}
+                action = TargetKRD(
+                    as_of=ctx.as_of,
+                    krd={t: scale * v for t, v in base.items()},
+                    notes="positions 估值分支",
+                )
+                sink.update(
+                    {
+                        "nav": ctx.nav,
+                        "cash": ctx.cash,
+                        "ytm": ytm,
+                        "market_value": (
+                            float(position.market_value) if position is not None else None
+                        ),
+                        "dv01": float(position.dv01) if position is not None else None,
+                        "n_positions": len(ctx.positions),
+                        "face": float(position.face_value) if position is not None else None,
+                        "settled_face": (
+                            float(position.settled_face) if position is not None else None
+                        ),
+                        "curve_as_of": ctx.curve.as_of,
+                        "benchmark_as_of": ctx.benchmark.as_of,
+                        "action": action,
+                    }
+                )
+                return action
+            return None
+
+        rollout = env.rollout(policy, START, end)
+        return rollout, sink
+
+    rollout_a, sink_a = run(panel)
+    rollout_b, sink_b = run(perturbed)
+
+    # 两次 01-30 policy 的市场信息都截止 01-29（扰动日前一日）
+    assert sink_a["curve_as_of"] == sink_b["curve_as_of"] == date(2019, 1, 29)
+    assert sink_a["benchmark_as_of"] == sink_b["benchmark_as_of"] == date(2019, 1, 29)
+    # 已有仓位：四腿 25M，但估值字段全 NaN；数量/结算面值仍可读
+    assert sink_a["n_positions"] == sink_b["n_positions"] == 4
+    assert sink_a["face"] == sink_b["face"] == 25_000_000.0
+    assert sink_a["settled_face"] == sink_b["settled_face"]
+    assert np.isnan(sink_a["ytm"]) and np.isnan(sink_b["ytm"])
+    assert np.isnan(sink_a["market_value"]) and np.isnan(sink_b["market_value"])
+    assert np.isnan(sink_a["dv01"]) and np.isnan(sink_b["dv01"])
+    # NAV/现金取 01-29 账本状态，不受 01-30 曲线扰动影响
+    assert sink_a["nav"] == sink_b["nav"]
+    assert sink_a["cash"] == sink_b["cash"]
+    # 用 positions 估值的策略在两种情形下产生同一原始动作
+    assert sink_a["action"] == sink_b["action"]
+    assert rollout_a.records[1].original_action == rollout_b.records[1].original_action
