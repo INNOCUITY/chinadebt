@@ -312,21 +312,42 @@ class PredictionStrategy:
         *,
         protocol: ExperimentProtocol,
         prediction_is_z: bool = False,
+        benchmark_krd: Mapping[date, Mapping[float, float]] | None = None,
+        default_to_benchmark: bool = False,
     ) -> None:
         self._predictions = {pd.Timestamp(k).date(): float(v) for k, v in predictions.items()}
         self._protocol = protocol
         self._prediction_is_z = bool(prediction_is_z)
+        self._benchmark_krd = (
+            {
+                pd.Timestamp(k).date(): {float(t): float(v) for t, v in krd.items()}
+                for k, krd in benchmark_krd.items()
+            }
+            if benchmark_krd is not None
+            else None
+        )
+        self._default_to_benchmark = bool(default_to_benchmark)
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         prediction = self._predictions.get(ctx.as_of)
         if prediction is None:
-            return None
+            if not self._default_to_benchmark:
+                return None
+            prediction = 0.0
         z = (
             float(np.clip(prediction, -1.0, 1.0))
             if self._prediction_is_z
             else prediction_to_z(prediction, self._protocol)
         )
-        return prediction_to_target(z, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of)
+        benchmark = ctx.benchmark
+        if self._benchmark_krd is not None:
+            krd = self._benchmark_krd.get(ctx.as_of)
+            if krd is None:
+                return None
+            from types import SimpleNamespace
+
+            benchmark = SimpleNamespace(krd=krd, as_of=ctx.as_of)
+        return prediction_to_target(z, benchmark, protocol=self._protocol, as_of=ctx.as_of)
 
 
 class FixedFaceStrategy:
@@ -358,8 +379,9 @@ def _evaluation_metrics(
     bench = result.benchmark_nav
     active = nav.pct_change().dropna() - bench.pct_change().dropna()
     ann = int(getattr(result, "annual_days", 250) or 250)
+    bench_used = bench
     total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1.0)
-    bench_ret = float(bench.iloc[-1] / bench.iloc[0] - 1.0)
+    bench_ret = float(bench_used.iloc[-1] / bench_used.iloc[0] - 1.0)
     held = result.constraints[result.constraints["n_positions"] > 0]
     return {
         "n_days": float(len(nav)),
@@ -407,6 +429,9 @@ def evaluate_predictions(
     end: date | None = None,
     prediction_is_z: bool = False,
     initial_curve: Curve | None = None,
+    benchmark_krd_override: Mapping[date, Mapping[float, float]] | None = None,
+    benchmark_nav_override: pd.Series | None = None,
+    default_to_benchmark: bool = False,
 ) -> PredictionEvaluation:
     """用**同一回测引擎**把预测映射成仓位，评估成本后净收益与风险。
 
@@ -425,7 +450,13 @@ def evaluate_predictions(
             f"{len(off_grid)} 个预测日期不在协议决策网格（每 {proto.decision_step_days} 交易日）上，"
             f"例如 {off_grid[:5]}；连续/每日预测不能绕过公共入口的网格约束"
         )
-    strategy = PredictionStrategy(predictions, protocol=proto, prediction_is_z=prediction_is_z)
+    strategy = PredictionStrategy(
+        predictions,
+        protocol=proto,
+        prediction_is_z=prediction_is_z,
+        benchmark_krd=benchmark_krd_override,
+        default_to_benchmark=default_to_benchmark,
+    )
     result = run_backtest(
         strategy,
         panel=panel,
@@ -440,9 +471,22 @@ def evaluate_predictions(
     bench = result.benchmark_nav
     active = nav.pct_change().dropna() - bench.pct_change().dropna()
     ann = resolved.backtest.annual_days
+    bench_used = bench
+    if benchmark_nav_override is not None:
+        override = benchmark_nav_override.copy()
+        override.index = pd.to_datetime(override.index)
+        nav_dates = pd.to_datetime(nav.index)
+        common = override.index.intersection(nav_dates)
+        if len(common) >= 2:
+            bench_used = override.loc[common]
+            bench_used.index = nav.index[: len(bench_used)]
+            active = nav.pct_change().dropna() - bench_used.pct_change().dropna()
     total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1.0)
-    bench_ret = float(bench.iloc[-1] / bench.iloc[0] - 1.0)
+    bench_ret = float(bench_used.iloc[-1] / bench_used.iloc[0] - 1.0)
     held = result.constraints[result.constraints["n_positions"] > 0]
+    from ficc.rl.env import terminal_state_from_result
+
+    terminal = terminal_state_from_result(result, calendar=calendar, cfg=resolved)
     metrics = {
         "n_days": float(len(nav)),
         "total_return": total_ret,
@@ -463,6 +507,19 @@ def evaluate_predictions(
         "avg_abs_dv01_ratio_dev": float((result.exposure["dv01_ratio"] - 1.0).abs().mean()),
         "violation_days_held": float((~held["ok"]).sum()),
         "n_decisions": float(len(predictions)),
+        # R66：终止义务与净终值口径（与 training_objective 的 deduct_terminal_fees 一致）
+        "terminal_nav": float(terminal.nav_mark_to_market),
+        "terminal_accrued_fees": float(terminal.accrued_fees),
+        "terminal_unsettled_cash": float(terminal.unsettled_cash),
+        "net_terminal_nav": float(terminal.net_terminal_value),
+        "net_terminal_return": float(terminal.net_terminal_value / nav.iloc[0] - 1.0)
+        if abs(nav.iloc[0]) > 0
+        else float("nan"),
+        "net_active_excess_bp": float(
+            (terminal.net_terminal_value / nav.iloc[0] - 1.0 - bench_ret) * 1e4
+        )
+        if abs(nav.iloc[0]) > 0
+        else float("nan"),
     }
     return PredictionEvaluation(
         protocol={

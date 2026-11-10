@@ -410,10 +410,20 @@ def run_backtest(
         curve: Curve,
         benchmark_d: BenchmarkPortfolio,
         nav_high: float,
+        *,
+        min_as_of: date | None = None,
     ) -> list[Any]:
-        """对投影路径的**每个快照**跑完整 9 项约束（R37：不能只看最后一个时点）。"""
+        """对投影路径中**成交日及之后**的快照跑完整 9 项约束。
+
+        R64：``simulate`` 的路径包含成交日之前的周末/节假日空仓快照；这些是历史/
+        成交前状态，不是候选成交后的组合。对它们要求"总 DV01 ≥ 下限"会误杀合规的
+        周一建仓。约束验收只从执行日 ``min_as_of`` 起（历史现金流仍由账本推进）。
+        """
         reports = []
         for snap in path:
+            snap_day = getattr(snap, "as_of", None)
+            if min_as_of is not None and snap_day is not None and snap_day < min_as_of:
+                continue
             risk = portfolio_risk(snap, curve, calendar=calendar, cfg=cfg)
             reports.append(
                 check_constraints(
@@ -468,7 +478,9 @@ def run_backtest(
             current_path = ledger.simulate(d, curve, extra_trades=(), return_path=True)
         except ValueError:
             current_path = (ledger.snapshot(),) if hasattr(ledger, "snapshot") else ()
-        current_reports = _reports_for_path(current_path, curve, benchmark_d, nav_high_water)
+        current_reports = _reports_for_path(
+            current_path, curve, benchmark_d, nav_high_water, min_as_of=d
+        )
         current_codes, current_severity = _path_action_profile(current_reports)
 
         bench_krd = {float(k): float(v) for k, v in benchmark_d.krd.items()}
@@ -511,7 +523,7 @@ def run_backtest(
                     path = ledger.simulate(d, curve, extra_trades=trades, return_path=True)
                 except ValueError:
                     continue
-                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
+                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water, min_as_of=d)
                 feasible = all(report.ok for report in reports)
                 if attempts_log is not None:
                     attempts_log.append(
@@ -573,7 +585,7 @@ def run_backtest(
                 except ValueError:
                     # 历史成交已推进到 d（重复调用）等边界：显式失败而不是静默成交
                     return None, attempted, "投影失败：账本状态不允许模拟该候选", False, level
-                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water)
+                reports = _reports_for_path(path, curve, benchmark_d, nav_high_water, min_as_of=d)
                 feasible = all(report.ok for report in reports)
                 if attempts_log is not None:
                     attempts_log.append(

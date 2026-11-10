@@ -673,3 +673,22 @@ def test_r62_initial_curve_freezes_terms_and_rejects_future_curve(market) -> Non
             end=date(2019, 2, 1),
             initial_curve=_curve_at(panel, tenors, date(2019, 1, 29), allow_missing=True),
         )
+
+
+# ---------------------------------------------------------------------------
+# R64：成交日之前的周末/节假日空仓快照不得否决合规建仓
+# ---------------------------------------------------------------------------
+def test_r64_gate_ignores_empty_weekend_snapshots(market) -> None:
+    cfg, panel, funding, calendar = market
+    result = run_backtest(
+        _ZeroTilt(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=date(2019, 2, 1),  # 周五：下一交易日 02-11，路径含春节假日空仓快照
+        end=date(2019, 2, 15),
+    )
+    assert len(result.trades) >= 4
+    assert len(result.rejected) == 0
+    assert result.constraints["ok"].all()
