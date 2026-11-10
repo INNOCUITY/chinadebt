@@ -90,6 +90,7 @@ class ExperimentProtocol:
     tilt_strength: float = 0.10
     z_scale: float = 0.01  # 原始预期收益（小数）→ z：z=clip(raw/z_scale,-1,1)
     terminal_fee_treatment: str = "deduct_terminal_fees"
+    missing_prediction_policy: str = "hold"  # hold | benchmark_on_grid
     benchmark_version: str = "rolling"
     rolling_policy_version: str = "roll_v1_trigger1y_parissue"
     rolling_trigger_years: float = 1.0
@@ -115,6 +116,8 @@ class ExperimentProtocol:
             raise ValueError(f"未知 label_target: {self.label_target!r}")
         if not (self.z_scale > 0.0):
             raise ValueError("z_scale 必须为正数")
+        if self.missing_prediction_policy not in {"hold", "benchmark_on_grid"}:
+            raise ValueError(f"未知 missing_prediction_policy: {self.missing_prediction_policy!r}")
         if self.terminal_fee_treatment not in {"deduct_terminal_fees", "gross_reward"}:
             raise ValueError(f"未知 terminal_fee_treatment: {self.terminal_fee_treatment!r}")
         if self.version == PROTOCOL_VERSION:
@@ -129,6 +132,7 @@ class ExperimentProtocol:
                 "information_lag_days": 1,
                 "z_scale": 0.01,
                 "terminal_fee_treatment": "deduct_terminal_fees",
+                "missing_prediction_policy": "hold",
             }
             for name, expected in frozen.items():
                 actual = getattr(self, name)
@@ -312,26 +316,22 @@ class PredictionStrategy:
         *,
         protocol: ExperimentProtocol,
         prediction_is_z: bool = False,
-        benchmark_krd: Mapping[date, Mapping[float, float]] | None = None,
-        default_to_benchmark: bool = False,
+        decision_grid: set[date] | None = None,
     ) -> None:
         self._predictions = {pd.Timestamp(k).date(): float(v) for k, v in predictions.items()}
         self._protocol = protocol
         self._prediction_is_z = bool(prediction_is_z)
-        self._benchmark_krd = (
-            {
-                pd.Timestamp(k).date(): {float(t): float(v) for t, v in krd.items()}
-                for k, krd in benchmark_krd.items()
-            }
-            if benchmark_krd is not None
-            else None
-        )
-        self._default_to_benchmark = bool(default_to_benchmark)
+        self._decision_grid = set(decision_grid) if decision_grid is not None else None
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         prediction = self._predictions.get(ctx.as_of)
         if prediction is None:
-            if not self._default_to_benchmark:
+            # R68：只有公共决策网格日允许"缺预测→零目标"；非网格日必须 hold。
+            if (
+                self._protocol.missing_prediction_policy != "benchmark_on_grid"
+                or self._decision_grid is None
+                or ctx.as_of not in self._decision_grid
+            ):
                 return None
             prediction = 0.0
         z = (
@@ -339,15 +339,7 @@ class PredictionStrategy:
             if self._prediction_is_z
             else prediction_to_z(prediction, self._protocol)
         )
-        benchmark = ctx.benchmark
-        if self._benchmark_krd is not None:
-            krd = self._benchmark_krd.get(ctx.as_of)
-            if krd is None:
-                return None
-            from types import SimpleNamespace
-
-            benchmark = SimpleNamespace(krd=krd, as_of=ctx.as_of)
-        return prediction_to_target(z, benchmark, protocol=self._protocol, as_of=ctx.as_of)
+        return prediction_to_target(z, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of)
 
 
 class FixedFaceStrategy:
@@ -429,9 +421,6 @@ def evaluate_predictions(
     end: date | None = None,
     prediction_is_z: bool = False,
     initial_curve: Curve | None = None,
-    benchmark_krd_override: Mapping[date, Mapping[float, float]] | None = None,
-    benchmark_nav_override: pd.Series | None = None,
-    default_to_benchmark: bool = False,
 ) -> PredictionEvaluation:
     """用**同一回测引擎**把预测映射成仓位，评估成本后净收益与风险。
 
@@ -454,8 +443,7 @@ def evaluate_predictions(
         predictions,
         protocol=proto,
         prediction_is_z=prediction_is_z,
-        benchmark_krd=benchmark_krd_override,
-        default_to_benchmark=default_to_benchmark,
+        decision_grid=set(grid),
     )
     result = run_backtest(
         strategy,
@@ -472,21 +460,13 @@ def evaluate_predictions(
     active = nav.pct_change().dropna() - bench.pct_change().dropna()
     ann = resolved.backtest.annual_days
     bench_used = bench
-    if benchmark_nav_override is not None:
-        override = benchmark_nav_override.copy()
-        override.index = pd.to_datetime(override.index)
-        nav_dates = pd.to_datetime(nav.index)
-        common = override.index.intersection(nav_dates)
-        if len(common) >= 2:
-            bench_used = override.loc[common]
-            bench_used.index = nav.index[: len(bench_used)]
-            active = nav.pct_change().dropna() - bench_used.pct_change().dropna()
     total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1.0)
     bench_ret = float(bench_used.iloc[-1] / bench_used.iloc[0] - 1.0)
     held = result.constraints[result.constraints["n_positions"] > 0]
-    from ficc.rl.env import terminal_state_from_result
+    from ficc.rl.env import benchmark_terminal_state_from_result, terminal_state_from_result
 
     terminal = terminal_state_from_result(result, calendar=calendar, cfg=resolved)
+    bench_terminal = benchmark_terminal_state_from_result(result, calendar=calendar, cfg=resolved)
     metrics = {
         "n_days": float(len(nav)),
         "total_return": total_ret,
@@ -515,10 +495,21 @@ def evaluate_predictions(
         "net_terminal_return": float(terminal.net_terminal_value / nav.iloc[0] - 1.0)
         if abs(nav.iloc[0]) > 0
         else float("nan"),
-        "net_active_excess_bp": float(
-            (terminal.net_terminal_value / nav.iloc[0] - 1.0 - bench_ret) * 1e4
+        "benchmark_terminal_accrued_fees": float(bench_terminal.accrued_fees),
+        "benchmark_terminal_unsettled_cash": float(bench_terminal.unsettled_cash),
+        "net_benchmark_return": float(
+            (bench.iloc[-1] - bench_terminal.accrued_fees) / bench.iloc[0] - 1.0
         )
-        if abs(nav.iloc[0]) > 0
+        if abs(bench.iloc[0]) > 0
+        else float("nan"),
+        "net_active_excess_bp": float(
+            (
+                terminal.net_terminal_value / nav.iloc[0]
+                - (bench.iloc[-1] - bench_terminal.accrued_fees) / bench.iloc[0]
+            )
+            * 1e4
+        )
+        if abs(nav.iloc[0]) > 0 and abs(bench.iloc[0]) > 0
         else float("nan"),
     }
     return PredictionEvaluation(

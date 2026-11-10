@@ -233,3 +233,59 @@ def test_r60_pricing_in_fingerprint(market) -> None:
         }
     )
     assert protocol_fingerprint(t2, proto) != base
+
+
+def test_r68_missing_predictions_only_on_grid_and_distinct_fingerprint(market) -> None:
+    """R68：缺预测只在公共网格日置零；非网格日 hold，不能每日脉冲回基准。"""
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol(
+        version="protocol_v1_continuous_eval",
+        missing_prediction_policy="benchmark_on_grid",
+    )
+    standard = ExperimentProtocol()
+    assert protocol_fingerprint(cfg, proto) != protocol_fingerprint(cfg, standard)
+    grid = proto.decision_dates(calendar, date(2019, 2, 1), date(2019, 3, 8))
+    start, last = date(2019, 2, 1), grid[1]
+    end = calendar.next_trading_day(last, 1)
+    predictions = {grid[0]: 0.01}  # 只有首日正预测；其余网格日缺预测→零目标
+    evaluation = evaluate_predictions(
+        predictions, panel, funding, calendar, cfg, protocol=proto, start=start, end=end
+    )
+    trades = evaluation.result.trades
+    grid_set = set(grid)
+    assert not trades.empty
+    # 成交日必须是信号日的下一交易日；非网格日不允许出现新交易
+    for _, trade in trades.iterrows():
+        trade_day = pd.Timestamp(trade["trade_date"]).date()
+        signal_day = calendar.prev_trading_day(trade_day, 1)
+        assert signal_day in grid_set, (trade_day, signal_day)
+    # 02-02 建仓后，02-03 等非网格日不得因缺预测而卖出：上面已逐笔验证
+    # 每个成交的 signal_day 都属于公共网格，非网格日没有新信号/成交。
+
+
+def test_r69_net_active_deducts_both_terminal_fees(market) -> None:
+    """R69：净超额必须对称扣除双方终止费用；零预测短窗 gross/net active 均为 0。"""
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol(
+        version="protocol_v1_continuous_eval",
+        missing_prediction_policy="benchmark_on_grid",
+    )
+    grid = proto.decision_dates(calendar, date(2019, 2, 1), date(2019, 3, 8))
+    start, last = grid[0], grid[2]
+    end = calendar.next_trading_day(last, 1)
+    evaluation = evaluate_predictions(
+        {d: 0.0 for d in grid[:3]},
+        panel,
+        funding,
+        calendar,
+        cfg,
+        protocol=proto,
+        start=start,
+        end=end,
+    )
+    m = evaluation.metrics
+    assert m["terminal_accrued_fees"] == pytest.approx(
+        m["benchmark_terminal_accrued_fees"], abs=1e-6
+    )
+    assert abs(m["active_excess_bp"]) < 0.5
+    assert abs(m["net_active_excess_bp"]) < 0.5

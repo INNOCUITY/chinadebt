@@ -41,6 +41,7 @@ from ficc.rl.env import (
     Rollout,
     StepRecord,
     TerminalState,
+    benchmark_terminal_state_from_result,
     hold_target_krd,
     terminal_state_from_result,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "Rollout",
     "StepRecord",
     "TerminalState",
+    "benchmark_terminal_state_from_result",
     "hold_target_krd",
     "terminal_state_from_result",
 ]

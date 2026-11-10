@@ -55,10 +55,17 @@ def _run(name: str, predictions: dict | None, panel, funding, calendar, cfg, pro
         protocol=protocol,
         start=START,
         end=END,
-        default_to_benchmark=True,  # 模型未覆盖的日期回到零预测（基准 KRD）
     )
     m = evaluation.metrics
-    row = {"model": name, **m}
+    requested = float(cfg.constraints.rebalance_band_lots)
+    row = {
+        "model": name,
+        "requested_band_lots": requested,
+        "effective_min_trade_face": float(
+            max(requested, 1.0) * float(cfg.constraints.min_trade_lot)
+        ),
+        **m,
+    }
     log.info(
         "%s: active=%.2fbp net_active=%.2fbp TE=%.2fbp cost=%.0f trades=%d rejected=%d",
         name,
@@ -80,13 +87,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cfg = get_config()
-    # 评估执行带：生产默认 2 lot；冻结预测的 KRD 倾斜约 0.2–4% 每腿，2 lot 会吞掉
-    # 全部信号。为使"预测→z→KRD"在最小整手处可见，诊断评估用 0.25 lot 执行带，
-    # 并在此显式披露（不是正式交易配置，不进入生产协议指纹比较）。
-    eval_constraints = cfg.constraints.model_copy(update={"rebalance_band_lots": 0.25})
+    # 评估执行带（R70）：生产主配置 2 lot；冻结弱预测在 2 lot 下大多被最小整手吸收。
+    # 探索配置显式取 1 lot；注意 build_orders 的有效最小成交面值 = max(band, 1 lot)，
+    # 因此 requested=1 lot 与 effective 都是 1 lot（请求 0.25 会静默变成 1 lot）。
+    requested_band_lots = 1.0
+    eval_constraints = cfg.constraints.model_copy(
+        update={"rebalance_band_lots": requested_band_lots}
+    )
     cfg = cfg.model_copy(update={"constraints": eval_constraints})
     panel, funding, calendar = load_market(cfg)
-    protocol = ExperimentProtocol()
+    # R68：连续复盘的缺失预测策略是"仅公共网格日零目标，非网格日 hold"；
+    # 这是独立协议版本，指纹与标准 hold 协议不同。
+    protocol = ExperimentProtocol(
+        version="protocol_v1_continuous_eval",
+        missing_prediction_policy="benchmark_on_grid",
+    )
     oos = pd.read_csv(args.predictions)
     oos["decision_as_of"] = pd.to_datetime(oos["decision_as_of"]).dt.date
     if oos["decision_as_of"].duplicated().any():
@@ -125,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         "incremental_net_active_vs_zero_bp",
         "incremental_cost_vs_zero",
         "tracking_error_bp",
+        "benchmark_terminal_accrued_fees",
+        "benchmark_terminal_unsettled_cash",
+        "net_benchmark_return",
         "total_cost",
         "total_turnover",
         "n_trades",
@@ -142,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
         "net_active_excess_bp",
         "incremental_active_vs_zero_bp",
         "tracking_error_bp",
+        "benchmark_terminal_accrued_fees",
+        "benchmark_terminal_unsettled_cash",
+        "net_benchmark_return",
         "total_cost",
         "total_turnover",
         "n_trades",
@@ -153,8 +174,9 @@ def main(argv: list[str] | None = None) -> int:
     print(table[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
     print(
         "\n说明：所有收益相对**同一条 2019-01-28 起持续滚动基准**；模型预测日之外为零预测"
-        "（跟踪基准 KRD）。模型/split/alpha/预测已冻结；为让弱预测信号越过最小整手，"
-        "诊断执行带设为 0.25 lot（生产默认 2 lot），仅用于成本后诊断，不是 alpha 结论。"
+        "（跟踪基准 KRD）。模型/split/alpha/预测已冻结；探索执行带 requested=1 lot，"
+        "effective=1 lot（生产主配置 2 lot 不变），仅用于成本后诊断，不是 alpha 结论。"
+        "缺失预测只在公共网格日置零，非网格日 hold（protocol_v1_continuous_eval）。"
     )
     log.info("产物: %s", out / "model_cost_eval.csv")
     return 0

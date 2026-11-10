@@ -283,58 +283,40 @@ class TerminalState:
         return float(self.nav_mark_to_market) - float(self.accrued_fees)
 
 
-def terminal_state_from_result(
-    result: BacktestResult,
+def _terminal_state_from_frames(
     *,
+    nav_series: pd.Series,
+    exposure: pd.DataFrame | None,
+    positions: pd.DataFrame,
+    trades: pd.DataFrame,
+    end: date,
     calendar: TradingCalendar,
     cfg: Config,
+    label: str,
 ) -> TerminalState:
-    """从**任意** :class:`BacktestResult` 独立构造终止义务快照（R63）。
-
-    该函数是 :meth:`RebalanceEnv.terminate` 的公开实现，也可由脚本/测试直接对
-    ML 路径、rollout 路径、逐步 step 路径各自返回的 ``BacktestResult`` 调用，避免
-    三条报告路径复制同一个 ``rollout.terminal`` 而掩盖差异。
-
-    口径与 :class:`TerminalState` 完全一致：终止日取 ``result.end``，按市价估值、
-    不强制平仓；未结算成交（``settlement_date > result.end``）的现金义务与将在
-    结算日扣除的费用单独披露；``net_terminal_value = nav − accrued_fees``。
-
-    Parameters
-    ----------
-    result : BacktestResult
-        任意一次回测（ML/rollout/step 均可），必须含 ``nav/exposure/positions/trades``。
-    calendar : TradingCalendar
-        用于校验终止日确实落在交易日历内。
-    cfg : Config
-        费用/结算参数（与产生 ``result`` 的配置一致；口径不同会导致费用估算漂移）。
-    """
-    if not isinstance(result, BacktestResult):
-        raise TypeError(f"result 必须是 BacktestResult，实际 {type(result).__name__}")
-    if not isinstance(calendar, TradingCalendar):
-        raise TypeError("calendar 必须是 TradingCalendar")
-    end = _to_date(result.end)
     if not calendar.is_trading_day(end):
-        raise ValueError(f"result.end={end} 不是交易日，无法构造终止义务")
-
-    nav_series = result.nav
+        raise ValueError(f"{label} end={end} 不是交易日，无法构造终止义务")
     if end in nav_series.index:
         nav = float(nav_series.loc[end])
     elif pd.Timestamp(end) in nav_series.index:
         nav = float(nav_series.loc[pd.Timestamp(end)])
     else:
-        raise ValueError(f"result.nav 不含终止日 {end}，无法构造终止义务")
-    exposure = result.exposure
-    exposure_row = exposure.loc[_dates_of(exposure["date"]) == end]
-    cash = float(exposure_row["cash"].iloc[0]) if len(exposure_row) else float("nan")
-    pending_cash = (
-        float(exposure_row["pending_cash"].iloc[0]) if len(exposure_row) else float("nan")
-    )
-    positions = _positions_frame_at(result, end)
+        raise ValueError(f"{label} nav 不含终止日 {end}，无法构造终止义务")
+
+    if exposure is not None:
+        exposure_row = exposure.loc[_dates_of(exposure["date"]) == end]
+        cash = float(exposure_row["cash"].iloc[0]) if len(exposure_row) else float("nan")
+        pending_cash = (
+            float(exposure_row["pending_cash"].iloc[0]) if len(exposure_row) else float("nan")
+        )
+    else:
+        cash = float("nan")
+        pending_cash = float("nan")
 
     unsettled: list[dict[str, Any]] = []
     unsettled_cash = 0.0
     accrued_fees = 0.0
-    for _, trade in result.trades.iterrows():
+    for _, trade in trades.iterrows():
         settlement_date = _to_date(trade["settlement_date"])
         if settlement_date <= end:
             continue
@@ -370,6 +352,11 @@ def terminal_state_from_result(
         if len(positions) and "market_value" in positions
         else 0.0
     )
+    if exposure is None:
+        # 基准账本没有单独导出 cash/pending：按 nav 恒等式反推（benchmark_positions
+        # 的 market_value 已按期末曲线估值）。
+        cash = nav - market_value - unsettled_cash
+        pending_cash = unsettled_cash
     reconciliation = cash + market_value + unsettled_cash
     pending_gap = unsettled_cash - pending_cash
     note_parts = [
@@ -401,6 +388,57 @@ def terminal_state_from_result(
         accrued_fees=accrued_fees,
         liquidation_assumption="mark_to_market_no_forced_liquidation",
         notes="；".join(note_parts),
+    )
+
+
+def terminal_state_from_result(
+    result: BacktestResult,
+    *,
+    calendar: TradingCalendar,
+    cfg: Config,
+) -> TerminalState:
+    """从**任意** :class:`BacktestResult` 独立构造策略终止义务快照（R63）。"""
+    if not isinstance(result, BacktestResult):
+        raise TypeError(f"result 必须是 BacktestResult，实际 {type(result).__name__}")
+    if not isinstance(calendar, TradingCalendar):
+        raise TypeError("calendar 必须是 TradingCalendar")
+    return _terminal_state_from_frames(
+        nav_series=result.nav,
+        exposure=result.exposure,
+        positions=_positions_frame_at(result, _to_date(result.end)),
+        trades=result.trades,
+        end=_to_date(result.end),
+        calendar=calendar,
+        cfg=cfg,
+        label="策略",
+    )
+
+
+def benchmark_terminal_state_from_result(
+    result: BacktestResult,
+    *,
+    calendar: TradingCalendar,
+    cfg: Config,
+) -> TerminalState:
+    """R69：独立构造**基准**终止义务，供净超额对称扣除费用。"""
+    if not isinstance(result, BacktestResult):
+        raise TypeError(f"result 必须是 BacktestResult，实际 {type(result).__name__}")
+    if not isinstance(calendar, TradingCalendar):
+        raise TypeError("calendar 必须是 TradingCalendar")
+    end = _to_date(result.end)
+    positions = result.benchmark_positions
+    if len(positions):
+        date_column = "as_of" if "as_of" in positions.columns else "date"
+        positions = positions.loc[_dates_of(positions[date_column]) == end]
+    return _terminal_state_from_frames(
+        nav_series=result.benchmark_nav,
+        exposure=None,
+        positions=positions,
+        trades=result.benchmark_trades,
+        end=end,
+        calendar=calendar,
+        cfg=cfg,
+        label="基准",
     )
 
 

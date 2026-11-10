@@ -31,6 +31,14 @@ def test_model_cost_eval_quick(tmp_path) -> None:
     detail = pd.read_csv(out / "model_cost_eval.csv")
     assert {"model", "active_excess_bp", "total_cost", "n_rejected"} <= set(detail.columns)
     assert {"zero_control", "literal_zero"} <= set(detail["model"])
+    # R70：请求带与实际最小成交面值必须同时披露（请求 0.25 会静默变成 1 lot）
+    assert {
+        "requested_band_lots",
+        "effective_min_trade_face",
+        "benchmark_terminal_accrued_fees",
+    } <= set(detail.columns)
+    assert (detail["requested_band_lots"] == 1.0).all()
+    assert (detail["effective_min_trade_face"] == 1_000_000.0).all()
 
 
 def test_r65_last_prediction_executes_next_day(tmp_path) -> None:
@@ -75,3 +83,17 @@ def test_r65_last_prediction_executes_next_day(tmp_path) -> None:
     assert b.metrics["net_active_excess_bp"] != pytest.approx(
         b.metrics["active_excess_bp"], abs=1e-9
     )
+
+
+def test_r71_unused_benchmark_override_removed() -> None:
+    """R71：未使用的 benchmark override 接口应删除，避免日期错贴。"""
+    import inspect
+
+    from ficc.research.protocol import PredictionStrategy, evaluate_predictions
+
+    params = set(inspect.signature(evaluate_predictions).parameters)
+    assert "benchmark_krd_override" not in params
+    assert "benchmark_nav_override" not in params
+    assert "default_to_benchmark" not in params
+    strategy_params = set(inspect.signature(PredictionStrategy.__init__).parameters)
+    assert "benchmark_krd" not in strategy_params
