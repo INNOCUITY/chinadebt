@@ -78,7 +78,7 @@
     "train_mean": 346.0,
     "literal_zero": 346.0
   },
-  "repo_state": "dirty",
+  "repo_state": "clean",
   "source_sha256": {
     "src/ficc/research/protocol.py": "d680bdf68d318a2e711df89d254d364c4af23634631d09ce923550895f2656b5",
     "src/ficc/rl/env.py": "cba8f795b8731988d14d6840b295729bad3bed9bee70c513e71a66671cde1949",
