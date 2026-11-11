@@ -16,6 +16,7 @@ from ficc.data.schema import CANONICAL_TENORS
 from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds
 from ficc.research.protocol import (
     ExperimentProtocol,
+    evaluate_predictions,
     evaluate_target_faces,
     protocol_config,
 )
@@ -180,3 +181,58 @@ def test_cross_entry_script_detects_terminal_fee_tamper(tmp_path) -> None:
     )
     assert proc.returncode == 1
     assert "未通过" in proc.stderr or "未通过" in proc.stdout
+
+
+def test_r72_nonzero_prediction_ml_rl_share_lagged_benchmark(market) -> None:
+    """R72：非零预测下 ML 评估器与 RL rollout 使用同一 t−1 基准映射。"""
+
+    from ficc.research.protocol import prediction_to_target, prediction_to_z
+
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol(
+        version="protocol_v1_continuous_eval",
+        missing_prediction_policy="benchmark_on_grid",
+    )
+    aligned = protocol_config(cfg, proto)
+    start, end = date(2019, 2, 1), date(2019, 3, 29)
+    grid = proto.decision_dates(calendar, start, end)
+    predictions = {d: 0.005 for d in grid}
+    terms = _terms_curve(panel, calendar, start)
+    ml = evaluate_predictions(
+        predictions,
+        panel,
+        funding,
+        calendar,
+        cfg,
+        protocol=proto,
+        start=start,
+        end=end,
+        initial_curve=terms,
+    )
+
+    env = RebalanceEnv(
+        panel,
+        calendar,
+        funding,
+        aligned,
+        information_lag_days=1,
+        decision_step_days=proto.decision_step_days,
+    )
+    env.reset(start, end)
+
+    def policy(ctx):
+        prediction = predictions.get(ctx.as_of)
+        if prediction is None:
+            return None
+        z = prediction_to_z(prediction, proto)
+        return prediction_to_target(z, ctx.benchmark, protocol=proto, as_of=ctx.as_of)
+
+    rollout = env.rollout(policy, start, end)
+    np.testing.assert_allclose(
+        rollout.result.nav.to_numpy(), ml.result.nav.to_numpy(), rtol=0.0, atol=1e-6
+    )
+    a = ml.result.trades.reset_index(drop=True)
+    b = rollout.result.trades.reset_index(drop=True)
+    assert len(a) == len(b)
+    for col in ("side", "face_value", "clean_price", "trade_date", "settlement_date"):
+        assert a[col].tolist() == b[col].tolist(), col

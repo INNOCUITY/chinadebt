@@ -1,0 +1,31 @@
+{
+  "protocol_version": "protocol_v1_continuous_eval",
+  "protocol_fingerprint": "b9d557f67c7e17e51dc23186a3fb0c0f01d12b5b35e68f0c217fa1877535c621",
+  "missing_prediction_policy": "benchmark_on_grid",
+  "start": "2019-01-28",
+  "end": "2025-12-31",
+  "requested_band_lots": 1.0,
+  "effective_min_trade_face": 1000000.0,
+  "predictions_path": "reports/ml_oos_predictions.csv",
+  "predictions_sha256": "0dd7bb91766a1c09518c00173247ae8ad1ca0f0c1d8f9d3440ad89b278ce5b5b",
+  "dataset_sha256": "61e30b1125fa93e0259f4f5ca5699488d2cba8261830c03827482b26f541829a",
+  "n_prediction_rows": 277,
+  "n_models": 5,
+  "models": [
+    "zero_control",
+    "ridge",
+    "tree",
+    "train_mean",
+    "literal_zero"
+  ],
+  "n_decisions": {
+    "zero_control": 1730.0,
+    "ridge": 1730.0,
+    "tree": 1730.0,
+    "train_mean": 1730.0,
+    "literal_zero": 1730.0
+  },
+  "git_head": "928818d68bafde8e550e4014f8d6bf1d9f788fca",
+  "detail_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval.csv",
+  "summary_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_summary.csv"
+}

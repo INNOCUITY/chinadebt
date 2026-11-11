@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import date
@@ -39,6 +40,13 @@ def test_model_cost_eval_quick(tmp_path) -> None:
     } <= set(detail.columns)
     assert (detail["requested_band_lots"] == 1.0).all()
     assert (detail["effective_min_trade_face"] == 1_000_000.0).all()
+    manifest = json.loads((out / "model_cost_eval_manifest.json").read_text())
+    assert manifest["protocol_version"] == "protocol_v1_continuous_eval"
+    assert manifest["missing_prediction_policy"] == "benchmark_on_grid"
+    assert len(manifest["protocol_fingerprint"]) == 64
+    assert manifest["predictions_sha256"]
+    assert manifest["n_prediction_rows"] > 0
+    assert "zero_control" in manifest["n_decisions"]
 
 
 def test_r65_last_prediction_executes_next_day(tmp_path) -> None:

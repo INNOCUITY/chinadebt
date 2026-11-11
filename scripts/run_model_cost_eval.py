@@ -15,6 +15,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -32,6 +35,7 @@ from ficc.logging import get_logger  # noqa: E402
 from ficc.research.protocol import (  # noqa: E402
     ExperimentProtocol,
     evaluate_predictions,
+    protocol_fingerprint,
 )
 
 log = get_logger("model_cost_eval")
@@ -83,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="冻结 OOS 预测的连续基准成本后评估")
     parser.add_argument("--predictions", default="reports/ml_oos_predictions.csv")
     parser.add_argument("--models", default=",".join(MODELS))
+    parser.add_argument("--band-lots", type=float, default=1.0)
     parser.add_argument("--out-dir", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -90,7 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     # 评估执行带（R70）：生产主配置 2 lot；冻结弱预测在 2 lot 下大多被最小整手吸收。
     # 探索配置显式取 1 lot；注意 build_orders 的有效最小成交面值 = max(band, 1 lot)，
     # 因此 requested=1 lot 与 effective 都是 1 lot（请求 0.25 会静默变成 1 lot）。
-    requested_band_lots = 1.0
+    requested_band_lots = float(args.band_lots)
+    if requested_band_lots <= 0:
+        raise ValueError("--band-lots 必须为正")
     eval_constraints = cfg.constraints.model_copy(
         update={"rebalance_band_lots": requested_band_lots}
     )
@@ -130,7 +137,9 @@ def main(argv: list[str] | None = None) -> int:
 
     out = Path(args.out_dir) if args.out_dir is not None else cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
-    table.to_csv(out / "model_cost_eval.csv", index=False, encoding="utf-8-sig")
+    suffix = "" if abs(requested_band_lots - 1.0) < 1e-12 else f"_{requested_band_lots:g}lot"
+    detail_path = out / f"model_cost_eval{suffix}.csv"
+    table.to_csv(detail_path, index=False, encoding="utf-8-sig")
     summary_cols = [
         "model",
         "n_days",
@@ -150,9 +159,43 @@ def main(argv: list[str] | None = None) -> int:
         "terminal_accrued_fees",
         "terminal_unsettled_cash",
     ]
-    table[summary_cols].to_csv(
-        out / "model_cost_eval_summary.csv", index=False, encoding="utf-8-sig"
-    )
+    summary_path = out / f"model_cost_eval_summary{suffix}.csv"
+    table[summary_cols].to_csv(summary_path, index=False, encoding="utf-8-sig")
+
+    def _sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    try:
+        git_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=_ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        git_head = "unknown"
+    manifest = {
+        "protocol_version": protocol.version,
+        "protocol_fingerprint": protocol_fingerprint(cfg, protocol),
+        "missing_prediction_policy": protocol.missing_prediction_policy,
+        "start": str(START),
+        "end": str(END),
+        "requested_band_lots": requested_band_lots,
+        "effective_min_trade_face": float(
+            max(requested_band_lots, 1.0) * float(cfg.constraints.min_trade_lot)
+        ),
+        "predictions_path": str(args.predictions),
+        "predictions_sha256": _sha256(Path(args.predictions)),
+        "dataset_sha256": _sha256(Path("reports/ml_dataset.csv")),
+        "n_prediction_rows": len(oos),
+        "n_models": len(table),
+        "models": table["model"].tolist(),
+        "n_decisions": {
+            str(k): float(v) for k, v in zip(table["model"], table["n_decisions"], strict=True)
+        },
+        "git_head": git_head,
+        "detail_csv": str(detail_path),
+        "summary_csv": str(summary_path),
+    }
+    manifest_path = out / f"model_cost_eval_manifest{suffix}.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     cols = [
         "model",
         "n_days",
@@ -178,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         "effective=1 lot（生产主配置 2 lot 不变），仅用于成本后诊断，不是 alpha 结论。"
         "缺失预测只在公共网格日置零，非网格日 hold（protocol_v1_continuous_eval）。"
     )
-    log.info("产物: %s", out / "model_cost_eval.csv")
+    log.info("产物: %s, %s, %s", detail_path, summary_path, manifest_path)
     return 0
 
 

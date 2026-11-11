@@ -45,7 +45,9 @@ import pandas as pd
 from ficc.backtest.engine import BacktestResult, run_backtest
 from ficc.config import Config, get_config
 from ficc.curve.curve import Curve
+from ficc.data.schema import CANONICAL_TENORS
 from ficc.logging import get_logger
+from ficc.portfolio.benchmark import build_benchmark, build_universe_bonds
 from ficc.portfolio.types import MarketContext, TargetFaces, TargetKRD
 from ficc.utils.calendar import TradingCalendar
 
@@ -317,11 +319,51 @@ class PredictionStrategy:
         protocol: ExperimentProtocol,
         prediction_is_z: bool = False,
         decision_grid: set[date] | None = None,
+        benchmark_krd_history: Mapping[date, Mapping[float, float]] | None = None,
+        calendar: TradingCalendar | None = None,
     ) -> None:
         self._predictions = {pd.Timestamp(k).date(): float(v) for k, v in predictions.items()}
         self._protocol = protocol
         self._prediction_is_z = bool(prediction_is_z)
         self._decision_grid = set(decision_grid) if decision_grid is not None else None
+        self._benchmark_krd_history = (
+            {
+                pd.Timestamp(k).date(): {float(t): float(v) for t, v in krd.items()}
+                for k, krd in benchmark_krd_history.items()
+            }
+            if benchmark_krd_history is not None
+            else None
+        )
+        self._calendar = calendar
+        self._lag = int(protocol.information_lag_days)
+        self._seen_benchmark: dict[date, dict[float, float]] = {}
+
+    def _lagged_benchmark(self, ctx: MarketContext) -> Any:
+        """R72：与 RL 相同，使用决策日 t−lag 的基准 KRD，而不是当日 ctx.benchmark。"""
+        # 先记录当日基准（用于后续 t−lag 查找）；映射本身绝不回看当日。
+        self._seen_benchmark[ctx.as_of] = {float(t): float(v) for t, v in ctx.benchmark.krd.items()}
+        if self._calendar is None:
+            return ctx.benchmark
+        available = self._calendar.prev_trading_day(ctx.as_of, self._lag)
+        krd = None
+        if self._benchmark_krd_history is not None:
+            krd = self._benchmark_krd_history.get(available)
+        if krd is None:
+            krd = self._seen_benchmark.get(available)
+        if (
+            krd is None
+            and self._decision_grid is not None
+            and ctx.as_of == min(self._decision_grid)
+            and self._benchmark_krd_history
+        ):
+            earliest = min(self._benchmark_krd_history)
+            krd = self._benchmark_krd_history[earliest]
+            available = earliest
+        if krd is None:
+            return None
+        from types import SimpleNamespace
+
+        return SimpleNamespace(krd=krd, as_of=available)
 
     def target_krd(self, ctx: MarketContext) -> TargetKRD | None:
         prediction = self._predictions.get(ctx.as_of)
@@ -339,7 +381,10 @@ class PredictionStrategy:
             if self._prediction_is_z
             else prediction_to_z(prediction, self._protocol)
         )
-        return prediction_to_target(z, ctx.benchmark, protocol=self._protocol, as_of=ctx.as_of)
+        benchmark = self._lagged_benchmark(ctx)
+        if benchmark is None:
+            return None
+        return prediction_to_target(z, benchmark, protocol=self._protocol, as_of=ctx.as_of)
 
 
 class FixedFaceStrategy:
@@ -409,6 +454,68 @@ class PredictionEvaluation:
     result: BacktestResult
 
 
+def _anchor_benchmark_krd_history(
+    panel: pd.DataFrame,
+    funding: pd.Series | None,
+    calendar: TradingCalendar,
+    cfg: Config,
+    *,
+    start: date,
+    end: date,
+    initial_curve: Curve | None,
+) -> dict[date, dict[float, float]]:
+    """R72：从真实基准账本导出逐日基准 KRD，供 ML 使用 t−lag as-of 映射。
+
+    该 anchor 与评估引擎使用相同起点/初始条款；不读取预测日当日基准作为映射输入。
+    """
+
+    class _Hold:
+        name = "protocol_anchor"
+
+        def target_krd(self, ctx: MarketContext) -> None:
+            return None
+
+    result = run_backtest(
+        _Hold(),
+        panel=panel,
+        calendar=calendar,
+        funding=funding,
+        cfg=cfg,
+        start=start,
+        end=end,
+        initial_curve=initial_curve,
+    )
+    history: dict[date, dict[float, float]] = {}
+    # 初始基准条款（start−lag 已可得曲线；若前一日缺期限则退回 start 曲线）。
+    terms_day = initial_curve.as_of if initial_curve is not None else start
+    # 用 initial_curve 或 start 曲线构造初始基准 KRD，供首个决策日映射使用。
+    try:
+        rates = panel.loc[pd.Timestamp(terms_day)].reindex(list(CANONICAL_TENORS))
+        if not rates.isna().any():
+            terms_curve = Curve(
+                as_of=terms_day,
+                tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
+                rates=rates.to_numpy(dtype=float),
+                method="linear",
+            )
+            bonds = build_universe_bonds(terms_curve, terms_day, cfg=cfg)
+            bench = build_benchmark(terms_curve, terms_day, bonds=bonds, calendar=calendar, cfg=cfg)
+            history[terms_day] = {float(t): float(v) for t, v in bench.krd.items()}
+    except (KeyError, ValueError):
+        pass
+    exposure = result.exposure
+    if "date" not in exposure.columns:
+        return history
+    for _, row in exposure.iterrows():
+        krd = {
+            float(column[len("bench_krd_") :]): float(row[column])
+            for column in exposure.columns
+            if isinstance(column, str) and column.startswith("bench_krd_")
+        }
+        history[pd.Timestamp(row["date"]).date()] = krd
+    return history
+
+
 def evaluate_predictions(
     predictions: Mapping[date, float],
     panel: pd.DataFrame,
@@ -421,6 +528,7 @@ def evaluate_predictions(
     end: date | None = None,
     prediction_is_z: bool = False,
     initial_curve: Curve | None = None,
+    benchmark_krd_history: Mapping[date, Mapping[float, float]] | None = None,
 ) -> PredictionEvaluation:
     """用**同一回测引擎**把预测映射成仓位，评估成本后净收益与风险。
 
@@ -439,11 +547,23 @@ def evaluate_predictions(
             f"{len(off_grid)} 个预测日期不在协议决策网格（每 {proto.decision_step_days} 交易日）上，"
             f"例如 {off_grid[:5]}；连续/每日预测不能绕过公共入口的网格约束"
         )
+    if benchmark_krd_history is None:
+        benchmark_krd_history = _anchor_benchmark_krd_history(
+            panel,
+            funding,
+            calendar,
+            resolved,
+            start=decision_start,
+            end=decision_end,
+            initial_curve=initial_curve,
+        )
     strategy = PredictionStrategy(
         predictions,
         protocol=proto,
         prediction_is_z=prediction_is_z,
         decision_grid=set(grid),
+        benchmark_krd_history=benchmark_krd_history,
+        calendar=calendar,
     )
     result = run_backtest(
         strategy,
@@ -486,7 +606,8 @@ def evaluate_predictions(
         "reject_rate_per_decision": float(len(result.rejected) / max(len(predictions), 1)),
         "avg_abs_dv01_ratio_dev": float((result.exposure["dv01_ratio"] - 1.0).abs().mean()),
         "violation_days_held": float((~held["ok"]).sum()),
-        "n_decisions": float(len(predictions)),
+        "n_decisions": float(len(result.signals)),
+        "n_input_predictions": float(len(predictions)),
         # R66：终止义务与净终值口径（与 training_objective 的 deduct_terminal_fees 一致）
         "terminal_nav": float(terminal.nav_mark_to_market),
         "terminal_accrued_fees": float(terminal.accrued_fees),

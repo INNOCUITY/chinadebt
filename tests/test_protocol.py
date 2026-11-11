@@ -85,7 +85,9 @@ def test_zero_prediction_tracks_benchmark_and_costs(market) -> None:
     assert ev.metrics["n_days"] > 30
     assert abs(ev.metrics["active_excess_bp"]) < 1.0  # 零映射≈基准（建仓成本内）
     assert ev.metrics["total_cost"] >= 0.0
-    assert ev.metrics["n_decisions"] == len(preds)
+    # R68/R70 报告契约：决策数=实际产生的信号数，输入预测数单独报告
+    assert ev.metrics["n_input_predictions"] == len(preds)
+    assert ev.metrics["n_decisions"] == len(ev.result.signals)
     assert ev.result.benchmark_version == "rolling"
     # 预测序列只作用在决策日；非决策日策略返回 None（hold）
     strategy = PredictionStrategy(preds, protocol=ExperimentProtocol())
@@ -264,28 +266,77 @@ def test_r68_missing_predictions_only_on_grid_and_distinct_fingerprint(market) -
 
 
 def test_r69_net_active_deducts_both_terminal_fees(market) -> None:
-    """R69：净超额必须对称扣除双方终止费用；零预测短窗 gross/net active 均为 0。"""
+    """R69：双方都有正终止费用时净超额仍为 0；基准费用 +1 元必须减少净终值。"""
+    from dataclasses import replace
+
+    from ficc.rl import benchmark_terminal_state_from_result
+
     cfg, panel, funding, calendar = market
     proto = ExperimentProtocol(
         version="protocol_v1_continuous_eval",
         missing_prediction_policy="benchmark_on_grid",
     )
     grid = proto.decision_dates(calendar, date(2019, 2, 1), date(2019, 3, 8))
-    start, last = grid[0], grid[2]
-    end = calendar.next_trading_day(last, 1)
+    start = grid[0]
+    end = calendar.next_trading_day(start, 1)  # 首笔建仓当日终止→双方均有未付费用
     evaluation = evaluate_predictions(
-        {d: 0.0 for d in grid[:3]},
-        panel,
-        funding,
-        calendar,
-        cfg,
-        protocol=proto,
-        start=start,
-        end=end,
+        {start: 0.0}, panel, funding, calendar, cfg, protocol=proto, start=start, end=end
     )
     m = evaluation.metrics
+    assert m["terminal_accrued_fees"] > 0.0
     assert m["terminal_accrued_fees"] == pytest.approx(
-        m["benchmark_terminal_accrued_fees"], abs=1e-6
+        m["benchmark_terminal_accrued_fees"], abs=1e-9
     )
-    assert abs(m["active_excess_bp"]) < 0.5
-    assert abs(m["net_active_excess_bp"]) < 0.5
+    assert m["active_excess_bp"] == pytest.approx(0.0, abs=1e-9)
+    assert m["net_active_excess_bp"] == pytest.approx(0.0, abs=1e-9)
+    # 基准费用 +1 元：基准净终值准确减少 1 元，净收益相应变化
+    bench_terminal = benchmark_terminal_state_from_result(
+        evaluation.result, calendar=calendar, cfg=cfg
+    )
+    tampered = replace(bench_terminal, accrued_fees=bench_terminal.accrued_fees + 1.0)
+    assert tampered.net_terminal_value == pytest.approx(
+        bench_terminal.net_terminal_value - 1.0, abs=1e-12
+    )
+
+
+def test_r72_prediction_mapping_uses_lagged_benchmark(market) -> None:
+    """R72：预测→KRD 必须使用 t−1 可得基准；当日基准被扰动不得改变目标。"""
+    from types import SimpleNamespace
+
+    from ficc.research.protocol import _anchor_benchmark_krd_history
+
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol()
+    start = date(2019, 2, 1)
+    end = date(2019, 3, 8)
+    history = _anchor_benchmark_krd_history(
+        panel, funding, calendar, cfg, start=start, end=end, initial_curve=None
+    )
+    t = proto.decision_dates(calendar, start, end)[1]
+    available = calendar.prev_trading_day(t, proto.information_lag_days)
+    assert available in history
+    base_krd = history[available]
+    strategy = PredictionStrategy(
+        {t: 0.01},
+        protocol=proto,
+        decision_grid={t},
+        benchmark_krd_history=history,
+        calendar=calendar,
+    )
+    base_ctx = SimpleNamespace(
+        as_of=t,
+        benchmark=SimpleNamespace(krd=dict(base_krd), as_of=t),
+    )
+    perturbed_ctx = SimpleNamespace(
+        as_of=t,
+        benchmark=SimpleNamespace(
+            krd={float(k): float(v) + 1000.0 for k, v in base_krd.items()}, as_of=t
+        ),
+    )
+    a = strategy.target_krd(base_ctx)
+    b = strategy.target_krd(perturbed_ctx)
+    assert a is not None and b is not None
+    np.testing.assert_allclose(a.total_dv01, b.total_dv01, rtol=0.0, atol=1e-9)
+    # 目标基于 available 日基准，而不是当日 ctx.benchmark
+    expected = prediction_to_target(0.01 / 0.01, SimpleNamespace(krd=base_krd, as_of=available))
+    np.testing.assert_allclose(a.total_dv01, expected.total_dv01, rtol=1e-12, atol=0.0)

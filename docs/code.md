@@ -180,7 +180,13 @@
 | C-148 | 2026-11-10 | [fix] | 评估 | R69：基准终止费用对称扣除 |
 | C-149 | 2026-11-10 | [fix] | 评估 | R70：执行带 requested/effective 披露（主配置 2 lot） |
 | C-150 | 2026-11-10 | [fix] | 协议 | R71：删除未用 benchmark override |
-| C-151 | 2026-11-10 | [test] | 测试 | 测试基线 702 → **705 项全绿** |
+| C-151 | 2026-11-10 | [test] | 测试 | 测试基线 702 → 705 项全绿 |
+| C-153 | 2026-11-11 | [fix] | 协议 | R72：预测→KRD 使用 t−lag 基准，ML/RL 同源 |
+| C-154 | 2026-11-11 | [fix] | 评估 | n_decisions=实际信号数 + 成本评估独立 manifest |
+| C-155 | 2026-11-11 | [test] | 测试 | R69 正费用短窗/基准费用 +1 元回归 |
+| C-156 | 2026-11-11 | [feat] | 评估 | 2 lot 主配置 / 1 lot 探索配置分开重放 |
+| C-157 | 2026-11-11 | [test] | 测试 | 测试基线 705 → **707 项全绿** |
+| C-152 | 2026-11-10 | [docs] | 独立审查 | R68–R71 复验；R72 预测映射 as-of 差异，分开单卡准备与训练准入 |
 | C-146 | 2026-11-10 | [docs] | 独立审查 | 复验 R64–R67；R68–R71：网格绕过、双方净终值、实际执行带、override 日期错位 |
 | C-140 | 2026-11-10 | [docs] | 独立审查 | 复验 R60–R63；成本评估 R64–R67：历史快照误拒单、末预测截断、终止费用、标签/基准口径 |
 | C-133 | 2026-11-09 | [docs] | 独立审查 | 复核 7fd3fd0：R61 持仓时点、R62 起点信息泄漏、R60 结算指纹缺项、R63 终止对照缺失 |
@@ -203,7 +209,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：705 passed / 0 failed / 1 deselected（network）/ 约 15 分钟（含真实数据回归与回测）
+基线：707 passed / 0 failed / 1 deselected（network）/ 约 16 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1241,10 +1247,11 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前状态（2026-11-10，审查 HEAD `3c3d5fe`）**：R64 旧窗口反例和 R67 全部标签同源
-通过；当前连续窗口覆盖冻结 OOS 的末端执行日，R66 策略净终值字段成立。成本后评估尚需
-关闭 R68 非预测日每日归零绕过公共网格、R69 基准未对称扣终止费用；补正 R70 实际阈值和
-运行血缘、清理 R71 可选 override 日期错位。最新证据见 C-146。历史未修状态不代表当前状态。
+**当前状态（2026-11-10，审查 HEAD `928818d`）**：R68–R71 原反例已修复；七年五条路径、
+成本 CSV 与固定面值跨入口控制独立复现。新增 R72：ML 预测映射用当日基准 KRD，RL 用
+滞后基准；不可见曲线扰动会改变 ML 目标/订单，实际预测映射尚未满足共同信息时钟。
+R68 决策计数和 R70 运行血缘仍需收尾；R69 实现通过独立正未付费反例，回归测试应加强。
+可先做 A800 环境/吞吐，正式同协议训练先修 R72。详见 C-152；历史未修状态不代表当前状态。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -3027,7 +3034,8 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 | R71 | P2 | 删除 `benchmark_krd_override`/`benchmark_nav_override`/`default_to_benchmark` | C-150；接口不存在；连续复盘由协议+网格驱动 |
 | 网格化回放 | — | 1730 日、连续基准、0 拒单、1 lot 探索：zero/literal −3.36bp；train_mean −9.46（−6.10）、Ridge −5.23（−1.87）、Tree −14.98（−11.61）bp | C-147/C-149；相对零控制均无正增量 |
 
-**结论**：控制链路闭合；冻结预测无正增量；未训练新模型/未做 A800。
+**独立复核更正（C-152）**：旧反例与固定面值控制通过，探索表相对零控制无正增量；
+实际预测映射仍受 R72 影响，不能宣称共同信息时钟完全闭合。未训练新模型/未做 A800。
 
 ### C-147 [fix] R68：网格化缺失预测
 
@@ -3043,7 +3051,8 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 - **文件**：`src/ficc/rl/env.py`、`src/ficc/rl/__init__.py`、`src/ficc/research/protocol.py`
 - **变更内容**：`benchmark_terminal_state_from_result`；绩效输出 benchmark_terminal_accrued_fees/unsettled/net_benchmark_return；net_active 用双方净终值。
 - **验证方式**：零预测短窗双方费用相同，gross/net active 均 0；旧实现单边扣 2,542.54 元误报 −0.254254bp。
-- **风险/遗留**：基准 cash 由 NAV 恒等式反推（未导出独立 cash/pending）；净终值只用 NAV−费用，不受影响。
+- **风险/遗留（复核更正）**：实现由 NAV 恒等式反推基准 cash，但 `benchmark_positions`
+  实际已导出 cash/pending_cash；不应把该反推恒等式当独立现金对账。净终值 NAV−费用不受影响。
 
 ### C-149 [fix] R70：执行带请求/有效值
 
@@ -3070,6 +3079,126 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 
 ---
 
+### C-152 [docs] R68–R71 复验与实际预测映射跨入口审查
+
+- **日期 / 基线**：2026-11-10 / `928818d`。
+- **文件 / 影响面**：README、方法论 §10.32、计划 §12.33、本记录。只维护文档，未修改业务
+  代码/测试/正式报告；修正重复方法论节号（修复交付为 §10.31），恢复历史 `3c3d5fe` 的
+  702 项测试记录，避免本轮 705 项覆盖过去验收。
+- **原因**：复验是否可以进入 A800；使用实际非零预测映射检验共同信息集，而不只固定面值。
+- **验证**：默认 `make check` exit 0，收集并执行 705 项；完整七年五条路径重跑，
+  `model_cost_eval.csv` / `model_cost_eval_summary.csv` 与已提交产物逐值完全相同；
+  `run_cross_entry_check.py` 的三组固定 TargetFaces 对照差为 0。三套 acceptance 本轮未跑。
+- **结论 / 遗留**：一个核心阻塞 R72；另有 R68 决策计数、R70 产物血缘未补齐。单卡环境与
+  吞吐可以推进，正式共同协议训练和比较先关闭 R72。未训练新模型、未部署服务器。
+
+**已通过修复**
+
+- R68：公共入口拒绝网格外预测，缺预测只在网格日置零；此前 02-03 脉冲反例消失。
+  `missing_prediction_policy` 与独立版本进入指纹。R70 的请求/有效阈值披露及 R71 接口删除成立。
+- R69：独立重跑 2019-02-01→02-02，双方未付费均 **2,542.542395 元**，gross/net active
+  均 **0**。仅在 `benchmark_trades` 第一笔未结算交易的 `fee` 增加 1 元，基准净终值恰好
+  减少 **1 元**，策略不变；实现确实从基准交易独立重建费用。
+- 七年 active：zero/literal **−3.363569bp**、train_mean **−9.460374bp**、Ridge
+  **−5.234400bp**、Tree **−14.977396bp**。相对 zero 增量分别 0/−6.096805/−1.870831/
+  −11.613827bp；与现有 CSV 完全一致，认可为当前实现的探索结果，不宣称共同信息集验收。
+
+**R72 [P1 / 训练入口信息集] 实际预测到 KRD 的转换在 ML/RL 中使用不同时钟**
+
+- **位置**：`src/ficc/research/protocol.py:342`；对照 `src/ficc/rl/env.py:1033–1039`；
+  `scripts/run_cross_entry_check.py` 只比较固定 TargetFaces，未消费预测转换所需的基准 KRD。
+- **原因**：ML `PredictionStrategy` 接收完整引擎 context，直接用当日基准 KRD；RL policy
+  则拿 `benchmark(available_through)`。输入预测已离线冻结并不能阻止目标映射继续消费
+  t 日、按协议尚不可见的行情。原始目标在普通行情下已有小差异，可能被整手取整掩盖。
+- **独立控制**：共同起点 2019-02-01、终点 02-02；两边显式用 01-31 曲线初始化同一组券，
+  原始预测 +0.01，网格 5 日、1 lot。仅将 02-01 曲线上移 1pp，历史可得行情/初始条款/
+  02-02 执行行情全部固定。
+- **实测**：ML 首日目标 DV01 **91,264.216668→77,560.451453 元/bp**；RL 保持
+  **91,320.877454 元/bp**。扰动后 ML 成交 27/27/26/20M，RL 为 28/28/27/27M；
+  最大单腿差 **7M**。ML 末 NAV **99,929,784.982898**、RL **99,909,527.579312**，
+  差 **20,257.403587 元**。未扰动时两边 NAV/订单一致，因此固定或温和行情控制可能漏检。
+- **影响**：不是对已有冻结预测训练过程的新指控；是预测进入仓位映射后的信息集错误。
+  当前 ML 成本表与 RL 不具备已宣称的同一 lag=1 映射；相同函数名/引擎不足以证明公平比较。
+- **修复/验收**：共享可用基准身份、as-of 上下文和预测映射，不能按 lag 日重新发行债券；
+  原始目标对决策日不可见行情扰动不变。用真实正/负预测、网格缺失、换券和末端未结算对拍
+  ML/rollout/step 的目标、订单、NAV 与双方净终值。合法的执行日估值/风控仍使用当时行情。
+  若改为执行时风险归一化，必须双方共享且另行版本化，不单侧改变模型信息集。
+
+**原编号结余：统计、血缘和回归保护（不新增模型研究）**
+
+- **R68 / P2**：`protocol.py:486,489` 仍以 `len(predictions)` 作为决策数/拒单率分母。
+  空预测、02-01→03-08 的补零协议实际生成 **5** 个网格信号，却报 **0** 个决策；七年表
+  zero_control 同样报 0。需拆开输入预测数、网格机会、有效决策、机械事件和拒单，不能在
+  缺失预测补零后沿用输入行数。当前全为 0 拒单，错误分母尚未改变表中的零值。
+- **R70 / P2**：`run_model_cost_eval.py:_run/main` 丢弃 `evaluation.protocol`，成本产物
+  无该次运行的 protocol_version/fingerprint、missing policy、start/end、初始化来源和
+  预测散列。已有 `protocol_manifest.json` 属于标准协议、2 lot 的另一条冒烟，不是当前
+  continuous_eval、1 lot 报告的 manifest。补齐自身血缘，2 lot 主报告与探索结果分开保存。
+- **R69 / 回归保护**：已提交 `test_r69_net_active_deducts_both_terminal_fees` 实测两边
+  fees=0，且允许 abs(active)<0.5bp；旧错误 0.254254bp 也小于容差。这不推翻本轮独立
+  反例认可的修复，但应把正未付费窗口、严格零超额、单侧 +1 元注入纳入持久回归。
+- **基准现金 / 非阻断说明**：`benchmark_positions` 已有 cash/pending_cash/nav，
+  terminal helper 的“未导出”注释不实。当前倒推现金恒等式不能作独立现金校验；后续直接
+  读取实际快照，与推算值比对。正常净费用计算不因此改变，不作为 R69 重开理由。
+
+**行动顺序**：R72 与计数/manifest 收尾 → 同一连续基准下重放冻结预测（2 lot 主配置、1 lot
+探索分开）→ 同协议最小训练。A800 单卡环境/固定回放吞吐可以并行，无须先取得正超额；
+8 卡按 CPU/内存实测后做 seed/fold 任务并行。Mac 保留短 example，不新增模型/调参来掩盖控制差异。
+
+---
+
+### R72 与报告契约修复对照（2026-11-11 第二十一轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R72 | P1 | PredictionStrategy 映射改用 t−lag 基准 KRD（anchor 历史/内部逐日快照）；不再用当日 ctx.benchmark | C-153；非零预测 ML/RL 订单/NAV 完全一致；扰动决策日基准不改变目标 |
+| 报告契约 | P2 | n_decisions=实际信号数，n_input_predictions 单列；成本评估独立 manifest（指纹/区间/预测与数据集 SHA-256/sha256/band/git HEAD） | C-154；空预测短窗 5 信号不再报 0 决策；manifest 可追溯 |
+| R69 测试 | P2 | 正费用短窗（双方 2,542.54 元）net/gross active=0（1e-9）；基准费用 +1 元精确传导 | C-155 |
+| 双配置 | — | 2 lot 主 / 1 lot 探索分开重放，分别保存 CSV+summary+manifest | C-156；2 lot：zero −0.09、Ridge/train_mean +1.65、Tree +1.76bp（25 笔）；1 lot：zero −4.27、Ridge −3.27（+1.00）、train_mean −3.75（+0.52）、Tree −14.09（−9.82）bp |
+
+**边界**：结果仅为成本后诊断；2 lot 下信号多被最小整手吸收，+1.7bp 不能解释为预测力；未做统计显著性/执行带敏感性/A800。
+
+### C-153 [fix] R72：共享 as-of 基准映射
+
+- **日期**：2026-11-11
+- **文件**：`src/ficc/research/protocol.py`、`tests/test_protocol.py`、`tests/test_cross_entry.py`
+- **变更内容**：PredictionStrategy 支持 benchmark_krd_history/内部逐日基准快照，映射一律用 t−lag available KRD；evaluate 自动构造同起点/同初始条款 anchor 基准 KRD，首决策用初始可行条款；新增非零预测 ML/RL 对拍。
+- **验证方式**：非零预测 ML/RL 订单/NAV 一致；仅扰动决策日基准 KRD 时目标 total_dv01 不变。
+- **风险/遗留**：anchor 与评估引擎同起点/初始条款；首个决策日无历史时用初始条款 KRD（已在代码注释披露）。
+
+### C-154 [fix] 报告契约：决策数与 manifest
+
+- **日期**：2026-11-11
+- **文件**：`src/ficc/research/protocol.py`、`scripts/run_model_cost_eval.py`、`tests/test_model_cost_eval.py`
+- **变更内容**：n_decisions=len(result.signals)，n_input_predictions 单列；成本评估生成 `model_cost_eval_manifest*.json`，含协议版本/指纹、区间、预测/数据集 SHA-256、requested/effective 执行带、每模型决策数、git HEAD。
+- **验证方式**：空预测网格补零短窗报实际信号数；manifest 字段测试。
+- **风险/遗留**：manifest 与标准协议冒烟 manifest 分开；不可混用。
+
+### C-155 [test] R69 正费用回归
+
+- **日期**：2026-11-11
+- **文件**：`tests/test_protocol.py`
+- **变更内容**：使用首笔建仓当日终止的短窗，双方未付费用 2,542.54 元；断言 gross/net active 均 0（1e-9），基准费用 +1 元使基准净终值减少 1 元。
+- **验证方式**：测试通过。
+- **风险/遗留**：长窗口末端常无未结算费用；正费用场景单独覆盖。
+
+### C-156 [feat] 2 lot / 1 lot 分开重放
+
+- **日期**：2026-11-11
+- **文件**：`scripts/run_model_cost_eval.py`、`reports/model_cost_eval*`
+- **变更内容**：`--band-lots` 参数；2 lot 主配置与 1 lot 探索分别输出 CSV/summary/manifest；manifest 记录 requested/effective。
+- **验证方式**：两次重放 0 拒单；2 lot 25 笔、1 lot 79–194 笔；结果见方法论 §10.31。
+- **风险/遗留**：2 lot 下信号多被整手吸收，增量不具解释力；1 lot 仍为探索配置。
+
+### C-157 [test] 测试基线 705 → 707
+
+- **日期**：2026-11-11
+- **变更内容**：新增 R72 映射单测、非零预测 ML/RL 对拍；更新决策数/manifest 断言。
+- **验证方式**：`make check`（707 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 16 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -3077,7 +3206,7 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **705** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **707** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步
