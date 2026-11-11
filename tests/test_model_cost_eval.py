@@ -47,6 +47,9 @@ def test_model_cost_eval_quick(tmp_path) -> None:
     assert manifest["predictions_sha256"]
     assert manifest["n_prediction_rows"] > 0
     assert "zero_control" in manifest["n_decisions"]
+    assert manifest["repo_state"] in {"clean", "dirty"}
+    assert "source_sha256" in manifest
+    assert "git_head" not in manifest
     assert manifest["resolved_benchmark_version"] == "rolling"
     assert manifest["resolved_rolling"]["enabled"] is True
     assert manifest["source_sha256"]

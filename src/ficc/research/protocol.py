@@ -577,10 +577,18 @@ def evaluate_predictions(
             panel, calendar, decision_start, int(proto.information_lag_days)
         )
     info_cutoff = calendar.prev_trading_day(decision_start, int(proto.information_lag_days))
-    if initial_curve.as_of > info_cutoff:
+    if initial_curve.as_of != info_cutoff:
+        if initial_curve.as_of > info_cutoff:
+            raise ProtocolError(
+                f"initial_curve.as_of={initial_curve.as_of} 晚于信息截止日 {info_cutoff}"
+                f"（start−lag={proto.information_lag_days}）；显式参数也不能绕过 R72"
+            )
+        # R73：过旧条款会让首日滚动更新宇宙但基准仍保留旧券，随后估值失败。
+        # 当前不支持"接力续跑"，显式初始化只接受 start−lag 当日。
         raise ProtocolError(
-            f"initial_curve.as_of={initial_curve.as_of} 晚于信息截止日 {info_cutoff}"
-            f"（start−lag={proto.information_lag_days}）；显式参数也不能绕过 R72"
+            f"initial_curve.as_of={initial_curve.as_of} 早于信息截止日 {info_cutoff}："
+            "显式初始化仅支持 start−lag 当日；过旧条款会与首日滚动/基准身份冲突（R73），"
+            "接力续跑需单独实现"
         )
     if benchmark_krd_history is None:
         benchmark_krd_history = _anchor_benchmark_krd_history(

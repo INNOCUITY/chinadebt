@@ -78,12 +78,11 @@
     "train_mean": 346.0,
     "literal_zero": 346.0
   },
-  "git_head": "821b34bd103b4dc440e3d86a5da09bc08f967723",
-  "git_dirty": false,
+  "repo_state": "dirty",
   "source_sha256": {
-    "src/ficc/research/protocol.py": "433ee23d454569ed4c789d01320eeb4cd103d71546ff7df6b8f44998d96a8c28",
+    "src/ficc/research/protocol.py": "d680bdf68d318a2e711df89d254d364c4af23634631d09ce923550895f2656b5",
     "src/ficc/rl/env.py": "cba8f795b8731988d14d6840b295729bad3bed9bee70c513e71a66671cde1949",
-    "scripts/run_model_cost_eval.py": "865283f277fcf68e1d9af8741e8cd0fb643f400b1fc18ac8cdea6b3e58b19f3b"
+    "scripts/run_model_cost_eval.py": "381ca4924a3b87d25ba5be30ca22142cac4624722cad69595f147f5c6ee4422d"
   },
   "detail_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval.csv",
   "summary_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_summary.csv"

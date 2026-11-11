@@ -193,7 +193,11 @@
 | C-164 | 2026-11-11 | [fix] | 协议 | R72：显式 initial_curve 强制 as_of≤start−lag；成本脚本去旁路 |
 | C-165 | 2026-11-11 | [fix] | ML | 标签基准同步 2019-01-31 初始曲线，数据集起点 2019-02-01 |
 | C-166 | 2026-11-11 | [fix] | 评估 | 拒单率分母=实际决策（5/5→1.0）；冒烟 manifest 用解析配置 |
-| C-167 | 2026-11-11 | [test] | 测试 | 测试基线 709 → **711 项全绿** |
+| C-167 | 2026-11-11 | [test] | 测试 | 测试基线 709 → 711 项全绿 |
+| C-169 | 2026-11-11 | [fix] | 协议 | R73：显式 initial_curve 必须恰为 start−lag，过旧/过晚拒绝 |
+| C-170 | 2026-11-11 | [fix] | 报告 | manifest 去 git_head，改 repo_state+散列；2 lot 文案动态 |
+| C-171 | 2026-11-11 | [test] | 测试 | 测试基线 711 → **712 项全绿** |
+| C-168 | 2026-11-11 | [docs] | 独立审查 | 默认训练路径闭合；标签/双配置复现；R73 旧条款首日滚动边界与单卡推进计划 |
 | C-163 | 2026-11-11 | [docs] | 独立审查 | 默认 R72 通过；成本脚本显式时钟绕过、拒单率及冒烟指纹待补齐 |
 | C-158 | 2026-11-11 | [docs] | 独立审查 | 复验显式 as-of/跨换券与双配置回放；默认初始化、真实决策数、解析后指纹待收尾 |
 | C-152 | 2026-11-10 | [docs] | 独立审查 | R68–R71 复验；R72 预测映射 as-of 差异，分开单卡准备与训练准入 |
@@ -219,7 +223,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：711 passed / 0 failed / 1 deselected（network）/ 约 17 分钟（含真实数据回归与回测）
+基线：712 passed / 0 failed / 1 deselected（network）/ 约 17 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1257,11 +1261,12 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前状态（2026-11-11，审查 HEAD `cf06804`）**：709 项默认检查、两套成本与完整冒烟
-CSV 复现。默认初始化和真实决策计数已修好，成本 manifest 的解析指纹/源码散列通过。
-R72 显式初始日期仍未校验，正式成本脚本主动传 START 曲线绕过默认保护；拒单率仍用
-输入预测数，冒烟 manifest 仍使用解析前 cfg。详见 C-163。已通过默认路径可先做单卡环境/
-吞吐，正式共同协议训练前补齐显式路径与初始化阶段，不把局部通过等同于所有入口通过。
+**当前状态（2026-11-11，审查 HEAD `471a79f`）**：默认检查通过，R72 显式截止/成本脚本
+旁路、R68 拒单率、R70 冒烟指纹已复验关闭；344 行标签、277 个 OOS 预测、两套执行带
+各五条长回放与完整冒烟均复现。默认入口可进入单卡吞吐与小网络单 seed 可恢复训练。
+新增 R73（P2）：过旧显式条款在首日需要滚动时，未建仓基准仍保留旧券面值，估值报错；
+首阶段限定默认初始化。2 lot 旧 manifest 的 dirty=true 应如实披露，源散列匹配且 clean
+HEAD 隔离重跑一致，不是此次结果污染。详见 C-168、方法论 §10.38、计划 §12.39。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -3446,6 +3451,59 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 
 ---
 
+### C-168 [docs] 默认训练路径独立验收与单卡推进计划
+
+- **日期/基线**：2026-11-11，`471a79f`。仅更新 README、计划、方法论、本记录；未改业务
+  代码/测试/正式报告，临时复验输出在 `/tmp/debt_r22/`，三套 acceptance 未重跑。
+- **验证**：默认 `make check` 日志全部通过；另跑 RL/协议 40 项 exit 0。拒单反例 5/5=1；
+  非法 START 初始曲线拒绝，默认首日 +1pp 扰动不改变目标/订单/NAV；非零跨一次换券的
+  ML/RL 目标、订单、NAV 差为 0；三入口终止字段差为 0。两套成本各五条路径和标准冒烟
+  完整 CSV 与仓库数值差 0；344 行标签与成本基准误差 <1e-16，22 split/277 条预测复算一致。
+- **新增 R73（P2）**：`initial_curve=2019-01-31`、`start=2020-02-03`、`end=2020-02-14`，
+  合法通过截止校验，但引擎首日 `rolling_universe.roll` 替换 2Y 券，`bench_bought=False`
+  跳过基准面值迁移；`mark_faces` 报 `SYN-2Y-20190131 不在 bonds 里`。定位
+  `src/ficc/backtest/engine.py` 的首日滚动/基准建仓顺序。应显式拒绝不支持的旧条款或实现
+  完整续跑身份/面值/现金状态；默认 start−lag 路径不受此反例影响，不阻塞该路径的单卡工程。
+- **报告更正**：仓库成本 manifest HEAD 为 `821b34b`，1 lot clean/2 lot dirty；输入和三份
+  源码散列均匹配。本次在 clean `471a79f` 隔离生成的两份 manifest 为该 HEAD/dirty=false，
+  数值一致。历史 manifest 不手工改 HEAD/dirty。脚本文本仍有旧起点/重叠与固定 1 lot
+  说明残留，后续由实际参数生成。方法论本轮交付重复 §10.33 更正为 §10.37，审查为 §10.38。
+- **结论/计划**：现有模型仍是成本后诊断，无 RL 训练产物；允许默认入口进入单卡吞吐和
+  小网络可恢复训练。执行带/时间相关统计方案先冻结，8 卡待单卡验收后 seed/fold 并行。
+
+### R73 过旧初始化与报告血缘（2026-11-11 第二十四轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R73 | P2 | 显式 initial_curve 必须恰好 start−lag；过旧条款与过晚均 ProtocolError；续跑暂不支持 | C-169；2019-01-31 从 2020-02-03 起跑被拒；默认路径/七年结果不受影响 |
+| 报告血缘 | P2 | manifest 移除 git_head，改 repo_state + source_sha256 + 数据/协议散列；2 lot stdout 动态执行带 | C-170；manifest 无 git_head、repo_state 字段；2 lot 文案正确 |
+| 重放 | — | 1 lot/2 lot 数值不变；仅成本后诊断 | C-169/C-170 |
+
+### C-169 [fix] R73：过旧初始化拒绝
+
+- **日期**：2026-11-11
+- **文件**：`src/ficc/research/protocol.py`、`tests/test_protocol.py`
+- **变更内容**：显式 initial_curve 必须等于 start−lag；过旧条款（滚动首日/基准身份冲突）与过晚均拒绝，错误信息说明续跑需单独实现。
+- **验证方式**：2019-01-31 曲线 + 2020-02-03 起点 → ProtocolError；合法 start−lag 显式控制仍通过。
+- **风险/遗留**：当前不支持跨 episode 接力续跑；默认路径与七年结果不受影响。
+
+### C-170 [fix] 报告血缘与 2 lot 文案
+
+- **日期**：2026-11-11
+- **文件**：`scripts/run_model_cost_eval.py`、`tests/test_model_cost_eval.py`
+- **变更内容**：manifest 移除 git_head/git_dirty（避免 manifest 提交后过期），改 repo_state + source_sha256；stdout 动态显示 requested/effective 执行带。
+- **验证方式**：manifest 无 git_head、repo_state 为 clean/dirty；2 lot 文案显示 2 lot；源码/数据散列保留。
+- **风险/遗留**：以源码/数据/协议散列作为权威血缘；manifest 自身提交不改变源文件散列。
+
+### C-171 [test] 测试基线 711 → 712
+
+- **日期**：2026-11-11
+- **变更内容**：新增过旧 initial_curve 拒绝测试；manifest repo_state/无 git_head 断言。
+- **验证方式**：`make check`（712 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 17 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -3453,7 +3511,7 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **711** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **712** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

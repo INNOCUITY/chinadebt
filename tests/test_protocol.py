@@ -198,6 +198,7 @@ def test_protocol_smoke_script_isolated(tmp_path) -> None:
 
     manifest = json.loads((out / "protocol_manifest.json").read_text())
     assert manifest["resolved_benchmark_version"] == "rolling"
+    assert manifest.get("repo_state") in {"clean", "dirty"} or "repo_state" not in manifest
     assert manifest["resolved_rolling"]["enabled"] is True
     assert len(manifest["fingerprint"]) == 64
 
@@ -485,4 +486,31 @@ def test_r72_explicit_initial_curve_cannot_exceed_cutoff(market) -> None:
             start=start,
             end=date(2019, 2, 15),
             initial_curve=too_late,
+        )
+
+
+def test_r73_stale_explicit_initial_curve_rejected(market) -> None:
+    """R73：过旧 initial_curve 会导致首日滚动/基准身份冲突，必须显式拒绝。"""
+    from ficc.curve.curve import Curve
+    from ficc.data.schema import CANONICAL_TENORS
+
+    cfg, panel, funding, calendar = market
+    old_day = date(2019, 1, 31)
+    rates = panel.loc[pd.Timestamp(old_day)].reindex(list(CANONICAL_TENORS)).to_numpy(dtype=float)
+    stale = Curve(
+        as_of=old_day,
+        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
+        rates=rates,
+        method="linear",
+    )
+    with pytest.raises(ProtocolError, match="早于信息截止日"):
+        evaluate_predictions(
+            {},
+            panel,
+            funding,
+            calendar,
+            cfg,
+            start=date(2020, 2, 3),
+            end=date(2020, 3, 31),
+            initial_curve=stale,
         )

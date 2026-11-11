@@ -189,12 +189,6 @@ def main(argv: list[str] | None = None) -> int:
     def _sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    try:
-        git_head = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=_ROOT, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        git_head = "unknown"
     resolved_cfg = protocol_config(cfg, protocol)
     source_files = [
         "src/ficc/research/protocol.py",
@@ -232,8 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         "n_decisions": {
             str(k): float(v) for k, v in zip(table["model"], table["n_decisions"], strict=True)
         },
-        "git_head": git_head,
-        "git_dirty": bool(dirty),
+        "repo_state": "clean" if not dirty else "dirty",
         "source_sha256": {path: _sha256(_ROOT / path) for path in source_files},
         "detail_csv": str(detail_path),
         "summary_csv": str(summary_path),
@@ -261,8 +254,10 @@ def main(argv: list[str] | None = None) -> int:
     print(table[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
     print(
         "\n说明：所有收益相对**同一条 2019-02-01 起持续滚动基准**；模型预测日之外为零预测"
-        "（跟踪基准 KRD）。模型/split/alpha/预测已冻结；探索执行带 requested=1 lot，"
-        "effective=1 lot（生产主配置 2 lot 不变），仅用于成本后诊断，不是 alpha 结论。"
+        f"（跟踪基准 KRD）。模型/split/alpha/预测已冻结；执行带 requested="
+        f"{requested_band_lots:g} lot，effective="
+        f"{max(requested_band_lots, 1.0):g} lot（生产主配置 2 lot 不变），"
+        "仅用于成本后诊断，不是 alpha 结论。"
         "缺失预测只在公共网格日置零，非网格日 hold（protocol_v1_continuous_eval）。"
     )
     log.info("产物: %s, %s, %s", detail_path, summary_path, manifest_path)

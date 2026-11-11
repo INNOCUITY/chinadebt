@@ -83,7 +83,7 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（673 项离线，exit 0）
+make check    # = ruff check + ruff format --check + pytest（当前 712 项离线）
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
@@ -145,11 +145,11 @@ make check    # = ruff check + ruff format --check + pytest（673 项离线，ex
 
 **历史独立审查（2026-11-09，HEAD `8ebf2aa`）**：R47 的 Hold 奖励闭合、R49 的 rollout 终止接口已复验；R50 默认基线及重叠修正成立，全量 ML CSV 重建一致。Ridge 仍差于 train_mean/literal_zero。R48 两路径一致性有改善，但 KRD 形状投影、候选 DV01 单位及 TargetFaces 最终提交面值仍有 R53–R55 问题。
 
-**最新独立审查（2026-11-11，`cf06804`）**：默认 `make check` exit 0（711 项）；两套执行带各五条七年路径、四份成本 CSV 及完整协议冒烟 CSV 独立重跑逐值一致。默认入口现在自动取可得初始曲线，首日不可见行情扰动不改变 ML/RL 目标、订单或 NAV；显式传入可得曲线的跨一次换券控制也继续通过。实际决策/hold 计数和成本 manifest 的解析后指纹已修复。
+**最新独立审查（2026-11-11，`471a79f`）**：R72 显式截止及成本脚本旁路、R68 拒单率、R70 冒烟解析指纹已复验关闭。默认检查通过；344 行标签与成本评估连续基准逐行一致（误差 <1e-16），22 split/277 个 OOS 预测复算一致；两套执行带各五条 1726 日路径及完整冒烟 CSV 数值差均为 0。首日行情扰动、非零预测跨换券对拍、状态相关 step/rollout 与终止义务控制通过。
 
-**剩余缺口**：R72 的显式初始日期没有执行 `initial_curve.as_of <= start−lag` 校验；成本脚本新增 `initial_curve.as_of=START`，继续绕过默认入口保护，双配置数值不变保留的是旧初始化。首日 fallback 也没有核验 initial_benchmark_as_of 是否可得。R68 拒单率分母仍是输入预测数（实测 5 次决策/5 次拒单报 500%）；R70 标准冒烟 manifest 仍按原始 cfg 算指纹，成本 manifest 已正确，两者应分别判断。
+**边界与剩余事项**：新增 R73（P2）：显式传入过旧条款、首日即触发滚动时，基准尚未建仓，旧券面值未随 universe 更新，估值报错；默认 start−lag 初始化不受此反例影响。仓库成本 manifest 的生成 HEAD 仍为 `821b34b`，1 lot 为 clean、2 lot 为 dirty，不能表述为两者均在当前 clean HEAD 生成；输入和三份源文件散列均匹配，当前 clean HEAD 隔离复跑数值一致。2 lot 下 Ridge/Tree 的小幅正增量不代表预测力，1 lot 方向反转，仍为诊断。
 
-**下一步范围**：已通过的默认入口、带预热短 episode 可用于单卡 A800 环境/固定回放吞吐；正式同协议训练/模型比较前，封住显式入口的时间校验，并为基准初始化与模型首决策定义同一契约。拒单率与冒烟 manifest 一并修正，不新增模型或调参。2 lot 主配置、1 lot 探索结果仍为诊断；Mac 保持 example，8 卡后续优先 seed/fold 并行。详见[方法论 §10.36](docs/03_methodology.md)、[计划 §12.37](docs/01_project_plan.md)、[C-163](docs/code.md)。本轮仅维护四份文档，未改业务实现/测试/正式报告，未重跑三套 acceptance、未训练或部署。
+**下一步范围**：可用默认初始化进入单卡 A800 40GB 固定回放吞吐与小网络单 seed 可恢复训练；首阶段不开放过旧显式条款续跑。Mac 保持 example；8 卡待单卡验收后按 seed/fold 并行。正式比较前冻结执行带、评估区间与时间相关性统计方案。详见[方法论 §10.38](docs/03_methodology.md)、[计划 §12.39](docs/01_project_plan.md)、[C-168](docs/code.md)。本次审查只维护四份文档，未改业务代码/测试/正式报告，未重跑三套 acceptance、未训练或部署。
 
 **计算资源规划（2026-11-08，尚未实现训练部署）**：MacBook Air M2 / 16GB 用 example 数据验证全 pipeline；正式 ML/RL 实验放服务器。分别支持单卡 A800 40GB 与 8×A800 40GB，8 卡优先按 seed/窗口/消融分配独立任务，CPU/内存未知时先低并发实测。当前 Ridge 只有 10 个拟合参数，RL 尚无已训练网络；拟议 64×64 / 128×128 小型 actor/critic，不因 GPU 多而增加模型容量。两端共用账本/协议，详细交付顺序见[计划 §12.20](docs/01_project_plan.md#1220-mac-本地示例--a800-正式实验的执行方案2026-11-08)。
 
