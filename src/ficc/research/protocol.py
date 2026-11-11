@@ -576,6 +576,12 @@ def evaluate_predictions(
         initial_curve = _available_initial_curve(
             panel, calendar, decision_start, int(proto.information_lag_days)
         )
+    info_cutoff = calendar.prev_trading_day(decision_start, int(proto.information_lag_days))
+    if initial_curve.as_of > info_cutoff:
+        raise ProtocolError(
+            f"initial_curve.as_of={initial_curve.as_of} 晚于信息截止日 {info_cutoff}"
+            f"（start−lag={proto.information_lag_days}）；显式参数也不能绕过 R72"
+        )
     if benchmark_krd_history is None:
         benchmark_krd_history = _anchor_benchmark_krd_history(
             panel,
@@ -617,6 +623,11 @@ def evaluate_predictions(
 
     terminal = terminal_state_from_result(result, calendar=calendar, cfg=resolved)
     bench_terminal = benchmark_terminal_state_from_result(result, calendar=calendar, cfg=resolved)
+    n_decisions = float(
+        len(result.signals[result.signals["signal_date"].notna()])
+        if "signal_date" in result.signals
+        else 0
+    )
     metrics = {
         "n_days": float(len(nav)),
         "total_return": total_ret,
@@ -633,14 +644,10 @@ def evaluate_predictions(
         "total_turnover": float(result.turnover.sum()),
         "n_trades": float(len(result.trades)),
         "n_rejected": float(len(result.rejected)),
-        "reject_rate_per_decision": float(len(result.rejected) / max(len(predictions), 1)),
+        "reject_rate_per_decision": float(len(result.rejected) / max(n_decisions, 1)),
         "avg_abs_dv01_ratio_dev": float((result.exposure["dv01_ratio"] - 1.0).abs().mean()),
         "violation_days_held": float((~held["ok"]).sum()),
-        "n_decisions": float(
-            len(result.signals[result.signals["signal_date"].notna()])
-            if "signal_date" in result.signals
-            else 0
-        ),
+        "n_decisions": n_decisions,
         "n_hold_days": float(
             len(result.signals[result.signals["signal_date"].isna()])
             if "signal_date" in result.signals

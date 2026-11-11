@@ -193,7 +193,13 @@ def test_protocol_smoke_script_isolated(tmp_path) -> None:
     table = pd.read_csv(out / "protocol_smoke.csv")
     assert {"zero", "const_plus_one"} <= set(table["scenario"])
     zero = table.loc[table["scenario"] == "zero"].iloc[0]
-    assert abs(float(zero["active_excess_bp"])) < 1.0
+    assert abs(float(zero["active_excess_bp"])) < 5.0  # t−lag KRD 映射的跟踪差
+    import json
+
+    manifest = json.loads((out / "protocol_manifest.json").read_text())
+    assert manifest["resolved_benchmark_version"] == "rolling"
+    assert manifest["resolved_rolling"]["enabled"] is True
+    assert len(manifest["fingerprint"]) == 64
 
 
 def test_r60_fingerprint_covers_full_economics(market) -> None:
@@ -426,3 +432,57 @@ def test_r72_missing_lagged_history_holds_not_future(market) -> None:
         )
         is None
     )
+
+
+def test_r68_reject_rate_uses_actual_decisions(market) -> None:
+    """R68：拒单率分母必须是实际决策数，不是输入预测条数。"""
+    cfg, panel, funding, calendar = market
+    bad_constraints = cfg.constraints.model_copy(update={"min_cash_fraction": 2.0})
+    bad_cfg = cfg.model_copy(update={"constraints": bad_constraints})
+    proto = ExperimentProtocol(
+        version="protocol_v1_continuous_eval",
+        missing_prediction_policy="benchmark_on_grid",
+    )
+    start = date(2019, 2, 1)
+    grid = proto.decision_dates(calendar, start, date(2019, 3, 8))[:5]
+    evaluation = evaluate_predictions(
+        {d: 0.0 for d in grid},
+        panel,
+        funding,
+        calendar,
+        bad_cfg,
+        protocol=proto,
+        start=start,
+        end=calendar.next_trading_day(grid[-1], 1),
+    )
+    m = evaluation.metrics
+    assert m["n_decisions"] == 5.0
+    assert m["n_rejected"] == 5.0
+    assert m["reject_rate_per_decision"] == pytest.approx(1.0, abs=1e-12)
+
+
+def test_r72_explicit_initial_curve_cannot_exceed_cutoff(market) -> None:
+    """R72：显式 initial_curve 晚于 start−lag 必须拒绝。"""
+    from ficc.curve.curve import Curve
+    from ficc.data.schema import CANONICAL_TENORS
+
+    cfg, panel, funding, calendar = market
+    start = date(2019, 2, 1)
+    rates = panel.loc[pd.Timestamp(start)].reindex(list(CANONICAL_TENORS)).to_numpy(dtype=float)
+    too_late = Curve(
+        as_of=start,
+        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
+        rates=rates,
+        method="linear",
+    )
+    with pytest.raises(ProtocolError, match="晚于信息截止日"):
+        evaluate_predictions(
+            {start: 0.0},
+            panel,
+            funding,
+            calendar,
+            cfg,
+            start=start,
+            end=date(2019, 2, 15),
+            initial_curve=too_late,
+        )

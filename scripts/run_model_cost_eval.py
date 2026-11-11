@@ -27,13 +27,10 @@ for _p in (_ROOT / "src", _ROOT / "scripts"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from run_strategies import load_market  # noqa: E402
 
 from ficc.config import get_config  # noqa: E402
-from ficc.curve.curve import Curve  # noqa: E402
-from ficc.data.schema import CANONICAL_TENORS  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 from ficc.research.protocol import (  # noqa: E402
     ExperimentProtocol,
@@ -49,7 +46,7 @@ MODELS = {
     "train_mean": "pred_train_mean",
     "literal_zero": "pred_literal_zero",
 }
-START = date(2019, 1, 28)
+START = date(2019, 2, 1)
 END = date(2025, 12, 31)
 
 
@@ -123,13 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         version="protocol_v1_continuous_eval",
         missing_prediction_policy="benchmark_on_grid",
     )
-    rates = panel.loc[pd.Timestamp(START)].reindex(list(CANONICAL_TENORS))
-    initial_curve = Curve(
-        as_of=START,
-        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
-        rates=rates.to_numpy(dtype=float),
-        method="linear",
-    )
+    initial_curve = None  # 默认入口：start−lag 完整曲线（R72）
 
     oos = pd.read_csv(args.predictions)
     oos["decision_as_of"] = pd.to_datetime(oos["decision_as_of"]).dt.date
@@ -219,8 +210,10 @@ def main(argv: list[str] | None = None) -> int:
         "resolved_costs": resolved_cfg.costs.model_dump(mode="json"),
         "resolved_pricing": resolved_cfg.pricing.model_dump(mode="json"),
         "initialization": {
-            "policy": "explicit_initial_curve_at_start",
-            "initial_curve_as_of": str(initial_curve.as_of),
+            "policy": "default_available_through_start_minus_lag",
+            "initial_curve_as_of": str(
+                calendar.prev_trading_day(START, protocol.information_lag_days)
+            ),
             "information_lag_days": protocol.information_lag_days,
         },
         "missing_prediction_policy": protocol.missing_prediction_policy,
@@ -267,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n=== 冻结 OOS 预测的连续基准成本后评估 ===")
     print(table[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
     print(
-        "\n说明：所有收益相对**同一条 2019-01-28 起持续滚动基准**；模型预测日之外为零预测"
+        "\n说明：所有收益相对**同一条 2019-02-01 起持续滚动基准**；模型预测日之外为零预测"
         "（跟踪基准 KRD）。模型/split/alpha/预测已冻结；探索执行带 requested=1 lot，"
         "effective=1 lot（生产主配置 2 lot 不变），仅用于成本后诊断，不是 alpha 结论。"
         "缺失预测只在公共网格日置零，非网格日 hold（protocol_v1_continuous_eval）。"

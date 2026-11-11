@@ -98,11 +98,16 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out_dir) if args.out_dir is not None else cfg.paths.abs("reports")
     out.mkdir(parents=True, exist_ok=True)
     table.to_csv(out / "protocol_smoke.csv", index=False, encoding="utf-8-sig")
-    from ficc.research.protocol import protocol_fingerprint
+    from ficc.research.protocol import protocol_config, protocol_fingerprint
 
+    resolved = protocol_config(cfg, protocol)
     manifest = {
         "protocol": protocol.describe(),
-        "fingerprint": protocol_fingerprint(cfg, protocol),
+        "fingerprint": protocol_fingerprint(resolved, protocol),
+        "resolved_benchmark_version": resolved.backtest.benchmark_version,
+        "resolved_rolling": resolved.portfolio.rolling.model_dump(mode="json"),
+        "resolved_costs": resolved.costs.model_dump(mode="json"),
+        "resolved_pricing": resolved.pricing.model_dump(mode="json"),
         "start": args.start.isoformat(),
         "end": end.isoformat(),
         "n_decision_days": len(decision_days),

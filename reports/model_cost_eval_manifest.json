@@ -50,18 +50,18 @@
     }
   },
   "initialization": {
-    "policy": "explicit_initial_curve_at_start",
-    "initial_curve_as_of": "2019-01-28",
+    "policy": "default_available_through_start_minus_lag",
+    "initial_curve_as_of": "2019-01-31",
     "information_lag_days": 1
   },
   "missing_prediction_policy": "benchmark_on_grid",
-  "start": "2019-01-28",
+  "start": "2019-02-01",
   "end": "2025-12-31",
   "requested_band_lots": 1.0,
   "effective_min_trade_face": 1000000.0,
   "predictions_path": "reports/ml_oos_predictions.csv",
-  "predictions_sha256": "0dd7bb91766a1c09518c00173247ae8ad1ca0f0c1d8f9d3440ad89b278ce5b5b",
-  "dataset_sha256": "61e30b1125fa93e0259f4f5ca5699488d2cba8261830c03827482b26f541829a",
+  "predictions_sha256": "bec03f50bb980e6134934961cac9c80eb6bfc30eeda97f37021b5c83e15dc696",
+  "dataset_sha256": "d7a649569b1928cd1bbd0f2a59da90a2185ffc1b4b7349133b32ce944a352ad5",
   "n_prediction_rows": 277,
   "n_models": 5,
   "models": [
@@ -78,12 +78,12 @@
     "train_mean": 346.0,
     "literal_zero": 346.0
   },
-  "git_head": "0017078532c1e3181ee97f8e67979ebcc1b64ea2",
+  "git_head": "821b34bd103b4dc440e3d86a5da09bc08f967723",
   "git_dirty": false,
   "source_sha256": {
-    "src/ficc/research/protocol.py": "0ca1e7fcc25ed8f575cebcd6c101f87e32d383af87e0b660df6e011abecb681f",
+    "src/ficc/research/protocol.py": "433ee23d454569ed4c789d01320eeb4cd103d71546ff7df6b8f44998d96a8c28",
     "src/ficc/rl/env.py": "cba8f795b8731988d14d6840b295729bad3bed9bee70c513e71a66671cde1949",
-    "scripts/run_model_cost_eval.py": "df08b34c89fc7c531573dee7d7c2c3e05beedf742b24dca4353b9fbd9f363596"
+    "scripts/run_model_cost_eval.py": "865283f277fcf68e1d9af8741e8cd0fb643f400b1fc18ac8cdea6b3e58b19f3b"
   },
   "detail_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval.csv",
   "summary_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_summary.csv"

@@ -3,8 +3,8 @@
   "builder": "build_supervised_dataset",
   "n_rows": 344,
   "n_features": 9,
-  "start": "2019-02-02",
-  "end": "2025-12-18",
+  "start": "2019-02-01",
+  "end": "2025-12-17",
   "features": [
     "level_5y",
     "slope_2s10s",
@@ -46,8 +46,8 @@
     "source": "run_backtest.benchmark_nav",
     "benchmark_nav_source": "engine_single_run",
     "benchmark_nav_window": [
-      "2019-01-28",
-      "2025-12-25"
+      "2019-02-01",
+      "2025-12-24"
     ],
     "execution": "next_close",
     "holding_days": 5,
@@ -68,21 +68,11 @@
   "config_hash": "e00b863126881967",
   "benchmark_version": "rolling",
   "rolling_version": "roll_v1_trigger1y_parissue",
-  "n_input_rows": 345,
-  "n_dropped_rows": 1,
-  "dropped_rows": [
-    {
-      "decision_as_of": "2019-01-28",
-      "reason": "feature_warmup_or_missing_input"
-    }
-  ],
-  "n_nan_feature_rows": 1,
-  "nan_rows": [
-    {
-      "decision_as_of": "2019-01-28",
-      "reason": "feature_warmup_or_missing_input"
-    }
-  ],
+  "n_input_rows": 344,
+  "n_dropped_rows": 0,
+  "dropped_rows": [],
+  "n_nan_feature_rows": 0,
+  "nan_rows": [],
   "nan_rule": "特征列在决策时点含 NaN 的行整行删除（预热期/输入缺口），逐行披露在 attrs；标签 NaN 直接报错",
   "causality": {
     "per_row_checked": true,
@@ -104,7 +94,7 @@
     "effective_end": "2025-12-31",
     "decision_step_days": 5,
     "mode": "rolling",
-    "n_decisions": 345,
+    "n_decisions": 344,
     "n_splits_requested": 22,
     "n_splits_evaluated": 22,
     "n_splits_skipped": 0,
@@ -113,16 +103,16 @@
     "step_days": 63,
     "declared_window": {
       "train": [
-        "2019-01-28",
-        "2020-02-05"
+        "2019-02-01",
+        "2020-02-11"
       ],
       "valid": [
-        "2020-02-06",
-        "2020-05-07"
+        "2020-02-12",
+        "2020-05-12"
       ],
       "test": [
-        "2020-05-08",
-        "2020-08-04"
+        "2020-05-13",
+        "2020-08-10"
       ],
       "expanding": false
     },
@@ -151,16 +141,16 @@
     },
     "pooled_oos": {
       "n": 277.0,
-      "ic": 0.019805910098479054,
-      "r2": -0.1197755837259673,
-      "r2_train_mean": -0.05566394995362911,
-      "r2_literal_zero": -0.04509567458751307,
-      "mae": 0.002088331013670809,
-      "mae_train_mean": 0.0019967147334208246,
-      "mae_literal_zero": 0.0020476420714321012,
-      "ic_tree": -0.030394259620228806,
-      "r2_tree": -0.21107357009045535,
-      "mae_tree": 0.002141273704197131
+      "ic": 0.00910996206958464,
+      "r2": -0.12646813055292516,
+      "r2_train_mean": -0.02724318168227935,
+      "r2_literal_zero": -0.06308966079337086,
+      "mae": 0.0020130689645665245,
+      "mae_train_mean": 0.0018684065758777495,
+      "mae_literal_zero": 0.0019638286307117133,
+      "ic_tree": -0.03596049956150013,
+      "r2_tree": -0.23386613258465005,
+      "mae_tree": 0.002067592584097522
     },
     "limitations": [
       "单一历史：2019–2025 已被本项目研究，不是 untouched holdout",

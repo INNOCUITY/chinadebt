@@ -72,7 +72,7 @@ from ficc.ml.walkforward import (  # noqa: E402
 
 log = get_logger("ml_baseline")
 
-START = date(2019, 1, 28)
+START = date(2019, 2, 1)
 END = date(2025, 12, 31)
 QUICK_END = date(2021, 12, 31)
 FUNDING_COLUMN = "FDR007"
@@ -569,6 +569,19 @@ def main(argv: list[str] | None = None) -> int:
 
     specs = feature_specs()
     feature_panel = attach_funding_column(panel, funding, FUNDING_COLUMN)
+    from ficc.curve.curve import Curve
+    from ficc.data.schema import CANONICAL_TENORS
+
+    terms_day = calendar.prev_trading_day(decisions[0], 1)
+    terms_rates = panel.loc[pd.Timestamp(terms_day)].reindex(list(CANONICAL_TENORS))
+    if terms_rates.isna().any():
+        raise ValueError(f"{terms_day} 曲线缺期限，无法初始化基准标签")
+    initial_curve = Curve(
+        as_of=terms_day,
+        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
+        rates=terms_rates.to_numpy(dtype=float),
+        method="linear",
+    )
     dataset = build_supervised_dataset(
         feature_panel,
         funding,
@@ -577,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
         specs,
         cfg,
         clock,
+        initial_curve=initial_curve,
     )
     feature_names = [str(name) for name in dataset.attrs["feature_names"]]
     log.info(

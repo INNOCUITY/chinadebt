@@ -37,7 +37,55 @@
       "comparison_rule": "跨模型比较时把所有策略采样到 decision_step_days 的同一决策日；RL 非决策日返回 hold（不主动交易）"
     }
   },
-  "fingerprint": "1b5165e2554d95067edfc9c6c402fcce4d1cdc2ddd09fdab54fcb11f793c5da3",
+  "fingerprint": "9213fac10471519eed7f1626f8cf7cd67dd826acc3e9898399af37c372fab451",
+  "resolved_benchmark_version": "rolling",
+  "resolved_rolling": {
+    "enabled": true,
+    "roll_trigger_years": 1.0,
+    "version": "roll_v1_trigger1y_parissue"
+  },
+  "resolved_costs": {
+    "fee_bp": 0.2,
+    "settlement_fee_cny_per_trade": 135.0,
+    "spread_bp_active": 0.35,
+    "spread_bp_illiquid": 1.5,
+    "spread_bp_ultra_long": 3.0,
+    "repo_rate_source": "FDR007",
+    "repo_rate_fallback_const": 0.01318,
+    "repo_rate_sensitivity_bp": [
+      0.0,
+      25.0,
+      50.0
+    ],
+    "repo_haircut": 0.0,
+    "short_leg_cost_bp": 0.0,
+    "market_impact": {
+      "enabled": false,
+      "coef_bp_per_pct_adv": 0.0
+    }
+  },
+  "resolved_pricing": {
+    "day_count": "ACT/ACT",
+    "day_count_exchange": "ACT/365",
+    "face_value": 100.0,
+    "settlement_lag_days": 1,
+    "price_convention": "clean_quote_full_pnl",
+    "frequency": 2,
+    "frequency_by_tenor": {
+      "1Y": "lump_sum",
+      "2Y-7Y": 1,
+      "10Y-30Y": 2
+    },
+    "accrual_formula": {
+      "coupon": "C/f * t/TS",
+      "lump_sum": "K*C + C*t/TY",
+      "discount": "(100 - Pd) * t / T"
+    },
+    "reconciliation": {
+      "enabled": true,
+      "max_price_error_cny": 0.05
+    }
+  },
   "start": "2019-02-01",
   "end": "2021-12-31",
   "n_decision_days": 146,

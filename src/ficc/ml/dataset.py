@@ -274,6 +274,7 @@ def benchmark_nav_for_labels(
     start: date,
     end: date,
     cfg: Config,
+    initial_curve: Any | None = None,
 ) -> pd.Series:
     """用**一次** :func:`ficc.backtest.engine.run_backtest` 生成全区间 ``benchmark_nav``。
 
@@ -307,6 +308,7 @@ def benchmark_nav_for_labels(
         cfg=cfg,
         start=start,
         end=end,
+        initial_curve=initial_curve,
     )
     nav = result.benchmark_nav.astype(float).copy()
     nav.index = pd.DatetimeIndex([pd.Timestamp(item) for item in nav.index])
@@ -431,6 +433,7 @@ def build_supervised_dataset(
     clock: InformationClock | None = None,
     *,
     benchmark_nav: pd.Series | None = None,
+    initial_curve: Any | None = None,
     require_complete: bool = True,
     causality_check: bool = True,
 ) -> pd.DataFrame:
@@ -589,6 +592,7 @@ def build_supervised_dataset(
             min(decisions),
             max(label_end_dates),
             cfg,
+            initial_curve=initial_curve,
         )
         nav_source = "engine_single_run"
     else:
