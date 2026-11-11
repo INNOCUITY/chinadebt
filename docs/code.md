@@ -185,7 +185,12 @@
 | C-154 | 2026-11-11 | [fix] | 评估 | n_decisions=实际信号数 + 成本评估独立 manifest |
 | C-155 | 2026-11-11 | [test] | 测试 | R69 正费用短窗/基准费用 +1 元回归 |
 | C-156 | 2026-11-11 | [feat] | 评估 | 2 lot 主配置 / 1 lot 探索配置分开重放 |
-| C-157 | 2026-11-11 | [test] | 测试 | 测试基线 705 → **707 项全绿** |
+| C-157 | 2026-11-11 | [test] | 测试 | 测试基线 705 → 707 项全绿 |
+| C-159 | 2026-11-11 | [fix] | 协议 | R72：默认初始化统一 start−lag 完整曲线，缺历史拒绝/不向未来 |
+| C-160 | 2026-11-11 | [fix] | 评估 | n_decisions=真实信号数（346），hold 单列 |
+| C-161 | 2026-11-11 | [fix] | 评估 | manifest 使用解析后 rolling 配置指纹/初始化来源/源文件 SHA-256 |
+| C-162 | 2026-11-11 | [test] | 测试 | 测试基线 707 → **709 项全绿** |
+| C-158 | 2026-11-11 | [docs] | 独立审查 | 复验显式 as-of/跨换券与双配置回放；默认初始化、真实决策数、解析后指纹待收尾 |
 | C-152 | 2026-11-10 | [docs] | 独立审查 | R68–R71 复验；R72 预测映射 as-of 差异，分开单卡准备与训练准入 |
 | C-146 | 2026-11-10 | [docs] | 独立审查 | 复验 R64–R67；R68–R71：网格绕过、双方净终值、实际执行带、override 日期错位 |
 | C-140 | 2026-11-10 | [docs] | 独立审查 | 复验 R60–R63；成本评估 R64–R67：历史快照误拒单、末预测截断、终止费用、标签/基准口径 |
@@ -209,7 +214,7 @@
 
 ```
 本次通过命令：.venv/bin/python -m pytest tests/ -o addopts='' -q -m 'not network' -p no:debugging -p no:capture
-基线：707 passed / 0 failed / 1 deselected（network）/ 约 16 分钟（含真实数据回归与回测）
+基线：709 passed / 0 failed / 1 deselected（network）/ 约 16 分钟（含真实数据回归与回测）
 ```
 
 | 时间 | 测试数 | 通过 | 失败 | 跳过 | 备注 |
@@ -1247,11 +1252,11 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前状态（2026-11-10，审查 HEAD `928818d`）**：R68–R71 原反例已修复；七年五条路径、
-成本 CSV 与固定面值跨入口控制独立复现。新增 R72：ML 预测映射用当日基准 KRD，RL 用
-滞后基准；不可见曲线扰动会改变 ML 目标/订单，实际预测映射尚未满足共同信息时钟。
-R68 决策计数和 R70 运行血缘仍需收尾；R69 实现通过独立正未付费反例，回归测试应加强。
-可先做 A800 环境/吞吐，正式同协议训练先修 R72。详见 C-152；历史未修状态不代表当前状态。
+**当前状态（2026-11-11，审查 HEAD `458f93d`）**：707 项默认检查、双配置十条七年路径
+通过复跑；显式同初始曲线、跨一次换券的 ML/RL 目标/订单/NAV 一致。R72 部分通过，但默认
+入口仍用 START 条款并允许首日取未来最早历史；initial_curve seed 与备用缓存也未完全
+兑现契约。R68 决策数把 hold 行计入，R70 manifest 指纹仍来自对齐前 cfg。详见 C-158。
+单卡环境/吞吐可并行；正式同协议训练等待这些确定的入口/报告问题，不以正收益为门槛。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -3199,6 +3204,124 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 
 ---
 
+### C-158 [docs] R72 默认入口、决策计数与运行指纹复核
+
+- **日期 / 基线**：2026-11-11 / `458f93d`。
+- **变更 / 影响面**：README、方法论 §10.34、计划 §12.35、本记录；仅维护审查文档，未改
+  业务实现、测试或正式 CSV/manifest。修复交付节号从重复的 §10.31 顺延为 §10.33。
+- **验证**：默认 `make check` exit 0（707 项）；1 lot / 2 lot 各五条七年路径完整隔离
+  复跑，四份成本 CSV 逐值一致；两份 manifest 的输入预测/数据集 SHA-256 匹配文件。
+  三套 acceptance 未重跑；未训练新模型/未部署 A800。
+- **阶段判断**：R72 显式路径已修复，默认/缺口路径仍未闭合；原编号 R68/R70 的报告收尾
+  仍有真实错误。可先做单卡环境与固定回放吞吐，不将此当正式共同协议最小训练放行。
+
+**认可的修复和结果**
+
+- 对 2019-02-01→02-02，显式共享 01-31 初始曲线后，不扰动/扰动当日曲线 +1pp 的
+  ML/RL 订单和 NAV 都相同，目标均为 **91,320.877454 元/bp**。旧 R72 映射反例在此分支关闭。
+- 扩到 2019-02-01→2020-03-02、非零预测、1 lot、跨一次换券，35 笔成交，目标、订单、
+  NAV 最大差全部 **0**。同源历史方案本身有效，不因默认入口缺陷否定已通过控制。
+- R69 的仓库测试已改正费用窗口及严格零净超额；独立费用构造实现未被本轮改变。
+- 2 lot：zero 约 −0.09bp，Ridge/train_mean 约 +1.65bp、Tree +1.76bp；1 lot：zero
+  约 −4.27bp，Ridge −3.27bp、train_mean −3.75bp、Tree −14.09bp，全部复现。小幅正增量
+  不等于预测力；25 笔相同交易数也不证明完整持仓路径相同。保留为实现内诊断。
+
+**R72 [P1 / 部分修复] 默认初始化和历史缺口仍可使用截止日之后的数据**
+
+- **位置**：`research/protocol.py:353–361,489–505`；
+  `scripts/run_model_cost_eval.py:53–63` 默认不传 initial_curve。
+- 默认 anchor 以 START 当日曲线发行初始券、history 从 START 起；首日找不到 t−lag，
+  `_lagged_benchmark` 就用最早记录并把 available 改为该日。没有 `source_date <= cutoff`
+  检查，所谓“初始可行条款”不是“已可得条款”。正式两套成本脚本均经过该路径。
+- **默认反例**：2019-02-01→02-02、+0.01 预测、1 lot，只把 02-01 曲线上移 1pp。
+  ML 目标 **91,300.432588→84,416.359703 元/bp**；RL 的过去条款/目标不变。
+  扰动后 ML/RL 末 NAV 为 **99,922,104.934681 / 99,909,527.579312 元**，差
+  **12,577.355370 元**。此反例同时包含默认初始券与首日映射差异；不与已通过的显式
+  同条款对拍混为一谈。未扰动默认两入口也有约 27.99 元 NAV 差。
+- **纯日期反例**：02-01 首决策、cutoff=01-31，外部历史只有 02-02 的 10Y KRD=1234，
+  仍生成目标 **1357.4**，明确取了未来值。应失败或按冻结缺失政策 hold，不得前移截止日。
+- **初始对象补查**：anchor 只取 initial_curve.as_of，再从 panel 读 rates。传入同日期
+  rates+1pp 的 Curve，seed KRD 最大差 **0**，但实际基准在首估值日最大差
+  **1,845.281187 元/bp**。必须直接消费传入对象/同一基准身份，不能悄悄换回 raw panel。
+- **缓存补查**：无外部历史时，只有走到映射才记录 `_seen_benchmark`，off-grid hold 提前
+  返回、未记当日值。5 日网格的八日例全部 None，不是声明的每日快照路径。当前自动 anchor
+  完整时不触发此问题；备用接口应删除或实现完整采集，缺口不能静默吞掉预测。
+- **验收**：默认入口与显式入口采用同一初始化产物；只有未来记录/缺预热/中间缺口/自定义
+  Curve 都有明确语义。坚持 source_as_of≤available，不新增未验收 2Y 插值；若把基准建立
+  与模型首决策分开，记录各自日期/网格并同步标签与评估基准版本。修复后再跑首日扰动和跨
+  换券三入口目标/订单/NAV/净终值控制，不仅验证第二个网格日的手工历史单测。
+
+**R68 [P2 / 报告结余] `len(signals)` 仍不是实际决策数，拒单率也未同步**
+
+- **位置**：`research/protocol.py:606,609–610`；引擎 signals 每日写入 None/hold 占位行。
+- 实测空预测、02-01→03-08：报告 **23** 次决策，实际非空 signal_date **5**；两份七年
+  manifest 每模型均报 **1730**，但五日网格仅 **346** 个机会。不是从 0 改成估值日数就修复。
+- `reject_rate_per_decision` 仍除以 `max(len(predictions),1)`，与新字段不一致。
+  当前零拒单值不变，但训练动作/拒单监测会失真。分别统计 policy 目标、hold、风控、机械
+  事件，分母与分子使用同一事件层级；测试应断言具体已知 5 次，而不是复制 `len(signals)`。
+
+**R70 [P2 / 报告结余] manifest 保存了非实际执行配置的指纹**
+
+- **位置**：`scripts/run_model_cost_eval.py:174–176`；对照 `evaluate_predictions` 的
+  resolved=protocol_config(cfg,proto) 及返回的 evaluation.protocol。
+- 外层 cfg 实为 buyhold / rolling.enabled=False，评估内层被对齐为 rolling / True。
+  1 lot 保存 `b9d557f6…`，真实指纹 `7d314851…`；2 lot 保存 `009c288c…`，真实指纹
+  `f4428d6b…`。新增“长度是 64”测试不能发现指纹标识了另一份经济配置。
+- 应直接导出 evaluation.protocol 与实际解析配置，跨模型校验一致，并记录初始化来源。
+  manifest 的预测/数据集 SHA-256 实测正确；还应绑定曲线/融资/日历实际数据血缘。
+- 已提交 git_head 为 `928818d`，运行时的新实现未提交且没有 dirty/source hash，不能用
+  该 HEAD 单独重建新行为。建议先提交实现再生成报告，或同时记录 source hash/dirty 标志。
+  `--band-lots 2` 的末尾文字仍固定为 requested=1/effective=1，应随参数生成。
+
+**建议的有限下一步**：统一初始化/信息可得性这一处契约，删除无用兜底分支；修正实际事件
+计数与解析后 manifest；重放已有冻结预测确认双配置报告。然后进入单卡小网络最小训练，
+不要求先有正超额。单卡依赖环境、固定回放吞吐和 CPU/RSS 剖析现在就可以并行，8 卡随后
+优先 seed/fold 任务并行。详见计划 §12.35。
+
+---
+
+### R72 默认入口收口（2026-11-11 第二十二轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R72 | P1 | 默认 evaluate 自动取 start−lag 完整曲线，同一 Curve 用于引擎/基准/映射；缺历史 ProtocolError；移除"最早历史"未来回退；仅显式首决策可用初始条款日 KRD | C-159；"仅明日历史"→hold；默认初始化 START 扰动不改变 available 历史 |
+| 计数 | P2 | n_decisions=`signals.signal_date` 非空数，n_hold_days 单列；拒单率分母同步 | C-160；连续回放 346 决策/1384 hold，不再 1730 |
+| manifest | P2 | 指纹对 protocol_config 解析后 rolling 配置；保存 resolved rolling/costs/pricing、初始化来源、源文件 SHA-256、git_dirty | C-161；manifest resolved_benchmark_version=rolling |
+| 冒烟数值 | — | 默认 start 改 2019-02-01：146 决策、zero −3.02bp、成本 86,792.97（旧 147/0bp/85,601.84 作废） | C-159/C-160 |
+
+### C-159 [fix] R72：默认初始化与未来历史拒绝
+
+- **日期**：2026-11-11
+- **文件**：`src/ficc/research/protocol.py`、`scripts/run_protocol_smoke.py`、`tests/test_protocol.py`
+- **变更内容**：`_available_initial_curve` 默认取 start−lag 完整曲线，同一对象用于引擎/基准/anchor；缺期限抛 ProtocolError；PredictionStrategy 仅显式首决策可用初始条款日 KRD；删除历史最早记录回退。
+- **验证方式**：默认初始化 START 扰动不改变 available 历史；仅含决策日（未来）历史时 target 为 None（hold）。
+- **风险/遗留**：默认 start 需有 ≥lag 个完整交易日预热；协议冒烟起点改为 2019-02-01。
+
+### C-160 [fix] 实际信号计数
+
+- **日期**：2026-11-11
+- **文件**：`src/ficc/research/protocol.py`、`tests/test_protocol.py`
+- **变更内容**：n_decisions 改为 `signals.signal_date.notna()` 计数，n_hold_days 单列；拒单率分母随实际决策数。
+- **验证方式**：短窗 346 决策/1384 hold（七年），不再把每日 hold 占位行算成 1730；核心测试断言。
+- **风险/遗留**：hold 日仍保留在 signals 表供审计。
+
+### C-161 [fix] 解析后 manifest
+
+- **日期**：2026-11-11
+- **文件**：`scripts/run_model_cost_eval.py`、`tests/test_model_cost_eval.py`
+- **变更内容**：manifest 指纹对 `protocol_config` 解析后配置；保存 resolved rolling/costs/pricing、初始化来源、源文件 SHA-256、git_dirty。
+- **验证方式**：manifest resolved_benchmark_version=rolling、rolling.enabled=True；源文件散列存在。
+- **风险/遗留**：生成时 git_dirty 反映当时工作区；提交后需重新生成以记录 clean 状态。
+
+### C-162 [test] 测试基线 707 → 709
+
+- **日期**：2026-11-11
+- **变更内容**：新增默认初始化/未来历史拒绝测试、manifest 解析配置/计数断言。
+- **验证方式**：`make check`（709 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 16 分钟。
+
+---
+
 ## 八、附：变更记录的自检清单
 
 每次追加记录前，作者 必须逐条确认：
@@ -3206,7 +3329,7 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 - [x] 变更内容与 `git diff` 一致，没有遗漏文件
 - [x] 每个新增的公开函数都有中文 docstring 与类型注解
 - [x] 新增参数已同步到 `config/config.yaml` 与 `src/ficc/config.py`
-- [x] 本次默认 `make check` 实跑 exit 0（当前 **707** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
+- [x] 本次默认 `make check` 实跑 exit 0（当前 **709** 项离线测试基线；capture/debugging 插件禁用，环境根因未定位）
 - [x] `make lint` 通过（`ruff check` + `ruff format --check`）
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步

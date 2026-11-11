@@ -38,9 +38,9 @@
     }
   },
   "fingerprint": "1b5165e2554d95067edfc9c6c402fcce4d1cdc2ddd09fdab54fcb11f793c5da3",
-  "start": "2019-01-28",
+  "start": "2019-02-01",
   "end": "2021-12-31",
-  "n_decision_days": 147,
+  "n_decision_days": 146,
   "scenarios": [
     "zero",
     "const_plus_half",

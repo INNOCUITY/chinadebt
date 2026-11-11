@@ -34,7 +34,7 @@ from ficc.research.protocol import (  # noqa: E402
 
 log = get_logger("protocol_smoke")
 
-DEFAULT_START = date(2019, 1, 28)
+DEFAULT_START = date(2019, 2, 1)
 DEFAULT_END = date(2021, 12, 31)
 QUICK_END = date(2019, 6, 28)
 

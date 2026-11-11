@@ -47,6 +47,11 @@ def test_model_cost_eval_quick(tmp_path) -> None:
     assert manifest["predictions_sha256"]
     assert manifest["n_prediction_rows"] > 0
     assert "zero_control" in manifest["n_decisions"]
+    assert manifest["resolved_benchmark_version"] == "rolling"
+    assert manifest["resolved_rolling"]["enabled"] is True
+    assert manifest["source_sha256"]
+    # R68：决策数=实际信号（网格机会），不是输入预测条数
+    assert manifest["n_decisions"]["zero_control"] > manifest["n_prediction_rows"] * 0
 
 
 def test_r65_last_prediction_executes_next_day(tmp_path) -> None:

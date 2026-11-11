@@ -25,7 +25,7 @@ from ficc.research.protocol import (
 )
 from ficc.utils.calendar import TradingCalendar
 
-START = date(2019, 1, 28)
+START = date(2019, 2, 1)
 END = date(2019, 3, 29)
 
 
@@ -87,7 +87,10 @@ def test_zero_prediction_tracks_benchmark_and_costs(market) -> None:
     assert ev.metrics["total_cost"] >= 0.0
     # R68/R70 报告契约：决策数=实际产生的信号数，输入预测数单独报告
     assert ev.metrics["n_input_predictions"] == len(preds)
-    assert ev.metrics["n_decisions"] == len(ev.result.signals)
+    assert ev.metrics["n_decisions"] == len(
+        ev.result.signals[ev.result.signals["signal_date"].notna()]
+    )
+    assert ev.metrics["n_decisions"] + ev.metrics["n_hold_days"] == len(ev.result.signals)
     assert ev.result.benchmark_version == "rolling"
     # 预测序列只作用在决策日；非决策日策略返回 None（hold）
     strategy = PredictionStrategy(preds, protocol=ExperimentProtocol())
@@ -340,3 +343,86 @@ def test_r72_prediction_mapping_uses_lagged_benchmark(market) -> None:
     # 目标基于 available 日基准，而不是当日 ctx.benchmark
     expected = prediction_to_target(0.01 / 0.01, SimpleNamespace(krd=base_krd, as_of=available))
     np.testing.assert_allclose(a.total_dv01, expected.total_dv01, rtol=1e-12, atol=0.0)
+
+
+def test_r72_default_initialization_uses_available_curve(market) -> None:
+    """R72：默认入口用 start−lag 的同一曲线；只扰动 START 当日不应改变映射目标。"""
+    from types import SimpleNamespace
+
+    from ficc.research.protocol import _anchor_benchmark_krd_history, _available_initial_curve
+
+    cfg, panel, funding, calendar = market
+    proto = ExperimentProtocol()
+    start = date(2019, 2, 1)
+    init = _available_initial_curve(panel, calendar, start, proto.information_lag_days)
+    assert init.as_of == calendar.prev_trading_day(start, proto.information_lag_days)
+    base_hist = _anchor_benchmark_krd_history(
+        panel,
+        funding,
+        calendar,
+        cfg,
+        start=init.as_of,
+        end=date(2019, 2, 15),
+        initial_curve=init,
+    )
+    perturbed = panel.copy()
+    perturbed.loc[pd.Timestamp(start), :] = perturbed.loc[pd.Timestamp(start), :] + 0.01
+    pert_hist = _anchor_benchmark_krd_history(
+        perturbed,
+        funding,
+        calendar,
+        cfg,
+        start=init.as_of,
+        end=date(2019, 2, 15),
+        initial_curve=init,
+    )
+    t = proto.decision_dates(calendar, start, date(2019, 3, 8))[1]
+    strategy = PredictionStrategy(
+        {t: 0.01},
+        protocol=proto,
+        decision_grid={t},
+        benchmark_krd_history=base_hist,
+        calendar=calendar,
+        initial_benchmark_as_of=init.as_of,
+    )
+    ctx = SimpleNamespace(
+        as_of=t,
+        benchmark=SimpleNamespace(krd=dict(base_hist[init.as_of]), as_of=t),
+    )
+    a = strategy.target_krd(ctx)
+    # 扰动 START 后，信息截止日（init.as_of）的基准 KRD 必须不变
+    assert a is not None
+    np.testing.assert_allclose(
+        list(base_hist[init.as_of].values()),
+        list(pert_hist[init.as_of].values()),
+        rtol=0.0,
+        atol=1e-9,
+    )
+
+
+def test_r72_missing_lagged_history_holds_not_future(market) -> None:
+    """R72：t−lag 缺失时 hold，绝不使用晚于信息截止的历史（未来数据）。"""
+    from types import SimpleNamespace
+
+    _cfg, _panel, _funding, calendar = market
+    proto = ExperimentProtocol()
+    start = date(2019, 2, 1)
+    t = proto.decision_dates(calendar, start, date(2019, 3, 8))[1]
+    available = calendar.prev_trading_day(t, proto.information_lag_days)
+    # 历史只有决策日 t 的记录（相对 available 是未来）
+    future_only = {t: {2.0: 1000.0, 5.0: 2000.0}}
+    strategy = PredictionStrategy(
+        {t: 0.01},
+        protocol=proto,
+        decision_grid={t},
+        benchmark_krd_history=future_only,
+        calendar=calendar,
+        initial_benchmark_as_of=None,
+    )
+    assert available != t
+    assert (
+        strategy.target_krd(
+            SimpleNamespace(as_of=t, benchmark=SimpleNamespace(krd=future_only[t], as_of=t))
+        )
+        is None
+    )

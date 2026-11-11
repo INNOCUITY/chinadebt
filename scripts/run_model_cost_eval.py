@@ -27,14 +27,18 @@ for _p in (_ROOT / "src", _ROOT / "scripts"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from run_strategies import load_market  # noqa: E402
 
 from ficc.config import get_config  # noqa: E402
+from ficc.curve.curve import Curve  # noqa: E402
+from ficc.data.schema import CANONICAL_TENORS  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
 from ficc.research.protocol import (  # noqa: E402
     ExperimentProtocol,
     evaluate_predictions,
+    protocol_config,
     protocol_fingerprint,
 )
 
@@ -49,7 +53,16 @@ START = date(2019, 1, 28)
 END = date(2025, 12, 31)
 
 
-def _run(name: str, predictions: dict | None, panel, funding, calendar, cfg, protocol):
+def _run(
+    name: str,
+    predictions: dict | None,
+    panel,
+    funding,
+    calendar,
+    cfg,
+    protocol,
+    initial_curve,
+):
     evaluation = evaluate_predictions(
         predictions or {},
         panel,
@@ -59,6 +72,7 @@ def _run(name: str, predictions: dict | None, panel, funding, calendar, cfg, pro
         protocol=protocol,
         start=START,
         end=END,
+        initial_curve=initial_curve,
     )
     m = evaluation.metrics
     requested = float(cfg.constraints.rebalance_band_lots)
@@ -109,6 +123,14 @@ def main(argv: list[str] | None = None) -> int:
         version="protocol_v1_continuous_eval",
         missing_prediction_policy="benchmark_on_grid",
     )
+    rates = panel.loc[pd.Timestamp(START)].reindex(list(CANONICAL_TENORS))
+    initial_curve = Curve(
+        as_of=START,
+        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
+        rates=rates.to_numpy(dtype=float),
+        method="linear",
+    )
+
     oos = pd.read_csv(args.predictions)
     oos["decision_as_of"] = pd.to_datetime(oos["decision_as_of"]).dt.date
     if oos["decision_as_of"].duplicated().any():
@@ -116,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = []
     # 零预测控制：全部决策日零目标（跟踪连续基准），作为模型增量基线
-    control = _run("zero_control", None, panel, funding, calendar, cfg, protocol)
+    control = _run("zero_control", None, panel, funding, calendar, cfg, protocol, initial_curve)
     rows.append(control)
     for model_name in args.models.split(","):
         model_name = model_name.strip()
@@ -124,7 +146,18 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"未知模型 {model_name}")
         column = MODELS[model_name]
         predictions = {row["decision_as_of"]: float(row[column]) for _, row in oos.iterrows()}
-        rows.append(_run(model_name, predictions, panel, funding, calendar, cfg, protocol))
+        rows.append(
+            _run(
+                model_name,
+                predictions,
+                panel,
+                funding,
+                calendar,
+                cfg,
+                protocol,
+                initial_curve,
+            )
+        )
 
     table = pd.DataFrame(rows)
     control_active = float(control["active_excess_bp"])
@@ -171,9 +204,25 @@ def main(argv: list[str] | None = None) -> int:
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         git_head = "unknown"
+    resolved_cfg = protocol_config(cfg, protocol)
+    source_files = [
+        "src/ficc/research/protocol.py",
+        "src/ficc/rl/env.py",
+        "scripts/run_model_cost_eval.py",
+    ]
+    dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=_ROOT, text=True).strip()
     manifest = {
         "protocol_version": protocol.version,
-        "protocol_fingerprint": protocol_fingerprint(cfg, protocol),
+        "protocol_fingerprint": protocol_fingerprint(resolved_cfg, protocol),
+        "resolved_benchmark_version": resolved_cfg.backtest.benchmark_version,
+        "resolved_rolling": resolved_cfg.portfolio.rolling.model_dump(mode="json"),
+        "resolved_costs": resolved_cfg.costs.model_dump(mode="json"),
+        "resolved_pricing": resolved_cfg.pricing.model_dump(mode="json"),
+        "initialization": {
+            "policy": "explicit_initial_curve_at_start",
+            "initial_curve_as_of": str(initial_curve.as_of),
+            "information_lag_days": protocol.information_lag_days,
+        },
         "missing_prediction_policy": protocol.missing_prediction_policy,
         "start": str(START),
         "end": str(END),
@@ -191,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
             str(k): float(v) for k, v in zip(table["model"], table["n_decisions"], strict=True)
         },
         "git_head": git_head,
+        "git_dirty": bool(dirty),
+        "source_sha256": {path: _sha256(_ROOT / path) for path in source_files},
         "detail_csv": str(detail_path),
         "summary_csv": str(summary_path),
     }

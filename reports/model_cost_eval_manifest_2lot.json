@@ -1,6 +1,59 @@
 {
   "protocol_version": "protocol_v1_continuous_eval",
-  "protocol_fingerprint": "009c288cfc20eb958bc9244e08b774352a7e60d271586c17fd7bdc8b94848125",
+  "protocol_fingerprint": "f4428d6b090a0a4eebfed8d97fbe202a46d90e31a1273058772bde0ffe47038a",
+  "resolved_benchmark_version": "rolling",
+  "resolved_rolling": {
+    "enabled": true,
+    "roll_trigger_years": 1.0,
+    "version": "roll_v1_trigger1y_parissue"
+  },
+  "resolved_costs": {
+    "fee_bp": 0.2,
+    "settlement_fee_cny_per_trade": 135.0,
+    "spread_bp_active": 0.35,
+    "spread_bp_illiquid": 1.5,
+    "spread_bp_ultra_long": 3.0,
+    "repo_rate_source": "FDR007",
+    "repo_rate_fallback_const": 0.01318,
+    "repo_rate_sensitivity_bp": [
+      0.0,
+      25.0,
+      50.0
+    ],
+    "repo_haircut": 0.0,
+    "short_leg_cost_bp": 0.0,
+    "market_impact": {
+      "enabled": false,
+      "coef_bp_per_pct_adv": 0.0
+    }
+  },
+  "resolved_pricing": {
+    "day_count": "ACT/ACT",
+    "day_count_exchange": "ACT/365",
+    "face_value": 100.0,
+    "settlement_lag_days": 1,
+    "price_convention": "clean_quote_full_pnl",
+    "frequency": 2,
+    "frequency_by_tenor": {
+      "1Y": "lump_sum",
+      "2Y-7Y": 1,
+      "10Y-30Y": 2
+    },
+    "accrual_formula": {
+      "coupon": "C/f * t/TS",
+      "lump_sum": "K*C + C*t/TY",
+      "discount": "(100 - Pd) * t / T"
+    },
+    "reconciliation": {
+      "enabled": true,
+      "max_price_error_cny": 0.05
+    }
+  },
+  "initialization": {
+    "policy": "explicit_initial_curve_at_start",
+    "initial_curve_as_of": "2019-01-28",
+    "information_lag_days": 1
+  },
   "missing_prediction_policy": "benchmark_on_grid",
   "start": "2019-01-28",
   "end": "2025-12-31",
@@ -19,13 +72,19 @@
     "literal_zero"
   ],
   "n_decisions": {
-    "zero_control": 1730.0,
-    "ridge": 1730.0,
-    "tree": 1730.0,
-    "train_mean": 1730.0,
-    "literal_zero": 1730.0
+    "zero_control": 346.0,
+    "ridge": 346.0,
+    "tree": 346.0,
+    "train_mean": 346.0,
+    "literal_zero": 346.0
   },
-  "git_head": "928818d68bafde8e550e4014f8d6bf1d9f788fca",
+  "git_head": "0017078532c1e3181ee97f8e67979ebcc1b64ea2",
+  "git_dirty": true,
+  "source_sha256": {
+    "src/ficc/research/protocol.py": "0ca1e7fcc25ed8f575cebcd6c101f87e32d383af87e0b660df6e011abecb681f",
+    "src/ficc/rl/env.py": "cba8f795b8731988d14d6840b295729bad3bed9bee70c513e71a66671cde1949",
+    "scripts/run_model_cost_eval.py": "df08b34c89fc7c531573dee7d7c2c3e05beedf742b24dca4353b9fbd9f363596"
+  },
   "detail_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_2lot.csv",
   "summary_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_summary_2lot.csv"
 }
