@@ -196,7 +196,11 @@
 | C-167 | 2026-11-11 | [test] | 测试 | 测试基线 709 → 711 项全绿 |
 | C-169 | 2026-11-11 | [fix] | 协议 | R73：显式 initial_curve 必须恰为 start−lag，过旧/过晚拒绝 |
 | C-170 | 2026-11-11 | [fix] | 报告 | manifest 去 git_head，改 repo_state+散列；2 lot 文案动态 |
-| C-171 | 2026-11-11 | [test] | 测试 | 测试基线 711 → **712 项全绿** |
+| C-171 | 2026-11-11 | [test] | 测试 | 测试基线 711 → 712 项全绿 |
+| C-173 | 2026-11-11 | [fix] | example | R74：复用 env 真实 initial_curve/基准身份；验收成交/成本/持仓/终止 |
+| C-174 | 2026-11-11 | [fix] | 报告 | R75：完整源码/数据/依赖/环境散列与 source_commit |
+| C-175 | 2026-11-11 | [test] | 测试 | 测试基线 712（example/manifest 断言加强） |
+| C-172 | 2026-11-11 | [docs] | 独立审查 | R73 关闭；R74 example 假通过、R75 运行包血缘；单卡/八卡训练详细方案 |
 | C-168 | 2026-11-11 | [docs] | 独立审查 | 默认训练路径闭合；标签/双配置复现；R73 旧条款首日滚动边界与单卡推进计划 |
 | C-163 | 2026-11-11 | [docs] | 独立审查 | 默认 R72 通过；成本脚本显式时钟绕过、拒单率及冒烟指纹待补齐 |
 | C-158 | 2026-11-11 | [docs] | 独立审查 | 复验显式 as-of/跨换券与双配置回放；默认初始化、真实决策数、解析后指纹待收尾 |
@@ -1261,12 +1265,12 @@ make fit        # = run_pipeline.py --stage curve
 
 ## 六、待办与已知问题
 
-**当前状态（2026-11-11，审查 HEAD `471a79f`）**：默认检查通过，R72 显式截止/成本脚本
-旁路、R68 拒单率、R70 冒烟指纹已复验关闭；344 行标签、277 个 OOS 预测、两套执行带
-各五条长回放与完整冒烟均复现。默认入口可进入单卡吞吐与小网络单 seed 可恢复训练。
-新增 R73（P2）：过旧显式条款在首日需要滚动时，未建仓基准仍保留旧券面值，估值报错；
-首阶段限定默认初始化。2 lot 旧 manifest 的 dirty=true 应如实披露，源散列匹配且 clean
-HEAD 隔离重跑一致，不是此次结果污染。详见 C-168、方法论 §10.38、计划 §12.39。
+**当前状态（2026-11-11，审查 HEAD `b4cf0a1`）**：默认检查 exit 0；R73 拒绝边界、合法
+跨换券对拍、两份 manifest 所列散列与 2 lot 三条控制/模型路径复验通过。新增 R74（P2）：
+local example 的 START 券代码与环境 start−lag 代码错位，0 成交/恒定 NAV 仍通过测试；
+R75（P2）：三源码散列不覆盖完整执行/数据/依赖血缘。可做服务器环境与固定回放 profile，
+最小训练前修正 example、补运行包和训练采集器。RL 尚无训练器/已训练网络，计划中的
+PPO/新脚本均为待实现。详见 C-172、方法论 §10.40、计划 §12.41。
 以下早期列表/修复表保留历史，最新状态以本轮独立审查为准。
 
 | # | 类型 | 描述 | 计划 / 责任 |
@@ -3499,6 +3503,64 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 
 - **日期**：2026-11-11
 - **变更内容**：新增过旧 initial_curve 拒绝测试；manifest repo_state/无 git_head 断言。
+- **验证方式**：`make check`（712 passed / 1 deselected）。
+- **风险/遗留**：默认测试约 17 分钟。
+
+---
+
+### C-172 [docs] R73 独立复验与 Mac / 单卡 / 八卡详细训练计划
+
+- **日期/基线**：2026-11-11，`b4cf0a1`（代码修复 `87f3637`）。仅维护四份文档，无业务
+  代码、测试或正式报告修改。修正新交付重复章节号：方法论 §10.39、计划 §12.40；新增
+  独立审查 §10.40 和详细训练计划 §12.41。
+- **实跑**：`make check` exit 0；R69/R72/R73 专项 6 passed；合法 start−lag 条款非零
+  ML/RL 跨一次换券（35 成交）目标/订单/NAV 差 0；2 lot zero/Ridge/literal_zero 三条
+  1726 日路径与现有报告数值差 0，动态 stdout 为 2 lot；两份 manifest repo_state=clean，
+  所列输入/源文件散列匹配。三套 acceptance、本轮全部十条成本路径、服务器训练未重跑。
+- **R74 / P2**：`scripts/run_local_example.py` 仍用 START 曲线生成目标券，实际环境用
+  start−lag；2019-05-06 示例目标 SYN-*-20190506、环境 SYN-*-20190505。引擎
+  `_orders_from_faces` 跳过未知代码，示例实跑 NAV=100,000,000、trades=0，测试只验
+  文件/日志而通过。ML 示例也未传同一 initial_curve。应从真实 ctx.benchmark 取身份，
+  标签共用可得曲线；验建仓/非恒定 NAV/成本/终止状态，未知券目标明确拒绝或审计。
+- **R75 / P2**：`source_sha256` 仅三文件，且删除生成时 commit 后无完整源码身份；
+  engine/ledger/pricing、完整 curve/funding/calendar 和依赖变更可不反映在现有 manifest。
+  成本局部记录可保留，服务器 run 必须新增完整源码/配置/依赖/输入散列或源归档身份。
+  生成时 source commit 在报告提交后仍然有效，不把 HEAD 前移等同于历史版本失效。
+- **计划**：先完成可移植 example 和 run manifest，再测 CPU/GPU profile；一次 rollout
+  采集真实观测/动作/log-prob，按决策间隔聚合每日 reward，终止费用只扣一次；小 PPO
+  checkpoint 单 seed 验收后，八卡独立 seed/fold。具体模块、预算、资源、统计和验收见
+  §12.41。金融层 float64、网络先 float32，不为利用 GPU 增大模型或使用 O(n²) step 采样。
+- **证据位置**：本轮隔离日志与产物 `/tmp/debt_r23/`；观察结果已写入文档，不依赖临时
+  文件作为长期交付。没有 SSH/硬件测量，CPU/内存/吞吐和训练时长仍待服务器实测。
+
+### R74/R75 运行包收口（2026-11-11 第二十五轮）
+
+| 编号 | 级别 | 修复 | 证据 |
+|------|------|------|------|
+| R74 | P2 | example 复用 env.initial_curve 构造目标面值/基准，标签同初始曲线；验收建仓/成本/持仓/终止 | C-173；4 笔、末 NAV 101,141,292.64、成本 76,119.49、4 持仓；测试断言 |
+| R75 | P2 | manifest 覆盖 87 源码文件、27 数据文件、依赖/配置、Python/包版本、source_commit | C-174；source/data/dependency archive SHA + source_commit |
+| 结果 | — | 七年成本结果不变；仅 example/报告血缘修复 | C-173/174 |
+
+### C-173 [fix] R74：本地 example 真实成交
+
+- **日期**：2026-11-11
+- **文件**：`scripts/run_local_example.py`、`tests/test_local_example.py`
+- **变更内容**：用 `env.initial_curve`（start−lag=2019-05-05）构造目标券/基准，避免未知券被跳过；数据集标签传入同一 initial_curve；脚本断言成交>0/NAV≠1亿/成本>0/持仓>0，manifest 记录终止义务。
+- **验证方式**：4 笔建仓、末 NAV 101,141,292.64、成本 76,119.49、4 持仓；测试通过。
+- **风险/遗留**：example 仍是链路验证，不是模型研究。
+
+### C-174 [fix] R75：完整运行血缘
+
+- **日期**：2026-11-11
+- **文件**：`scripts/run_model_cost_eval.py`、`tests/test_model_cost_eval.py`
+- **变更内容**：manifest 增加 source_archive_sha256 + 87 源码文件散列、data_archive_sha256 + 27 行情/资金文件、dependency_sha256、Python/关键包版本、source_commit；保留协议/预测/数据集/初始化/执行带。
+- **验证方式**：字段存在且非空；源码/数据归档散列可复算。
+- **风险/遗留**：manifest 自身提交只改报告，source_archive/data_archive 权威；source_commit 为生成时提交。
+
+### C-175 [test] 测试基线 712
+
+- **日期**：2026-11-11
+- **变更内容**：example 成交/成本/持仓/终止断言；manifest 完整血缘字段断言。
 - **验证方式**：`make check`（712 passed / 1 deselected）。
 - **风险/遗留**：默认测试约 17 分钟。
 

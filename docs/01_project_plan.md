@@ -1873,7 +1873,7 @@ CSV 数值差 0；跨入口/换券与 40 项 RL/协议专项通过。默认检�
 未重跑。仓库 2 lot manifest 为旧 HEAD/dirty=true，来源散列匹配；本次 clean HEAD 隔离
 复跑一致，不改写历史生成事实。详见方法论 §10.38 与 code.md C-168。
 
-### 12.39 第二十三轮：R73 过旧初始化拒绝与报告血缘（2026-11-11）
+### 12.40 第二十三轮：R73 过旧初始化拒绝与报告血缘（2026-11-11）
 
 | 项目 | 结果 |
 |------|------|
@@ -1881,6 +1881,182 @@ CSV 数值差 0；跨入口/换券与 40 项 RL/协议专项通过。默认检�
 | 报告血缘 | manifest 去掉易过期的 git_head，改 repo_state + source_sha256/数据/协议指纹；2 lot stdout 动态显示执行带 |
 | 重放 | 1 lot：zero −1.28、Ridge −14.39（增量 −13.11）、train_mean +0.27（+1.55）、Tree −10.00（−8.72）bp；2 lot：zero −4.21、Ridge +0.12（+4.33）、train_mean −3.78（+0.43）、Tree +3.40（+7.61）bp；仅诊断 |
 | 边界 | 三套 acceptance 未重跑；无稳健预测力/超额证据 |
+
+### 12.41 Mac / 单卡 A800 40GB / 八卡 A800 40GB 训练执行方案（2026-11-11）
+
+本计划基于 `b4cf0a1` 独立审查，以下训练模块、配置与命令中标注“拟新增”的部分尚未实现。
+现有可复用资产是数据、定价、账本、闸门、协议、walk-forward、rollout 和成本评估器。
+当前 RL 目录只有 env/__init__，pyproject 没有 torch/Gymnasium/SB3 依赖；不存在可直接
+迁移到 A800 的训练器。Ridge 为 9 个特征系数加截距；Tree 是 depth≤3 的小树。
+
+**A. 范围与起跑门槛**
+
+- R73 已关闭：初始化只允许 start−lag；不做跨 episode 旧券接力。服务器环境/固定回放
+  吞吐现在可开工。服务器登录、CPU/内存/驱动尚未知，本计划不代表已部署。
+- 先修 R74 example：当前 May-06 目标代码与 May-05 环境代码不同，实跑 0 成交/恒定 NAV。
+  从真实 ctx.benchmark 取面值；ML 标签用同一合法 initial_curve；验证建仓、持仓变化、
+  成本与终止义务，而非仅文件存在。未知 TargetFaces 代码需明确拒绝/审计。
+- 训练包补 R75：三文件散列不够。源归档覆盖 src/scripts/config/pyproject 与依赖锁；
+  数据覆盖实际加载的 curve/funding/calendar 文件、ML 数据/预测及清洗版本。
+  记录 resolved config、协议、初始条款日、公共网格、split、seed、运行命令和输出散列。
+  `source_commit` 是生成时的源码身份，后续提交报告不使其失效；也可用完整源码归档 SHA。
+- 主执行带 2 lot；1 lot 是预先指定的探索/稳健性配置。禁止按当前正负收益选择训练主配置。
+
+**B. Mac 本地职责与运行包**
+
+Mac M2/16GB 保留 2019-05-06→06-28 example、至少 60 个交易日的必要历史及因果性测试。
+特征预热逐列检查，不把“历史行数足够”当成“全部特征可用”，2Y 缺口不自动插值。
+本地运行固定动作与 1–2 次优化器更新的最小测试、保存/恢复检查；完整 fold/seed 实验放
+服务器。数据剪裁、协议、训练器与服务器共用同一实现，不维护简化账本分支。
+
+运行目录建议为 `runs/<run_id>/`，包含 `manifest.json`、`environment.json`、`resolved_config.json`、
+`splits.json`、`metrics.jsonl`、`profile.json`、`checkpoint_last.pt`、`checkpoint_best.pt`、
+评估 NAV/订单/成本/敞口及轨迹摘要。每个任务独占目录，数据只读、日志与产物分离；失败
+任务保留退出码和状态，不覆盖此前成功报告。大表按需落盘，避免每次训练回放写全套 CSV。
+
+**C. 单卡服务器环境预检**
+
+先记录 `nvidia-smi`（型号/显存/驱动）、`lscpu`、`free -h`、`df -h`、操作系统和 Python。
+优先独立 Linux venv（不继承 system-site-packages）；当前 Mac 的 venv 继承 Anaconda，
+不能直接复制。Python 可从 3.11 的一致环境起步，依实际依赖兼容测试锁定小版本；CUDA
+版 PyTorch 按驱动与[官方安装选择器](https://pytorch.org/get-started/locally/)选配并锁版本，
+不在不知道驱动时预写固定 CUDA 安装包。记录 BLAS、NumPy/SciPy、Torch/CUDA、GPU
+设备与依赖锁/容器 digest。完成 CUDA 张量运算和小网络前后向检查。
+
+预约资源先按单任务 4–8 个可用 CPU 核、16–32GB 主存作为工程预算，实际需求以 RSS/
+耗时测量修订，不把此预算当最低硬件要求。先 1 个 worker，BLAS/OMP 线程各 1，随后
+逐项增加并发；不可同时盲目放大进程数和每进程线程数。
+
+**D. 固定回放吞吐验收（先测，不训练）**
+
+1. 服务器跑默认检查、协议/跨入口控制和修正后的 example；固定动作序列不调用随机网络。
+   对照 Mac：日期/券代码/方向/整数面值严格一致；浮点价格与 NAV 分别预设容差
+   1e-8 元/百元、1e-4 元，超限定位 BLAS/求解/取整边界，不自动放宽。不同平台的神经网络
+   浮点结果不要求逐位一致，固定动作回放与网络数值验收分开。
+2. 依次用短例、约 250 日、1726 日窗口。数据加载单测；预热一次后计时重复三次，输出
+   中位数/范围、valuation-days/s、policy-decisions/s、每个 episode 秒数、CPU/RSS、GPU
+   显存/利用率。分解曲线/定价、闸门/账本、policy 推理、序列化耗时。
+3. 对比 CPU-only、小网络 GPU 推理、CPU 推理+GPU 批量更新；并发测试 1/2/4 workers。
+   金融层继续 float64，网络先 float32，不先开 AMP/torch.compile/DDP。固定回放无梯度，
+   GPU 空闲是允许的；不以“显存占满”验收。缓存只复用不可变的日期/条款/曲线结果，必须
+   带 as-of/配置键，不缓存未来标签或跨账户账本状态。
+4. 单卡第一轮环境验收时重跑三套 acceptance，记录服务器实跑版本；本次本地审查没有
+   重跑，不把历史 PASS 当服务器已验收。
+
+SB3 官方也明确指出非 CNN 的 PPO 通常以 CPU 为主，见
+[PPO 文档](https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html)。项目当前的
+NumPy/SciPy 定价与 Python 账本不会因为安装 CUDA 自动迁移到 GPU；先找瓶颈再优化。
+
+**E. 第一版训练算法、规模与缺失模块**
+
+首版建议 PPO 的小型 MLP actor/critic；先做一维动作 `z∈[-1,1]`，目标继续
+`bench_KRD(t−1) × (1+0.10z)`，z=0 是回基准，不是 Hold。暂不新增 KRD 形状动作、LSTM、
+Transformer、SAC 或 RLlib 分布式框架。RL 输出是控制动作，不当作经校准的收益预测来报 IC。
+
+观测 schema 先版本化，优先复用 9 个因果市场特征，加真实券身份对应的四腿已知面值、
+滞后 cash/NAV、滞后基准风险和上一动作；不得消费当前持仓中被置 NaN 的估值字段。市场
+特征归一化只拟合训练窗；跨换券按腿/期限映射固定维度，并保留缺失 mask，不盲填 0。
+观测仍是受限信息，不能宣称已给策略完整的隐含账本状态。
+
+例如最终输入 D=20、actor/critic 各两层 64、独立网络、单均值输出和一个全局 log-std：
+总计 **11,139 参数**；128×128 为 **38,659 参数**。这是拟议架构的计算，不是已有模型。
+float32 权重约 44KB/155KB，参数+梯度+Adam 两份动量约 178KB/619KB（十进制），不含
+激活、buffer、框架及 CUDA runtime。40GB 远超模型本身需求，八卡用于任务并行。
+
+拟新增模块职责：`rl/features.py`（共用观测编码）、`rl/collector.py`（rollout→训练转移）、
+`rl/policy.py`、`rl/ppo.py`、`rl/checkpoint.py`；入口拟为 `scripts/profile_training.py` 与
+`scripts/train_rl.py`，配置拟为 `config/experiments/rl_smoke.yaml`/`rl_main.yaml`。
+当前 RebalanceEnv.step 返回 `(Observation, StepRecord)`，不是 Gymnasium 五元组；不能
+直接 `SB3.PPO(...).learn()`。优先保留一次引擎 rollout 的采样器，再接经过测试的 PPO 更新；
+若改用现成 Gym 算法，需另做高效标准适配器及等价测试，不能包装 O(n²) step 当正式采样。
+
+**F. 采样、奖励与最后一步（最容易引入新错误）**
+
+- 每个 episode 使用一次 rollout，期间策略权重冻结。采集 callback 实际看到的 observation、
+  原始动作、log-prob、value、policy_version；回放结束后关联真实成交/拒单/缩放/取消。
+  log-prob 对原始采样动作计算，不拿投影后的 KRD 或整数面值反算。若使用 tanh 高斯，保存
+  pre-tanh 样本并正确处理概率变换。
+- 主训练转移按决策网格分组：`r_i=(NAV[t_next]−NAV[t])/initial_NAV`，求和覆盖所有区间
+  内交易日；最后一次额外减 `terminal_accrued_fees/initial_NAV`。未结算现金已经在 NAV，
+  不再扣一次；价差也不重复扣。目标为未折扣净终值时先固定 gamma=1，不增加主动超额奖励
+  或任意风险罚分；改变经济目标须另立训练协议。ML 四日标签和 RL 决策间奖励分别披露。
+- 非网格日和未调用 policy 的风控/机械事件不能成为虚假 actor 样本；真实采样但被拒单/
+  缩放的动作必须保留，投影是环境的一部分。每天现金/票息/融资仍进入区间 reward。
+- 最后决策只有在下一交易日仍属于 episode 时才采样；否则返回 Hold。末段按真实结束日
+  聚合，不把没有执行机会的动作拿来训练。有限 episode 的经济终止与计算批次截断分开；
+  不支持跨 episode 账本恢复时禁止跨边界 bootstrap value 或偷偷拼接持仓。
+- 子 episode 的起点选在全局公共网格上，结束/预热/label_available_after 均落在训练允许
+  范围；不能每个 fold 随意重新 `days[::5]` 改变采样相位。正式 OOS 用一条连续账本，切换
+  fold 的模型，不重置投资宇宙、现金或基准；没有 OOS 模型的网格日按冻结缺预测策略处理。
+
+**G. 单 seed 最小训练与 checkpoint 验收**
+
+建议先首个合法训练窗、seed=20261111、64×64 网络，4 个完整训练 episode/更新、10 次
+更新；每个约 252 日窗只有约 50 次决策，累计约 2,000 个采样决策（同一历史的重复访问，
+不是新增独立样本）。初始候选配置：Adam lr=3e-4、clip=0.2、epochs=4、minibatch=64、
+gamma=1、GAE lambda=0.95、value_coef=0.5、entropy_coef=0.001、grad_clip=0.5、
+target_KL=0.02；这些是工程起点，须训练前写进配置，不宣称最优或已经冻结实施。
+
+验收：loss/梯度/参数有限且确有更新；action→订单映射可追溯；区间奖励和终止净收益闭合；
+报告采样动作数、死区率、缩放/拒单/政策取消率及真实成交数。常数动作、精确面值和零
+预测控制分别核验，不以“奖励为正”“跑满 GPU”或只生成 checkpoint 为验收。
+
+保存 actor/critic、optimizer、scheduler（如有）、Python/NumPy/Torch CPU/CUDA RNG 状态、
+归一化统计、episode/更新计数、数据/协议/源码指纹和采样计划。每次更新后原子写 last，
+验证集规则决定 best；执行“连续 10 更新”与“5 更新保存退出、恢复再 5 更新”对照。
+首版仅支持 episode/更新边界恢复，不宣称任意日恢复。PyTorch 官方说明恢复训练还需优化器
+状态，见[checkpoint 文档](https://docs.pytorch.org/tutorials/beginner/saving_loading_models)；
+同环境设置确定性后比较恢复轨迹，跨平台不保证逐位一致，见
+[复现说明](https://docs.pytorch.org/docs/2.15/notes/randomness.html)。
+
+**H. 正式实验冻结与八卡排程**
+
+单 seed 工程通过后才登记正式实验：复用并导出当前 22 个实际 walk-forward split，保留
+label_available_after/purge/embargo；固定主配置 2 lot、1 lot 稳健性、网络64×64、候选
+预算50更新/fold（按吞吐可在首次正式测试前整体修订一次）、验证选择频率与主指标。
+先选最早一个 fold 做实现验收，再排全部 fold；验证选 checkpoint，测试窗不早停/调参。
+建议预登记 5 个 seed=20261111…20261115；常数、Ridge、Tree 不需因 GPU 数重复拟合。
+
+正式评估共用连续起点 2019-02-01、同一基准/缺预测网格策略和费用口径，比较 literal_zero、
+train_mean、Ridge、Tree、PPO。主报告成本后相对 zero_control 的净增量，同时报相对滚动
+基准、TE、回撤、成本、换手、敞口与有效动作率。先锁定日收益配对 HAC lag=5 和 20 交易日
+移动块 bootstrap（2000 次、固定统计 seed）的方案；这些是拟议固定值，要记录时间间隔、
+年化与累计的区别，并做预先指定的 block=10/40 稳健性。2019–2025 已研究；把不同 seed
+当算法稳定性维度，不能把 5 seeds×22 folds 当 110 份独立市场历史。
+
+八卡优先 **一张卡一个 seed/fold 任务**：主实验 5×22=110 个任务，排队轮转，不先做 DDP。
+先开2个，再4个，再到8个任务；并发上限取 GPU 数、可用 CPU 线程预算和
+`floor(0.7×可用主存/单任务峰值RSS)` 的最小值。每任务初始 1 个采样worker/BLAS线程；
+根据 profile 增加。若 GPU 未获加速就用 CPU 批量跑，不为利用八卡改大模型。主实验完成后
+再排 1 lot、去市场特征、固定动作等预注册消融，分别存结果，不能将消融最优值当主结果。
+
+拟新增入口实现后，单任务命令形态示例（**当前不可直接执行**）：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  python scripts/train_rl.py --run-config config/experiments/rl_smoke.yaml \
+  --device cuda:0 --seed 20261111 --out-dir runs/rl-smoke-seed20261111
+```
+
+八卡队列为每个任务设置独立 CUDA_VISIBLE_DEVICES、CPU 配额和输出目录，进程内设备仍是
+cuda:0。单卡总耗时先由 profile 测得，预算公式为 `任务数×单任务训练/验证秒数÷实测有效
+并发数`，另加连续 OOS 重放；CPU 型号未知时不承诺小时数或8倍加速。
+
+**I. 下一轮提交顺序与交付物**
+
+第一项：R74 example/未知券代码与 R75 完整运行包、服务器锁定环境；第二项：profile 脚本
+及跨平台固定动作对拍；第三项：共享观测/collector、reward 与 action 对齐的有意义测试；
+第四项：小 PPO + checkpoint 单 seed 工程报告；第五项：冻结实验清单后排八卡多 seed/fold。
+第一、二项可并行准备，第三项是梯度训练前置。每项独立提交，保留实际未跑状态；本轮只做
+审查与计划，尚未建立 SSH、安装服务器依赖或训练模型。
+
+### 12.40 第二十四轮：R74 example 真实成交与 R75 运行血缘（2026-11-11）
+
+| 项目 | 结果 |
+|------|------|
+| R74 | example 复用 env 真实 initial_curve/基准身份；实跑 4 笔建仓、末 NAV 101,141,292.64、成本 76,119.49、4 个持仓；标签也传同一初始曲线；测试验收成交/成本/持仓/终止义务 |
+| R75 | 成本 manifest 覆盖 87 个源码文件、27 个行情/资金文件、依赖/配置散列、Python/关键包版本、source_commit、协议指纹；源码/数据归档散列为权威血缘 |
+| 影响 | 七年成本结果不变；仅 example 与运行包血缘修复 |
 
 ## 十三、本轮交付清单
 

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
+import platform
 import subprocess
 import sys
 from datetime import date
@@ -189,12 +191,47 @@ def main(argv: list[str] | None = None) -> int:
     def _sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def _tree_sha256(paths: list[Path]) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(paths):
+            digest.update(str(path.relative_to(_ROOT)).encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
+
     resolved_cfg = protocol_config(cfg, protocol)
-    source_files = [
-        "src/ficc/research/protocol.py",
-        "src/ficc/rl/env.py",
-        "scripts/run_model_cost_eval.py",
+    source_paths = sorted(
+        [*(_ROOT / "src" / "ficc").rglob("*.py"), *(_ROOT / "scripts").glob("*.py")]
+    )
+    source_files = {str(p.relative_to(_ROOT)): _sha256(p) for p in source_paths}
+    source_archive_sha256 = _tree_sha256(source_paths)
+    data_paths = [
+        *sorted((_ROOT / "data" / "raw" / "chinabond").glob("*.xlsx")),
+        _ROOT / "data" / "processed" / "curve_long.parquet",
+        _ROOT / "data" / "processed" / "repo_rates.parquet",
     ]
+    data_files = {str(p.relative_to(_ROOT)): _sha256(p) for p in data_paths if p.exists()}
+    data_archive_sha256 = _tree_sha256([Path(_ROOT / p) for p in data_files])
+    dependency_files = [
+        _ROOT / "pyproject.toml",
+        _ROOT / "config" / "config.yaml",
+        _ROOT / "config" / "universe.yaml",
+    ]
+    dependency_sha256 = _tree_sha256([p for p in dependency_files if p.exists()])
+    try:
+        source_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=_ROOT, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        source_commit = "unknown"
+    package_names = ["numpy", "pandas", "scipy", "pydantic", "pyarrow", "pytest"]
+    packages: dict[str, str] = {}
+    for name in package_names:
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = "not-installed"
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=_ROOT, text=True).strip()
     manifest = {
         "protocol_version": protocol.version,
@@ -227,7 +264,14 @@ def main(argv: list[str] | None = None) -> int:
             str(k): float(v) for k, v in zip(table["model"], table["n_decisions"], strict=True)
         },
         "repo_state": "clean" if not dirty else "dirty",
-        "source_sha256": {path: _sha256(_ROOT / path) for path in source_files},
+        "source_commit": source_commit,
+        "source_archive_sha256": source_archive_sha256,
+        "source_sha256": source_files,
+        "data_archive_sha256": data_archive_sha256,
+        "data_sha256": data_files,
+        "dependency_sha256": dependency_sha256,
+        "python": platform.python_version(),
+        "packages": packages,
         "detail_csv": str(detail_path),
         "summary_csv": str(summary_path),
     }

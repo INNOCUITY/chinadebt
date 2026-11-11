@@ -19,13 +19,10 @@ for _p in (_ROOT / "src", _ROOT / "scripts"):
         sys.path.insert(0, str(_p))
 
 import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
 from run_ml_baseline import fit_ridge  # noqa: E402
 from run_strategies import load_market  # noqa: E402
 
 from ficc.config import get_config  # noqa: E402
-from ficc.curve.curve import Curve  # noqa: E402
-from ficc.data.schema import CANONICAL_TENORS  # noqa: E402
 from ficc.ml.asof import FeatureSpec  # noqa: E402
 from ficc.ml.dataset import (  # noqa: E402
     InformationClock,
@@ -84,23 +81,34 @@ def main(argv: list[str] | None = None) -> int:
         warmup_days=5,
     )
     env.reset(args.start, args.end)
-    # 用真实基准身份的一次性面值目标（不依赖 lagged 重发）
-    curve = Curve(
-        as_of=args.start,
-        tenors=np.asarray(sorted(CANONICAL_TENORS), dtype=float),
-        rates=panel.loc[pd.Timestamp(args.start)]
-        .reindex(list(CANONICAL_TENORS))
-        .to_numpy(dtype=float),
-        method="linear",
+    # R74：复用环境真实基准身份（start−lag 条款），不得用 START 当日曲线另发新券。
+    initial_curve = env.initial_curve
+    if initial_curve is None:
+        raise RuntimeError("环境未暴露 initial_curve，无法复用真实基准身份")
+    bonds = build_universe_bonds(initial_curve, initial_curve.as_of, cfg=aligned)
+    bench = build_benchmark(
+        initial_curve,
+        initial_curve.as_of,
+        bonds=bonds,
+        calendar=calendar,
+        cfg=aligned,
     )
-    bonds = build_universe_bonds(curve, args.start, cfg=aligned)
-    bench = build_benchmark(curve, args.start, bonds=bonds, calendar=calendar, cfg=aligned)
     target_faces = {code: float(face) for code, face in bench.faces.items()}
 
     def policy(ctx):
         return ActionSpec(action_type="target_faces", target_faces=dict(target_faces))
 
     rollout = env.rollout(policy, args.start, args.end, name="local_example")
+    n_trades = len(rollout.result.trades)
+    nav_end = float(rollout.result.nav.iloc[-1])
+    total_cost = float(rollout.result.costs["total"].sum())
+    positions = rollout.result.positions
+    last_positions = positions.loc[positions["as_of"] == positions["as_of"].max()]
+    n_positions = len(last_positions[last_positions["face_value"] > 0])
+    if n_trades <= 0 or abs(nav_end - 100_000_000.0) < 1e-6 or n_positions <= 0:
+        raise RuntimeError(
+            f"example 未实际建仓：trades={n_trades} nav={nav_end} positions={n_positions}"
+        )
     traj_path = out / "trajectory.npz"
     np.savez_compressed(
         traj_path,
@@ -122,7 +130,14 @@ def main(argv: list[str] | None = None) -> int:
     decisions = protocol.decision_dates(calendar, args.start, args.end)
     feature_panel = attach_funding_column(panel, funding, FUNDING_COLUMN)
     dataset = build_supervised_dataset(
-        feature_panel, funding, calendar, decisions, _simple_features(), aligned, clock
+        feature_panel,
+        funding,
+        calendar,
+        decisions,
+        _simple_features(),
+        aligned,
+        clock,
+        initial_curve=initial_curve,
     )
     feature_names = [str(n) for n in dataset.attrs["feature_names"]]
     x = dataset[feature_names].to_numpy(dtype=float)
@@ -150,6 +165,14 @@ def main(argv: list[str] | None = None) -> int:
                 "protocol": protocol.version,
                 "n_ml_rows": len(dataset),
                 "features": feature_names,
+                "initial_curve_as_of": str(initial_curve.as_of),
+                "n_trades": n_trades,
+                "nav_end": nav_end,
+                "total_cost": total_cost,
+                "n_positions": n_positions,
+                "terminal_nav": float(rollout.terminal.nav_mark_to_market),
+                "terminal_accrued_fees": float(rollout.terminal.accrued_fees),
+                "terminal_unsettled_cash": float(rollout.terminal.unsettled_cash),
                 "note": "本地 example：链路验证，不是模型研究/alpha 结论",
             },
             ensure_ascii=False,

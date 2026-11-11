@@ -53,6 +53,12 @@ def test_model_cost_eval_quick(tmp_path) -> None:
     assert manifest["resolved_benchmark_version"] == "rolling"
     assert manifest["resolved_rolling"]["enabled"] is True
     assert manifest["source_sha256"]
+    assert manifest["source_archive_sha256"]
+    assert manifest["data_archive_sha256"]
+    assert manifest["data_sha256"]
+    assert manifest["dependency_sha256"]
+    assert manifest["source_commit"]
+    assert manifest["packages"]
     # R68：决策数=实际信号（网格机会），不是输入预测条数
     assert manifest["n_decisions"]["zero_control"] > manifest["n_prediction_rows"] * 0
 
