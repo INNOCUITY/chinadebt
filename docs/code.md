@@ -3647,3 +3647,12 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
 - [x] 若改了数据契约，`docs/02_data_dictionary.md` 已同步
 - [x] 若改了金融口径，`docs/03_methodology.md` 与官方算例测试已同步
 - [x] 风险/遗留项已写入第六节
+
+### C-181 [feat] 冻结验证选模、第 0 折对照与双卡滚动评估
+
+- 新增独立 select/test 命令，保留训练时的标准化参数，按验证净超额选择 checkpoint；
+  从相同初始状态对五种模型执行两档测试并输出每日净账本、动作与实际成交数。
+- 使用 22 个已登记的滚动分割与五个 seed，按 seed 独立派发，跨折测试保持连续账本。
+  运行入口与恢复方法见服务器指南 §18。
+- 用 `python -m pytest tests/test_ppo_evaluation.py tests/test_ppo.py tests/test_rl_clock.py tests/test_server_tools.py`
+  检查折边界、选择、公共网格、费用、对账、恢复及任务入口。工程预算每折两次更新。

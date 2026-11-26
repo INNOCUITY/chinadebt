@@ -661,3 +661,24 @@ bash scripts/server/server.sh ppo-resume --checkpoint /absolute/path/to/update-1
 结果见 run 的 `reports/ppo*/`。每次更新独立保存轨迹、指标和原子写入的 checkpoint。
 逐日轨迹包含动作归属、真实成交与终止费用。恢复指纹涵盖实际市场输入、观测编码、归一化、
 配置、提交及主要运行环境。每个 run 的完整依赖锁在 `requirements.freeze.txt`。
+
+## 18. 冻结验证、第 0 折测试及双卡任务
+
+使用包含全部已冻结数据的独立 checkout 和 PPO 环境，工作目录放在本机配置的运行目录中。
+以下命令中的 RUN 指向本次独立运行目录，PY 指向训练环境 Python。
+将原第 0 折、首个 seed 的两个已验收 checkpoint 放到
+`$RUN/seed-20261111/fold-0/training/`；其余折与 seed 由 worker 训练。
+
+```bash
+export PYTHONPATH="$PWD/src"
+"$PY" scripts/evaluate_rl.py select --root "$RUN" --fold 0 --seed 20261111
+"$PY" scripts/evaluate_rl.py test --root "$RUN" --fold 0 --seed 20261111 --output "$RUN/gate"
+# 每个 worker 在独立终端/后台任务中使用一张已获分配的卡。
+CUDA_VISIBLE_DEVICES=1 "$PY" scripts/server/ppo_matrix.py --root "$RUN" --shard 0
+CUDA_VISIBLE_DEVICES=2 "$PY" scripts/server/ppo_matrix.py --root "$RUN" --shard 1
+```
+
+`gate/test.json` 包含两档的模型收益、相对零控制的 TE、成本、换手、成交和对账误差。
+`worker-0.json` 和 `worker-1.json` 记录当前 seed、fold、阶段和退出状态。重启同一版本的 worker 时，
+成功的训练目录和验证选择可复用。每个 seed 的最终跨折测试在 `seed-*/continuous/test.json`，
+逐模型、逐执行带的日账本在同目录 CSV。验证和测试只需 CPU，GPU 用于每折 PPO 训练。

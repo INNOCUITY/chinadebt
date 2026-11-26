@@ -1,0 +1,80 @@
+"""冻结模型选择、时钟、净费用和分片门槛的专项验证。"""
+
+import importlib
+import json
+from datetime import date
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+
+@pytest.fixture
+def ev(monkeypatch):
+    pytest.importorskip("torch")
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    return importlib.import_module("evaluate_rl")
+
+
+def test_frozen_folds_and_selection(ev):
+    from run_ml_baseline import END, START, InformationClock, make_splits
+
+    plan = json.loads(ev.EVAL_SPEC.read_text())
+    market = ev.Market(END)
+    splits, _ = make_splits(market.calendar, START, END, InformationClock(), "rolling")
+    assert len(plan["folds"]) == len(splits) == 22
+    for spec, split in zip(plan["folds"], splits, strict=True):
+        for key, dates in (
+            ("train", split.train_dates),
+            ("validation", split.valid_dates),
+            ("test", split.test_dates),
+        ):
+            assert spec[key] == [str(dates[0]), str(dates[-1])]
+    rows = [
+        dict(update=2, net_excess_vs_zero_bp=1 + 1e-10),
+        dict(update=1, net_excess_vs_zero_bp=1),
+    ]
+    assert ev.winner(rows)["update"] == 1
+    rows[0]["net_excess_vs_zero_bp"] = 1.001
+    assert ev.winner(rows)["update"] == 2
+
+
+def test_common_grid_and_net_nav(ev):
+    market = ev.Market(date(2019, 3, 29))
+    start = date(2019, 2, 1)
+    days = market.calendar.trading_days_between(start, date(2019, 3, 29))
+    end = days[16]  # 最后一个主动决策的执行日，T+1 费用尚未结算
+    zero, _ = ev.replay(market, start, end, 1, lambda ctx, prev: 0.0)
+    actions = iter([0.0, 0.0, 1.0, -1.0])
+    active, error = ev.replay(market, start, end, 1, lambda ctx, prev: next(actions))
+    assert list(active.proposal_z.dropna().index) == list(days[:16:5])
+    assert error < 1e-5
+    np.testing.assert_allclose(active.net_nav.iloc[:11], zero.net_nav.iloc[:11], atol=1e-7, rtol=0)
+    assert active.nav.iloc[-1] > active.net_nav.iloc[-1]
+    row = ev.score(active, zero, days[10], end, market.calendar, 250)
+    assert row["nonzero_proposals"] == 2 and row["trades"] > 0
+    relative = (
+        active.net_nav.iloc[-1] / active.net_nav.iloc[9]
+        - zero.net_nav.iloc[-1] / zero.net_nav.iloc[9]
+    ) * 1e4
+    assert row["net_excess_vs_zero_bp"] == pytest.approx(relative)
+    assert row["te_vs_zero_bp"] == pytest.approx(
+        (active.net_nav.iloc[9:].pct_change() - zero.net_nav.iloc[9:].pct_change()).std(ddof=0)
+        * 250**0.5
+        * 1e4
+    )
+    assert row["net_cost_yuan"] == pytest.approx(active.cost.loc[days[10] : end].sum())
+
+
+def test_matrix_rejects_invalid_gate(ev, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(ev.ROOT) / "scripts/server"))
+    from ppo_matrix import check_gate
+
+    plan = json.loads(ev.EVAL_SPEC.read_text())
+    (tmp_path / "gate").mkdir()
+    (tmp_path / "gate/test.json").write_text('{"plan_sha256":"wrong","metrics":[]}')
+    folder = tmp_path / f"seed-{plan['seeds'][0]}/fold-0"
+    folder.mkdir(parents=True)
+    (folder / "selection.json").write_text("{}")
+    with pytest.raises(ValueError, match="第 0 折"):
+        check_gate(tmp_path, plan)

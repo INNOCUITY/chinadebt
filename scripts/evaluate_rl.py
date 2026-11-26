@@ -138,15 +138,19 @@ def replay(market, anchor, end, band, action):
         information_lag_days=1,
     )
     previous = 0.0
+    proposals = {}
 
     def policy(ctx):
         nonlocal previous
         if ctx.as_of == end:
             return None
         previous = action(ctx, previous)
+        proposals[ctx.as_of] = previous
         return prediction_to_target(previous, ctx.benchmark, as_of=ctx.as_of)
 
-    return daily_book(env.rollout(policy, anchor, end), cfg)
+    book, error = daily_book(env.rollout(policy, anchor, end), cfg)
+    book["proposal_z"] = pd.Series(proposals, dtype=float).reindex(book.index)
+    return book, error
 
 
 def score(book, zero, start, end, calendar, annual_days):
@@ -173,6 +177,8 @@ def score(book, zero, start, end, calendar, annual_days):
         net_cost_yuan=window.cost.sum(),
         turnover=window.turnover.sum(),
         trades=int(window.trades.sum()),
+        decisions=int(window.proposal_z.count()),
+        nonzero_proposals=int((window.proposal_z.fillna(0).abs() > 1e-8).sum()),
     )
 
 
@@ -242,7 +248,9 @@ def evaluate(plan, folds, seed, root, out):
         if (
             picked["plan_sha256"] != sha(EVAL_SPEC)
             or (picked["fold"], picked["seed"]) != (fold, seed)
+            or [r["update"] for r in picked["candidates"]] != plan["updates"]
             or picked["update"] != winner(picked["candidates"])["update"]
+            or picked["checkpoint_sha256"] != winner(picked["candidates"])["checkpoint_sha256"]
         ):
             raise ValueError("验证选择与冻结方案不匹配")
         ckpt = folder / "training" / f"update-{picked['update']}.pt"
