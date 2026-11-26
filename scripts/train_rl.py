@@ -32,6 +32,26 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "config/experiments/ppo_smoke.json"
 
 
+EVAL_SPEC = ROOT / "config/experiments/ppo_evaluation.json"
+
+
+def training_spec(fold=None, seed=None):
+    spec = json.loads(SPEC.read_text())
+    if fold is not None:
+        plan = json.loads(EVAL_SPEC.read_text())
+        if fold < 0 or fold >= len(plan["folds"]) or seed not in plan["seeds"]:
+            raise ValueError("fold 或 seed 超出冻结实验清单")
+        spec.update(plan["folds"][fold], seed=seed)
+    return spec
+
+
+def market_digest(panel, funding):
+    digest = hashlib.sha256()
+    for frame in (panel, funding):
+        digest.update(pd.util.hash_pandas_object(frame, index=True).to_numpy().tobytes())
+    return digest.hexdigest()
+
+
 def dump(path, obj):
     data = json.dumps(obj, default=str, ensure_ascii=False, allow_nan=False)
     tmp = path.with_suffix(".tmp")
@@ -84,6 +104,8 @@ def main(argv=None):
     parser.add_argument("mode", choices=["profile", "train", "resume"])
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fold", type=int)
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--verify-resume", action="store_true")
     parser.add_argument(
@@ -92,7 +114,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if (args.mode == "resume") != bool(args.checkpoint):
         parser.error("resume 需要指定 --checkpoint")
-    spec = json.loads(SPEC.read_text())
+    if (args.fold is None) != (args.seed is None):
+        parser.error("--fold 和 --seed 必须配对")
+    spec = training_spec(args.fold, args.seed)
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
     out = args.output
@@ -121,6 +145,10 @@ def main(argv=None):
     ):
         raise ValueError("第 0 折日期或网格未对齐")
     start = days[calibration]
+    if args.fold is not None:
+        anchor = date.fromisoformat(json.loads(EVAL_SPEC.read_text())["anchor"])
+        grid = protocol.decision_dates(calendar, anchor, end)
+        start = next(d for d in grid if d >= start)
     if args.mode == "profile":
         end = days[calibration + 20]
     panel = panel.loc[: pd.Timestamp(end)]
@@ -136,13 +164,10 @@ def main(argv=None):
     )
     model = ActorCritic(len(encoder.names), spec["hidden"]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=spec["learning_rate"])
-    market_hash = hashlib.sha256()
-    for frame in (panel, funding):
-        market_hash.update(pd.util.hash_pandas_object(frame, index=True).to_numpy().tobytes())
     identity = dict(
         spec=spec,
         protocol=protocol_fingerprint(cfg, protocol),
-        data=market_hash.hexdigest(),
+        data=market_digest(panel, funding),
         curve_tenors=list(panel.columns),
         commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         config_sha256=hashlib.sha256(cfg.model_dump_json().encode()).hexdigest(),

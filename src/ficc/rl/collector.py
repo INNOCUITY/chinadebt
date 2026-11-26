@@ -25,13 +25,17 @@ class Encoder:
     scale: np.ndarray
     tenors: tuple[float, ...]
 
+    @staticmethod
+    def market_features(panel, funding):
+        frame = attach_funding_column(panel, funding).rename(columns=str)
+        return pd.DataFrame(
+            {s.name: s.transform(frame.loc[:, list(s.inputs)]) for s in feature_specs()}
+        )
+
     @classmethod
     def fit(cls, panel, funding, calibration_start, calibration_end, tenors):
         """九个向后看的特征。只用首段训练日期拟合，后续交易使用固定尺度。"""
-        frame = attach_funding_column(panel, funding).rename(columns=str)
-        market = pd.DataFrame(
-            {s.name: s.transform(frame.loc[:, list(s.inputs)]) for s in feature_specs()}
-        )
+        market = cls.market_features(panel, funding)
         calibration = market.loc[str(calibration_start) : str(calibration_end)]
         if calibration.count().min() < 2:
             raise ValueError("训练校准期的有效观测不足")
