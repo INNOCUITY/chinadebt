@@ -1,0 +1,191 @@
+{
+  "evaluation_commit": "bb70b829c2a830e9895297cf119aaf3df4052e2d",
+  "plan_sha256": "6d634d64daf902a97f622d2fe2d57ba9af60da16218c434835ae379a1bc3ef5a",
+  "seed": 20261111,
+  "fold": 0,
+  "test": [
+    "2020-05-29",
+    "2020-08-26"
+  ],
+  "selection": {
+    "fold": 0,
+    "seed": 20261111,
+    "plan_sha256": "6d634d64daf902a97f622d2fe2d57ba9af60da16218c434835ae379a1bc3ef5a",
+    "validation": [
+      "2020-02-20",
+      "2020-05-20"
+    ],
+    "candidates": [
+      {
+        "update": 1,
+        "checkpoint_sha256": "f73e8ffe507b0bf93d8c34b3b9d3c6cc35cfd35c9a8e543be098b12088b3cbd7",
+        "ledger_error_yuan": 1.4901161193847656e-08,
+        "net_return_bp": 178.93395822452308,
+        "net_excess_vs_zero_bp": 0.0,
+        "te_vs_zero_bp": 0.0,
+        "net_cost_yuan": 0.0,
+        "turnover": 0.0,
+        "trades": 0,
+        "decisions": 12,
+        "nonzero_proposals": 12
+      },
+      {
+        "update": 2,
+        "checkpoint_sha256": "c381320582cc24ca24005d55706b2c9d137de9d41a1f21a7849401fa68f8d716",
+        "ledger_error_yuan": 1.4901161193847656e-08,
+        "net_return_bp": 178.93395822452308,
+        "net_excess_vs_zero_bp": 0.0,
+        "te_vs_zero_bp": 0.0,
+        "net_cost_yuan": 0.0,
+        "turnover": 0.0,
+        "trades": 0,
+        "decisions": 12,
+        "nonzero_proposals": 12
+      }
+    ],
+    "update": 1,
+    "checkpoint_sha256": "f73e8ffe507b0bf93d8c34b3b9d3c6cc35cfd35c9a8e543be098b12088b3cbd7"
+  },
+  "test_metrics": [
+    {
+      "model": "zero",
+      "band_lots": 2,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.82984302434937,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 0
+    },
+    {
+      "model": "train_mean",
+      "band_lots": 2,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.82984302434937,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "ridge",
+      "band_lots": 2,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.82984302434937,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "tree",
+      "band_lots": 2,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.82984302434937,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "ppo",
+      "band_lots": 2,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.82984302434937,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "zero",
+      "band_lots": 1,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.7753396268419,
+      "net_excess_vs_zero_bp": 0.0,
+      "te_vs_zero_bp": 0.0,
+      "net_cost_yuan": 0.0,
+      "turnover": 0.0,
+      "trades": 0,
+      "decisions": 12,
+      "nonzero_proposals": 0
+    },
+    {
+      "model": "train_mean",
+      "band_lots": 1,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -213.68571719907249,
+      "net_excess_vs_zero_bp": -2.9103775722305603,
+      "te_vs_zero_bp": 3.736501771915741,
+      "net_cost_yuan": 11949.845773866531,
+      "turnover": 0.07634503133026786,
+      "trades": 8,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "ridge",
+      "band_lots": 1,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -210.61241055522427,
+      "net_excess_vs_zero_bp": 0.1629290716176346,
+      "te_vs_zero_bp": 2.582281216181223,
+      "net_cost_yuan": 6227.919611957767,
+      "turnover": 0.03866871806008848,
+      "trades": 4,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "tree",
+      "band_lots": 1,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -211.09960581509824,
+      "net_excess_vs_zero_bp": -0.3242661882563169,
+      "te_vs_zero_bp": 2.1960965752908432,
+      "net_cost_yuan": 5958.754789449375,
+      "turnover": 0.0380667612092898,
+      "trades": 4,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    },
+    {
+      "model": "ppo",
+      "band_lots": 1,
+      "window": "pooled",
+      "ledger_error_yuan": 1.4901161193847656e-08,
+      "net_return_bp": -206.43561852899285,
+      "net_excess_vs_zero_bp": 4.339721097849081,
+      "te_vs_zero_bp": 8.418185137831674,
+      "net_cost_yuan": 15676.116234719953,
+      "turnover": 0.10578997590778698,
+      "trades": 11,
+      "decisions": 12,
+      "nonzero_proposals": 12
+    }
+  ]
+}
