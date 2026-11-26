@@ -34,7 +34,11 @@
 | [docs/00_market_conventions.md](docs/00_market_conventions.md) | 中债估值口径与国债交易实务惯例 |
 | [docs/02_data_dictionary.md](docs/02_data_dictionary.md) | 字段字典 |
 | [docs/03_methodology.md](docs/03_methodology.md) | **方法论与公式推导**（NS/NSS、定价、久期/DV01、归因、ML/RL 纪律） |
+| [docs/05_server_execution_20261126.md](docs/05_server_execution_20261126.md) | **服务器实跑记录**：环境/抓取故障修复、数据核验、实际run与跨平台结果 |
+| [docs/04_server_guide.md](docs/04_server_guide.md) | **服务器操作手册**：SSH/Git、无conda环境、数据传输、隔离一键运行、日志/失败恢复、结果下载与八卡规划 |
 | [docs/code.md](docs/code.md) | **代码变更日志 + Code Review 区**（每次改动必记录） |
+
+**服务器部署（2026-11-26）**：公开仓库已在服务器fetch验证；代码、独立环境、数据及结果均在 `/srv/ficc`。保留`ssh research-server`，也可使用用户提供的直接SSH入口，不改全局Git/SSH认证。服务器已完成官方数据抓取、全样本比对、冻结、离线重建和跨入口smoke；补齐依赖后服务器检查 **724 passed / 1 skipped / 1 deselected**，三套验收 **71/71、92/92、92/92**；模型双执行带结果与Mac在浮点精度内一致。完整验证结果见[本次实跑记录](docs/05_server_execution_20261126.md)。Mac只接收小型结果。硬件为8×A800 80GB、64物理核/128线程、约1TiB内存；本轮CPU运行已有模型/验收，**RL训练器仍待实现，未运行GPU训练**。
 
 ## 快速开始
 
@@ -43,8 +47,8 @@ make install          # 安装依赖（-e .）
 make fetch            # 抓取数据 → data/raw/ + 快照 manifest
 make fit              # 当前曲线拟合与残差摘要
 make diagnostics      # 自由/锚定双产品，为 bias 提供残差面板
-make backtest         # 基线策略回测（含成本）
-make risk             # 风险报告：DV01/KRD/VaR/压力测试
+make strategies       # 基线策略回测（含成本）
+make risk-report      # 风险报告：DV01/KRD/VaR/压力测试
 make serve            # Streamlit 演示界面
 make test             # 单元测试
 ```
@@ -63,7 +67,7 @@ src/ficc/
   backtest/      回测引擎、成交与成本、绩效、归因
   risk/          敞口、VaR/ES、压力测试、限额
   ml/            机器学习：标签/特征/模型/Purged Walk-Forward/可解释性
-  rl/            强化学习：gymnasium 环境、奖励、PPO/SAC 训练、消融
+  rl/            强化学习环境/轨迹契约；PPO/SAC训练与消融待实现
   report/        图表与报告导出
 apps/dashboard/  Streamlit 演示（曲线 / 策略 / 风险 / 回测）
 tests/           单元测试（重点：定价口径、无未来信息泄漏）
@@ -89,7 +93,7 @@ make check    # = ruff check + ruff format --check + pytest（当前 712 项离�
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
 - 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（673 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
-- 仓库为**私有**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
+- 仓库已于2026-11-26确认为**公开**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
 
 ## 开发规范
 
@@ -147,11 +151,11 @@ make check    # = ruff check + ruff format --check + pytest（当前 712 项离�
 
 **最新独立审查（2026-11-11，`b4cf0a1`）**：R73 过旧/过晚显式初始曲线拒绝已复验关闭；默认 `make check` exit 0，R69/R72/R73 专项 6 项通过。合法初始化非零预测跨一次换券的 ML/RL 目标/订单/NAV 差为 0。两份成本 manifest 均为 repo_state=clean，所列源码/数据散列匹配；2 lot 的 zero/Ridge/literal_zero 三条七年路径重跑数值差 0，执行带文案正确。
 
-**迁移前两项缺口**：R74（P2）本地 example 仍按 START 重新造券，环境用 start−lag 券，实跑 **0 成交、NAV 恒 1 亿**，现有测试仍通过；示例标签也未传共用初始曲线，应先修成实际成交链路验收。R75（P2）成本 manifest 的三文件散列不覆盖引擎/账本/定价及完整市场输入，不能作为服务器完整运行身份；新增训练包需完整源码/依赖/输入散列。两项不推翻已复验的默认 KRD 回放。收益结论仍是无稳健预测力/超额证据。
+**迁移前缺口的后续修复**：R74/R75已于C-173/C-174修复，先前“example零成交、运行血缘仅三个文件”的审查描述属于历史状态。2026-11-12服务器封装本地冒烟已跑通真实成交example；新运行包记录完整源码/数据散列、依赖版本与启动commit，隔离保存每轮产物。收益结论仍是无稳健预测力/超额证据。
 
-**服务器详细计划**：见[计划 §12.41](docs/01_project_plan.md)。顺序为修正 example/运行包 → CPU/GPU 固定回放 profile → rollout 训练采集器 → 小 PPO 单 seed 可恢复训练 → 八卡 seed/fold 并行。拟议网络约 1.1万–3.9万参数（20维输入），先测 CPU 瓶颈，不要求占满40GB或使用DDP。训练器及计划中的新入口尚未实现。本次只维护四份文档，未改业务代码/测试/正式报告，未重跑三套 acceptance、未部署或训练。审查详见[方法论 §10.40](docs/03_methodology.md)、[C-172](docs/code.md)。
+**RL 训练工程**采用第 0 折、单 seed、2 lot 和两次 PPO 更新。服务器已提供固定回放、单卡训练和更新边界恢复入口。配置与运行命令见[服务器指南 §17](docs/04_server_guide.md)。
 
-**计算资源规划（2026-11-08，尚未实现训练部署）**：MacBook Air M2 / 16GB 用 example 数据验证全 pipeline；正式 ML/RL 实验放服务器。分别支持单卡 A800 40GB 与 8×A800 40GB，8 卡优先按 seed/窗口/消融分配独立任务，CPU/内存未知时先低并发实测。当前 Ridge 只有 10 个拟合参数，RL 尚无已训练网络；拟议 64×64 / 128×128 小型 actor/critic，不因 GPU 多而增加模型容量。两端共用账本/协议，详细交付顺序见[计划 §12.20](docs/01_project_plan.md#1220-mac-本地示例--a800-正式实验的执行方案2026-11-08)。
+**历史资源方案（2026-11-08）**：此前按单卡/八卡A800 40GB、CPU未知规划；2026-11-12截图已更正为每卡80GB及64物理核。MacBook Air M2 / 16GB保留example验证，服务器负责正式实验；小型actor/critic与seed/fold独立并行原则不变。早期方案见[计划 §12.20](docs/01_project_plan.md#1220-mac-本地示例--a800-正式实验的执行方案2026-11-08)。
 
 **第十二轮独立审查（2026-11-08）**：默认 check、62 项 buyhold 和 79 项 rolling 验收实跑通过，
 一日风险 CSV 复现；79 项默认范围是 2019-01-28→2021-12-31、2 次换券。

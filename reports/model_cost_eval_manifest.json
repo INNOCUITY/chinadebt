@@ -210,6 +210,6 @@
     "pyarrow": "26.0.1",
     "pytest": "9.2.0"
   },
-  "detail_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval.csv",
-  "summary_csv": "/Users/aq/quant/china_debt/reports/model_cost_eval_summary.csv"
+  "detail_csv": "reports/model_cost_eval.csv",
+  "summary_csv": "reports/model_cost_eval_summary.csv"
 }

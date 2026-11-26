@@ -289,6 +289,8 @@ def test_parse_spike_csv_if_available() -> None:
 def test_parse_real_official_xlsx_if_available() -> None:
     path = SPIKE_DIR / "2002.xlsx"
     if not path.exists():
+        path = ROOT / "data" / "raw" / "chinabond" / "2002.xlsx"
+    if not path.exists():
         pytest.skip(f"缺少官方 xlsx：{path}")
     frame = parse_official_xlsx(path, year=2002)
     assert len(frame) > 4_000
@@ -513,8 +515,16 @@ def test_akshare_yield_empty_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         source.fetch(date(2024, 1, 1), date(2024, 2, 1))
 
 
-def test_akshare_repo_monthly_sharding(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("renamed", [False, True])
+def test_akshare_repo_monthly_sharding(monkeypatch: pytest.MonkeyPatch, renamed: bool) -> None:
     fake = FakeAkshare()
+    if renamed:
+        monkeypatch.setattr(fake, "interest_rate_repo_hist_cm", fake.repo_rate_hist, raising=False)
+
+        def removed_interface(*args, **kwargs):
+            raise AssertionError("新版不得调用已移除接口")
+
+        monkeypatch.setattr(fake, "repo_rate_hist", removed_interface)
     monkeypatch.setattr(akshare_source, "ak", fake)
     source = AkshareSource(cfg=_cfg(), throttle_s=0.0)
     frame = source.fetch_repo_rates(date(2024, 1, 15), date(2024, 3, 10))
@@ -524,6 +534,7 @@ def test_akshare_repo_monthly_sharding(monkeypatch: pytest.MonkeyPatch) -> None:
         assert (pd.Timestamp(end) - pd.Timestamp(start)).days <= 31
     assert list(frame.columns) == ["date", "FR001", "FR007", "FR014", "FDR001", "FDR007", "FDR014"]
     assert len(frame) == 3
+    assert (frame["FDR007"] == 2.0).all()  # 仍是百分数，无额外缩放
 
 
 def test_akshare_repo_all_empty_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -532,6 +543,37 @@ def test_akshare_repo_all_empty_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     source = AkshareSource(cfg=_cfg(), throttle_s=0.0)
     with pytest.raises(SourceError, match="全部返回空表"):
         source.fetch_repo_rates(date(2024, 1, 1), date(2024, 2, 1))
+
+
+def test_akshare_repo_overlap_recovers_month_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeAkshare()
+
+    def fetch(start_date, end_date):
+        if start_date == "20110101":
+            return pd.DataFrame({"date": ["2011-01-30"], "FR007": [8.5]})
+        assert (start_date, end_date) == ("20110131", "20110201")
+        return pd.DataFrame({"date": ["2011-01-31", "2011-02-01"], "FR007": [8.18, 3.3]})
+
+    monkeypatch.setattr(fake, "repo_rate_hist", fetch)
+    monkeypatch.setattr(akshare_source, "ak", fake)
+    frame = AkshareSource(cfg=_cfg(), throttle_s=0).fetch_repo_rates(
+        date(2011, 1, 1), date(2011, 2, 1)
+    )
+    assert frame.set_index("date").loc[pd.Timestamp("2011-01-31"), "FR007"] == 8.18
+    assert len(frame) == 3
+
+
+def test_akshare_repo_overlap_conflict_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeAkshare()
+
+    def fetch(start_date, end_date):
+        value = 8.18 if start_date == "20110101" else 9.99
+        return pd.DataFrame({"date": ["2011-01-31"], "FR007": [value]})
+
+    monkeypatch.setattr(fake, "repo_rate_hist", fetch)
+    monkeypatch.setattr(akshare_source, "ak", fake)
+    with pytest.raises(SourceError, match="数值冲突"):
+        AkshareSource(cfg=_cfg(), throttle_s=0).fetch_repo_rates(date(2011, 1, 1), date(2011, 2, 1))
 
 
 # ---------------------------------------------------------------------------

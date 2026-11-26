@@ -454,3 +454,22 @@ PY
 
 * 基线指纹（2026-11-06，由项目 `.venv` 写出）：`dataset.sha256 = c10137171ea2a76c…`，`version_id = 1750b99400f4d3eb`；完整值以 `data/metadata/current.json` 为准（sha256 会随 pandas/pyarrow 写入版本略有差异，内容不变）。
 * 数据变化 → sha256 变化 → 旧回测结果自动失效、可追溯（`run_id = sha256(config + data_manifest + git_sha)`）。
+
+
+### 9.1 服务器独立抓取版本（2026-11-26）
+
+服务器冻结到2026-11-05，曲线67472行、资金5453行；旧资金5454行中的2026-11-06
+不在此次截点内。共同截止内每日所有收益率/FR/FDR按小数10位哈希逐日一致；无缺失新增日期、
+无重复键。中债2026.xlsx随官网更新原始SHA改变，截止内曲线parquet SHA仍为
+`c10137171ea2a76ccb60328d01d2a5baced36a3467531ed8d4b2741ba0675f10`。
+
+AKShare 1.20.70实际接口为`interest_rate_repo_hist_cm`，兼容旧`repo_rate_hist`；
+现有loader manifest的`akshare://repo_rate_hist`仍为历史逻辑来源标识，实际接口名、
+AKShare版本和命令可查抓取日志及环境锁。分片回看一天以覆盖月末漏取，重复日期先比对全部
+FR/FDR数值，冲突报错，不使用keep-last静默吞掉。2022-12-31及2023-12-31无FDR007
+观测（旧数据同样缺失），账本使用最近已知值，不生成假观测。
+
+服务器raw_spike兼容CSV由新抓取parquet导出，派生身份/输入输出SHA写入
+`DERIVED_FIXTURE_PROVENANCE.json`，用于原有真实数据测试与离线重建；不冒称旧Phase0文件。
+服务器离线重建后的两张表逐值最大差均为0；资金parquet容器SHA不同，数值一致。
+完整快照位置及核验命令见[服务器指南](04_server_guide.md)。

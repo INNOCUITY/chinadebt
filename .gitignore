@@ -54,3 +54,9 @@ reports/long_sample_*_constraints.csv
 # ---------- 系统 ----------
 .DS_Store
 *.log
+
+# 服务器任务副本、结果包及私有数据传输包
+runs/
+exports/
+datasets/
+results_from_server/

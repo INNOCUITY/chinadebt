@@ -1,0 +1,21 @@
+{
+  "version": "ppo-net-nav-v1",
+  "fold": 0,
+  "train": ["2019-02-01", "2020-02-11"],
+  "validation": ["2020-02-20", "2020-05-20"],
+  "test": ["2020-05-29", "2020-08-26"],
+  "seed": 20261111,
+  "reserved_seeds": [20261111, 20261112, 20261113, 20261114, 20261115],
+  "primary_band_lots": 2,
+  "sensitivity_band_lots": 1,
+  "calibration_days": 20,
+  "updates": 2,
+  "episodes_per_update": 1,
+  "hidden": 64,
+  "epochs": 4,
+  "learning_rate": 0.0003,
+  "clip_ratio": 0.2,
+  "gae_lambda": 0.95,
+  "value_coef": 0.5,
+  "max_grad_norm": 0.5
+}

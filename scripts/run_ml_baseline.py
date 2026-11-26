@@ -55,7 +55,6 @@ from run_strategies import load_market  # noqa: E402
 
 from ficc.config import Config, get_config  # noqa: E402
 from ficc.logging import get_logger  # noqa: E402
-from ficc.ml.asof import FeatureSpec  # noqa: E402
 from ficc.ml.dataset import (  # noqa: E402
     ClockError,
     InformationClock,
@@ -63,6 +62,7 @@ from ficc.ml.dataset import (  # noqa: E402
     build_supervised_dataset,
     dataset_manifest,
 )
+from ficc.ml.market_features import FUNDING_COLUMN, feature_specs  # noqa: E402
 from ficc.ml.walkforward import (  # noqa: E402
     Split,
     WalkForwardSpec,
@@ -75,7 +75,6 @@ log = get_logger("ml_baseline")
 START = date(2019, 2, 1)
 END = date(2025, 12, 31)
 QUICK_END = date(2021, 12, 31)
-FUNDING_COLUMN = "FDR007"
 TREE_DEPTHS = (1, 2, 3)
 ALPHA_GRID: tuple[float, ...] = (0.01, 0.1, 1.0, 10.0, 100.0)
 MIN_TRAIN_ROWS = 30
@@ -86,53 +85,6 @@ MIN_TEST_ROWS = 3
 # ---------------------------------------------------------------------------
 # 特征（所有 transform 只能看到 available_through 及之前）
 # ---------------------------------------------------------------------------
-def feature_specs() -> list[FeatureSpec]:
-    """监督学习特征：水平/斜率/曲率、2s10s、carry、动量、EWMA 波动、资金面。"""
-    return [
-        FeatureSpec(name="level_5y", transform=lambda f: f["5.0"], inputs=("5.0",)),
-        FeatureSpec(
-            name="slope_2s10s",
-            transform=lambda f: f["10.0"] - f["2.0"],
-            inputs=("2.0", "10.0"),
-        ),
-        FeatureSpec(
-            name="curvature_2_5_10",
-            transform=lambda f: 2.0 * f["5.0"] - f["2.0"] - f["10.0"],
-            inputs=("2.0", "5.0", "10.0"),
-        ),
-        FeatureSpec(
-            name="carry_proxy_5y",
-            transform=lambda f: f["5.0"] - f[FUNDING_COLUMN],
-            inputs=("5.0", FUNDING_COLUMN),
-        ),
-        FeatureSpec(
-            name="mom_20_5y",
-            transform=lambda f: f["5.0"] - f["5.0"].shift(20),
-            inputs=("5.0",),
-        ),
-        FeatureSpec(
-            name="mom_60_5y",
-            transform=lambda f: f["5.0"] - f["5.0"].shift(60),
-            inputs=("5.0",),
-        ),
-        FeatureSpec(
-            name="ewma_vol_20_5y",
-            transform=lambda f: f["5.0"].diff().ewm(span=20, adjust=False).std(),
-            inputs=("5.0",),
-        ),
-        FeatureSpec(
-            name="fdr007_level",
-            transform=lambda f: f[FUNDING_COLUMN],
-            inputs=(FUNDING_COLUMN,),
-        ),
-        FeatureSpec(
-            name="fdr007_change_5",
-            transform=lambda f: f[FUNDING_COLUMN] - f[FUNDING_COLUMN].shift(5),
-            inputs=(FUNDING_COLUMN,),
-        ),
-    ]
-
-
 # ---------------------------------------------------------------------------
 # 决策日与 walk-forward（purge/embargo 由标签时钟决定）
 # ---------------------------------------------------------------------------

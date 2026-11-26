@@ -267,6 +267,13 @@ class AkshareSource(DataSource):
             所有分片均为空、或返回列不符合预期。
         """
         ak_module = _require_akshare("AkshareSource.fetch_repo_rates")
+        # AKShare 1.20.45 起更名；新接口仍返回 date/FR/FDR 百分数列。
+        fetch_repo = getattr(ak_module, "interest_rate_repo_hist_cm", None)
+        interface_name = "interest_rate_repo_hist_cm"
+        if fetch_repo is None:
+            fetch_repo = ak_module.repo_rate_hist
+            interface_name = "repo_rate_hist"
+        log.info("AKShare 资金面实际调用接口：%s", interface_name)
         start = start or date(2005, 1, 1)
         end = end or date.today()
         if start > end:
@@ -275,9 +282,12 @@ class AkshareSource(DataSource):
         empty_chunks: list[str] = []
         for chunk_start, chunk_end in _month_chunks(start, end):
             self._throttle()
+            # 接口在个别月末会漏末日（实测 2011-01-31）；下一片回看一天补覆盖。
+            # 查询跨度仍 <=31 天，且不请求 end 之后的数据。
+            query_start = max(start, chunk_start - timedelta(days=1))
             try:
-                raw = ak_module.repo_rate_hist(
-                    start_date=chunk_start.strftime("%Y%m%d"),
+                raw = fetch_repo(
+                    start_date=query_start.strftime("%Y%m%d"),
                     end_date=chunk_end.strftime("%Y%m%d"),
                 )
             except Exception as exc:
@@ -301,6 +311,12 @@ class AkshareSource(DataSource):
             if column not in merged.columns:
                 merged[column] = float("nan")
             merged[column] = pd.to_numeric(merged[column], errors="coerce")
+        duplicated = merged.loc[merged.duplicated("date", keep=False)]
+        if not duplicated.empty:
+            conflicts = duplicated.groupby("date")[list(REPO_COLUMNS[1:])].nunique(dropna=False)
+            if (conflicts > 1).any().any():
+                raise SourceError("资金面重叠分片同日数值冲突，拒绝静默覆盖")
+        merged = merged.loc[(merged["date"].dt.date >= start) & (merged["date"].dt.date <= end)]
         merged = (
             merged.drop_duplicates(subset=["date"], keep="last")
             .sort_values("date")

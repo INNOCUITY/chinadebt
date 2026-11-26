@@ -1,0 +1,15 @@
+{
+  "source_commit": "6e9fbc63c6c36a03b5b7e17674b2b938c34666e1",
+  "source_repo_state": "dirty",
+  "source_tree_sha256": "eefe4c8f9808eb1111dda9abb6a809db4485fda9dcaff951d58c9bdb5a1cce52",
+  "data_tree_sha256_before": "191c78bb2b3dfb78d19890965eaba3e0125227fe5dcb62c06b74122f1f493139",
+  "run": "20261126-165427-check-3d21aaeb",
+  "python": "3.11.18",
+  "freeze_sha256": "bff6883a6933bb763d665ed60f78317164e71f8c52ed787c363bb286ba1c89b4",
+  "snapshot": "frozen-20261126",
+  "data_end": "2026-11-05",
+  "data_tree_sha256_after": "191c78bb2b3dfb78d19890965eaba3e0125227fe5dcb62c06b74122f1f493139",
+  "local_source_differences_from_run": [
+    "README.md"
+  ]
+}

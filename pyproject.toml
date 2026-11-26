@@ -25,6 +25,7 @@ dependencies = [
     "matplotlib>=3.8,<4",
     "requests>=2.31",
     "openpyxl>=3.1",
+    "tabulate>=0.9",  # pandas.to_markdown：研究结论报告的运行依赖
 ]
 
 [project.optional-dependencies]

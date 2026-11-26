@@ -272,8 +272,8 @@ def main(argv: list[str] | None = None) -> int:
         "dependency_sha256": dependency_sha256,
         "python": platform.python_version(),
         "packages": packages,
-        "detail_csv": str(detail_path),
-        "summary_csv": str(summary_path),
+        "detail_csv": detail_path.name,
+        "summary_csv": summary_path.name,
     }
     manifest_path = out / f"model_cost_eval_manifest{suffix}.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
