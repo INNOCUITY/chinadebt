@@ -50,6 +50,9 @@ CRITIC_SPEC = ROOT / "config/experiments/ppo_critic_init.json"
 CRITIC_BUDGET = ROOT / "config/experiments/ppo_critic_budget.json"
 
 
+INVESTED_SPEC = ROOT / "config/experiments/ppo_invested_start.json"
+
+
 def training_spec(
     fold=None,
     seed=None,
@@ -60,6 +63,7 @@ def training_spec(
     grid_active=False,
     zero_critic=False,
     critic_budget=False,
+    invested_start=False,
 ):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
@@ -109,6 +113,10 @@ def training_spec(
             updates=max(json.loads(CRITIC_BUDGET.read_text())["checkpoints"]),
             budget_sha256=hashlib.sha256(CRITIC_BUDGET.read_bytes()).hexdigest(),
         )
+    if invested_start:
+        if not critic_budget:
+            raise ValueError("invested pilot requires the frozen critic budget")
+        spec["opening_sha256"] = hashlib.sha256(INVESTED_SPEC.read_bytes()).hexdigest()
     return spec
 
 
@@ -173,6 +181,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--grid-active", action="store_true")
+    parser.add_argument("--invested-start", action="store_true")
     parser.add_argument("--critic-budget", action="store_true")
     parser.add_argument("--zero-critic", action="store_true")
     parser.add_argument("--action-grid", action="store_true")
@@ -198,6 +207,7 @@ def main(argv=None):
         grid_active=args.grid_active,
         zero_critic=args.zero_critic,
         critic_budget=args.critic_budget,
+        invested_start=args.invested_start,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
@@ -288,9 +298,12 @@ def main(argv=None):
     boundary = args.checkpoint
     profile = args.mode == "profile"
 
+    warmup_start = anchor if args.invested_start else None
     reference = None
     if spec.get("active_reward"):
-        reference = collect(env, encoder, lambda _: Draw(0, 0, 0, 0), start, end)
+        reference = collect(
+            env, encoder, lambda _: Draw(0, 0, 0, 0), start, end, warmup_start=warmup_start
+        )
 
     def run_episode():
         model.eval()
@@ -304,7 +317,7 @@ def main(argv=None):
         def draw(obs):
             return model.draw(obs, fixed_latent=next(fixed) if profile else None)
 
-        episode = collect(env, encoder, draw, start, end)
+        episode = collect(env, encoder, draw, start, end, warmup_start=warmup_start)
         if "reward_scale" in spec:
             apply_training_reward(episode, reference, spec["reward_scale"])
         return episode

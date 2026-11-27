@@ -105,7 +105,15 @@ class Episode:
         return [row for row in self.decisions if row["actor_sample"]]
 
 
-def collect(env: RebalanceEnv, encoder: Encoder, draw: Callable, start: date, end: date) -> Episode:
+def collect(
+    env: RebalanceEnv,
+    encoder: Encoder,
+    draw: Callable,
+    start: date,
+    end: date,
+    *,
+    warmup_start: date | None = None,
+) -> Episode:
     """采样时保持模型冻结。最后估值日不给出无法执行的动作。"""
     decisions = {}
     inference = 0.0
@@ -114,6 +122,8 @@ def collect(env: RebalanceEnv, encoder: Encoder, draw: Callable, start: date, en
 
     def policy(ctx):
         nonlocal previous, inference
+        if ctx.as_of < start:
+            return prediction_to_target(0.0, ctx.benchmark, as_of=ctx.as_of)
         if ctx.as_of == end:
             return None
         obs = encoder.encode(ctx, previous)
@@ -133,15 +143,28 @@ def collect(env: RebalanceEnv, encoder: Encoder, draw: Callable, start: date, en
         )
         return target
 
-    rollout = env.rollout(policy, start, end, name="ppo")
+    if warmup_start is not None and warmup_start >= start:
+        raise ValueError("pre-investment must begin before training")
+    rollout = env.rollout(policy, warmup_start or start, end, name="ppo")
+    if warmup_start and (
+        start not in decisions
+        or not any(
+            p > 0
+            for key, p in zip(encoder.names, decisions[start]["obs"], strict=True)
+            if key.startswith("face_")
+        )
+    ):
+        raise ValueError("first training decision must inherit an invested portfolio")
     signals = rollout.result.signals.set_index("date")
-    initial = float(rollout.result.nav.iloc[0])
+    initial = float(rollout.result.nav.loc[start])
     terminal = rollout.terminal
     ledger = []
     prior = start
     active = None
     prefix_reward = 0.0
     for rec in rollout.records:
+        if rec.date <= start:
+            continue
         if prior in decisions:
             row = decisions[prior]
             # 当日风控可能替代已提出的动作。保留提议审计，但不训练该动作。

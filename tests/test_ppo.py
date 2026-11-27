@@ -263,3 +263,38 @@ def test_critic_initialization_keeps_first_grid_rollout_paired(tmp_path, monkeyp
         assert zero.pop("value") == 0
         ordinary.pop("value")
         assert ordinary == zero
+
+
+def test_invested_opening_excludes_warmup_rewards_and_actions(market):
+    from ficc.rl.collector import apply_training_reward
+
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(date(2019, 2, 1), date(2019, 4, 1))
+    enc = Encoder.fit(panel, funding, days[0], days[19], cfg.portfolio.universe)
+
+    def episode(z):
+        return collect(
+            RebalanceEnv(panel, calendar, funding, cfg, decision_step_days=5),
+            enc,
+            lambda _: Draw(0, z, 0, 0),
+            days[20],
+            days[31],
+            warmup_start=days[0],
+        )
+
+    policy, reference = episode(-1.0), episode(0.0)
+    assert (
+        policy.initial_nav == reference.initial_nav
+        and policy.initial_nav == policy.ledger[0]["nav_before"]
+    )
+    assert [r["date"] for r in policy.samples] == list(days[20:31:5])
+    assert [r["date"] for r in policy.ledger] == list(days[21:32])
+    assert (
+        sum(
+            v
+            for k, v in zip(enc.names, policy.samples[0]["obs"], strict=True)
+            if k.startswith("face_")
+        )
+        > 0
+    )
+    assert abs(apply_training_reward(policy, reference, 1)) < 1e-5

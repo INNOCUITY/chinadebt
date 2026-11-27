@@ -1,0 +1,6 @@
+{
+  "version": "categorical-invested-opening-v1",
+  "change": "Replay zero tilt from the registered calendar anchor up to the original first training decision. Both actor and reference start the learning interval invested. Keep original fold dates, updates, rewards and validation ledger.",
+  "control": "archived cash-start update 16",
+  "screen": "Original six plateaus and gates against frozen update 2 and continuous PPO, plus the same paired gain screen against cash-start update 16. Training replays use matching invested openings."
+}

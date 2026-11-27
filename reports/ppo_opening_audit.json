@@ -1,0 +1,119 @@
+[
+  {
+    "fold": 0,
+    "results": [
+      {
+        "seed": 20261111,
+        "cash": {
+          "first_decision": "2019-03-06",
+          "opening_face": 0,
+          "net_excess_bp": -76.65319247424304,
+          "trades_after_open": 4,
+          "ledger_error_yuan": 1.4901161193847656e-08
+        },
+        "invested": {
+          "first_decision": "2019-03-06",
+          "opening_face": 100000000.0,
+          "net_excess_bp": 0.0,
+          "trades_after_open": 4,
+          "ledger_error_yuan": 1.4901161193847656e-08
+        }
+      },
+      {
+        "seed": 20261112,
+        "cash": {
+          "first_decision": "2019-03-06",
+          "opening_face": 0,
+          "net_excess_bp": -65.61386034284234,
+          "trades_after_open": 4,
+          "ledger_error_yuan": 1.4901161193847656e-08
+        },
+        "invested": {
+          "first_decision": "2019-03-06",
+          "opening_face": 100000000.0,
+          "net_excess_bp": -61.91869850814817,
+          "trades_after_open": 8,
+          "ledger_error_yuan": 1.4901161193847656e-08
+        }
+      }
+    ]
+  },
+  {
+    "fold": 10,
+    "results": [
+      {
+        "seed": 20261111,
+        "cash": {
+          "first_decision": "2021-09-10",
+          "opening_face": 0,
+          "net_excess_bp": 13.410074191209675,
+          "trades_after_open": 8,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        },
+        "invested": {
+          "first_decision": "2021-09-10",
+          "opening_face": 100000000.0,
+          "net_excess_bp": 39.52389066548763,
+          "trades_after_open": 6,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        }
+      },
+      {
+        "seed": 20261112,
+        "cash": {
+          "first_decision": "2021-09-10",
+          "opening_face": 0,
+          "net_excess_bp": -501.5936997273952,
+          "trades_after_open": 0,
+          "ledger_error_yuan": 0.0
+        },
+        "invested": {
+          "first_decision": "2021-09-10",
+          "opening_face": 100000000.0,
+          "net_excess_bp": 0.20533688950806397,
+          "trades_after_open": 2,
+          "ledger_error_yuan": 1.4901161193847656e-08
+        }
+      }
+    ]
+  },
+  {
+    "fold": 21,
+    "results": [
+      {
+        "seed": 20261111,
+        "cash": {
+          "first_decision": "2024-06-24",
+          "opening_face": 0,
+          "net_excess_bp": -92.71518713971376,
+          "trades_after_open": 30,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        },
+        "invested": {
+          "first_decision": "2024-06-24",
+          "opening_face": 100000000.0,
+          "net_excess_bp": 28.89953972435505,
+          "trades_after_open": 26,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        }
+      },
+      {
+        "seed": 20261112,
+        "cash": {
+          "first_decision": "2024-06-24",
+          "opening_face": 0,
+          "net_excess_bp": 72.62885420587361,
+          "trades_after_open": 4,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        },
+        "invested": {
+          "first_decision": "2024-06-24",
+          "opening_face": 100000000.0,
+          "net_excess_bp": 37.02000483289843,
+          "trades_after_open": 7,
+          "ledger_error_yuan": 2.9802322387695312e-08
+        }
+      }
+    ]
+  }
+]
