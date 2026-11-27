@@ -3,6 +3,7 @@
 import importlib
 import json
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -289,7 +290,28 @@ def test_action_value_fit_and_sequential_holdout(ev, tmp_path, monkeypatch):
     assert ref["comparisons"]["zero"]["net_difference_bp"] == pytest.approx(
         result["rows"][0]["selector"]["net_bp"]
     )
+    import audit_action_switches as switches
+
+    monkeypatch.setattr(switches, "DESIGN", path)
+    switches.run(out, tmp_path / "switches", 0, 2)
+    result = json.loads((tmp_path / "switches/fold-0/band-2/switches-0.json").read_text())
+    schedule = [0, *[r["selected_index"] for r in ref["decisions"]]]
+    assert (
+        result["total_switches"]
+        == len(result["rows"])
+        == sum(a != b for a, b in pairwise(schedule))
+    )
+    assert all(np.isfinite(r["selected_minus_hold_bp"]) for r in result["rows"])
     labels[0]["features"][0] += 50
     (tmp_path / "fold-0/fit_labels.json").write_text(json.dumps(labels))
     with pytest.raises(ValueError, match="identity"):
         audit.join(out, tmp_path, 0, 2)
+
+
+def test_confirmation_uses_only_current_and_previous_suggestions(ev):
+    from probe_action_confirmation import confirmed_targets
+
+    original = [3, 0, 3, 3, 0, 1, 1, 2, 2]
+    expected = [0, 0, 0, 3, 3, 3, 1, 1, 2]
+    assert list(confirmed_targets(original, 0)) == expected
+    assert list(confirmed_targets(original[:4], 0)) == expected[:4]

@@ -1,0 +1,928 @@
+[
+  {
+    "fold": 0,
+    "band": 2,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2019-10-12",
+        "horizon": "2019-10-18",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -2.813416764174316,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12413.692380416232
+      },
+      {
+        "signal": "2019-10-18",
+        "horizon": "2019-10-25",
+        "selected_index": 0,
+        "selected_minus_hold_bp": 0.039919181425794335,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6135.62500350929
+      },
+      {
+        "signal": "2019-10-25",
+        "horizon": "2019-11-01",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.5386598977807724,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12130.110858261798
+      },
+      {
+        "signal": "2019-11-01",
+        "horizon": "2019-11-08",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.4774460755813914,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6319.7203533891825
+      },
+      {
+        "signal": "2019-11-22",
+        "horizon": "2019-11-29",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.9286655539190501,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12300.917070178042
+      },
+      {
+        "signal": "2019-11-29",
+        "horizon": "2019-12-06",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.520536370062971,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6642.699657123667
+      },
+      {
+        "signal": "2019-12-06",
+        "horizon": "2019-12-13",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.343584128036267,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12062.946124041615
+      },
+      {
+        "signal": "2019-12-13",
+        "horizon": "2019-12-20",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.2468652447531667,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6376.46376569059
+      },
+      {
+        "signal": "2019-12-20",
+        "horizon": "2019-12-27",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.7498901057060494,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 9166.778934900876
+      },
+      {
+        "signal": "2019-12-27",
+        "horizon": "2020-01-06",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -0.7534602764576709,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 2307.9775331161686
+      },
+      {
+        "signal": "2020-01-06",
+        "horizon": "2020-01-13",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.866743923646461,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 10019.470641202379
+      },
+      {
+        "signal": "2020-01-13",
+        "horizon": "2020-01-19",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -1.9799003751240496,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 3568.6462166634965
+      }
+    ],
+    "confirmation": {
+      "fold": 0,
+      "band": 2,
+      "controls": {
+        "zero": {
+          "days": 80,
+          "different_faces_days": 30,
+          "trades": 51,
+          "reference_trades": 3,
+          "cost_difference_yuan": 129859.38379685947,
+          "net_difference_bp": -8.494440083990485
+        },
+        "label_fixed": {
+          "days": 80,
+          "different_faces_days": 30,
+          "trades": 51,
+          "reference_trades": 3,
+          "cost_difference_yuan": 129859.38379685947,
+          "net_difference_bp": -8.494440083990485
+        },
+        "continuous_fixed": {
+          "days": 80,
+          "different_faces_days": 60,
+          "trades": 51,
+          "reference_trades": 10,
+          "cost_difference_yuan": 32892.56993396352,
+          "net_difference_bp": -43.29340319676031
+        }
+      },
+      "vs_zero": {
+        "days": 80,
+        "different_faces_days": 0,
+        "trades": 3,
+        "reference_trades": 3,
+        "cost_difference_yuan": 0.0,
+        "net_difference_bp": 0.0
+      },
+      "raw_indices": [
+        3,
+        0,
+        3,
+        0,
+        0,
+        0,
+        3,
+        0,
+        3,
+        0,
+        3,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "confirmed_indices": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "gain_vs_ridge_bp": 8.494440083990485,
+      "gain_vs_label_fixed_bp": 0.0,
+      "gain_vs_continuous_fixed_bp": -34.798963112769826
+    }
+  },
+  {
+    "fold": 0,
+    "band": 1,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2019-10-12",
+        "horizon": "2019-10-18",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -2.813416764174316,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12413.692380416232
+      },
+      {
+        "signal": "2019-10-18",
+        "horizon": "2019-10-25",
+        "selected_index": 0,
+        "selected_minus_hold_bp": 0.039919181425794335,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6135.62500350929
+      },
+      {
+        "signal": "2019-10-25",
+        "horizon": "2019-11-01",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.5386598977807724,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12130.110858261798
+      },
+      {
+        "signal": "2019-11-01",
+        "horizon": "2019-11-08",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.4774460755813914,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6319.7203533891825
+      },
+      {
+        "signal": "2019-11-22",
+        "horizon": "2019-11-29",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.9286655539190501,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12300.917070178042
+      },
+      {
+        "signal": "2019-11-29",
+        "horizon": "2019-12-06",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.520536370062971,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6642.699657123667
+      },
+      {
+        "signal": "2019-12-06",
+        "horizon": "2019-12-13",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.343584128036267,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 12062.946124041615
+      },
+      {
+        "signal": "2019-12-13",
+        "horizon": "2019-12-20",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.2468652447531667,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 6376.46376569059
+      },
+      {
+        "signal": "2019-12-20",
+        "horizon": "2019-12-27",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.7498901057060494,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 9166.778934900876
+      },
+      {
+        "signal": "2019-12-27",
+        "horizon": "2020-01-06",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -0.7534602764576709,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 2307.9775331161686
+      },
+      {
+        "signal": "2020-01-06",
+        "horizon": "2020-01-13",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.866743923646461,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 10019.470641202379
+      },
+      {
+        "signal": "2020-01-13",
+        "horizon": "2020-01-19",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -1.9799003751240496,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 3568.6462166634965
+      }
+    ],
+    "confirmation": {
+      "fold": 0,
+      "band": 1,
+      "controls": {
+        "zero": {
+          "days": 80,
+          "different_faces_days": 30,
+          "trades": 51,
+          "reference_trades": 5,
+          "cost_difference_yuan": 124280.4967661589,
+          "net_difference_bp": -8.167412580793576
+        },
+        "label_fixed": {
+          "days": 80,
+          "different_faces_days": 30,
+          "trades": 51,
+          "reference_trades": 5,
+          "cost_difference_yuan": 124280.4967661589,
+          "net_difference_bp": -8.167412580793576
+        },
+        "continuous_fixed": {
+          "days": 80,
+          "different_faces_days": 50,
+          "trades": 51,
+          "reference_trades": 24,
+          "cost_difference_yuan": 18267.75898739286,
+          "net_difference_bp": -33.9456138656912
+        }
+      },
+      "vs_zero": {
+        "days": 80,
+        "different_faces_days": 0,
+        "trades": 5,
+        "reference_trades": 5,
+        "cost_difference_yuan": 0.0,
+        "net_difference_bp": 0.0
+      },
+      "raw_indices": [
+        3,
+        0,
+        3,
+        0,
+        0,
+        0,
+        3,
+        0,
+        3,
+        0,
+        3,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "confirmed_indices": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "gain_vs_ridge_bp": 8.167412580793576,
+      "gain_vs_label_fixed_bp": 0.0,
+      "gain_vs_continuous_fixed_bp": -25.778201284897627
+    }
+  },
+  {
+    "fold": 10,
+    "band": 2,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2022-04-21",
+        "horizon": "2022-04-27",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.0,
+        "selected_trades": 0,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 0.0
+      }
+    ],
+    "confirmation": {
+      "fold": 10,
+      "band": 2,
+      "controls": {
+        "zero": {
+          "days": 80,
+          "different_faces_days": 70,
+          "trades": 3,
+          "reference_trades": 0,
+          "cost_difference_yuan": 703.0520764009323,
+          "net_difference_bp": 1.9735356303600504
+        },
+        "label_fixed": {
+          "days": 80,
+          "different_faces_days": 70,
+          "trades": 3,
+          "reference_trades": 0,
+          "cost_difference_yuan": 703.0520764009323,
+          "net_difference_bp": 1.9735356303600504
+        },
+        "continuous_fixed": {
+          "days": 80,
+          "different_faces_days": 0,
+          "trades": 3,
+          "reference_trades": 3,
+          "cost_difference_yuan": 0.0,
+          "net_difference_bp": 0.0
+        }
+      },
+      "vs_zero": {
+        "days": 80,
+        "different_faces_days": 70,
+        "trades": 3,
+        "reference_trades": 0,
+        "cost_difference_yuan": 703.0520764009323,
+        "net_difference_bp": 1.9735356303600504
+      },
+      "raw_indices": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "confirmed_indices": [
+        0,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "gain_vs_ridge_bp": 0.0,
+      "gain_vs_label_fixed_bp": 1.9735356303600504,
+      "gain_vs_continuous_fixed_bp": 0.0
+    }
+  },
+  {
+    "fold": 10,
+    "band": 1,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2022-04-21",
+        "horizon": "2022-04-27",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.1402209041960532,
+        "selected_trades": 3,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 3416.3279483444617
+      }
+    ],
+    "confirmation": {
+      "fold": 10,
+      "band": 1,
+      "controls": {
+        "zero": {
+          "days": 80,
+          "different_faces_days": 80,
+          "trades": 13,
+          "reference_trades": 9,
+          "cost_difference_yuan": 3933.8958038083238,
+          "net_difference_bp": 6.4599606277244765
+        },
+        "label_fixed": {
+          "days": 80,
+          "different_faces_days": 80,
+          "trades": 13,
+          "reference_trades": 0,
+          "cost_difference_yuan": 5646.149453635516,
+          "net_difference_bp": 6.446542913979957
+        },
+        "continuous_fixed": {
+          "days": 80,
+          "different_faces_days": 0,
+          "trades": 13,
+          "reference_trades": 13,
+          "cost_difference_yuan": 0.0,
+          "net_difference_bp": 0.0
+        }
+      },
+      "vs_zero": {
+        "days": 80,
+        "different_faces_days": 75,
+        "trades": 14,
+        "reference_trades": 9,
+        "cost_difference_yuan": 4158.8888668605105,
+        "net_difference_bp": 6.660068283429771
+      },
+      "raw_indices": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "confirmed_indices": [
+        0,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "gain_vs_ridge_bp": 0.20010765570529454,
+      "gain_vs_label_fixed_bp": 6.646650569685251,
+      "gain_vs_continuous_fixed_bp": 0.20010765570529454
+    }
+  },
+  {
+    "fold": 21,
+    "band": 2,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2025-01-26",
+        "horizon": "2025-02-08",
+        "selected_index": 2,
+        "selected_minus_hold_bp": -3.4775338735022814,
+        "selected_trades": 3,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 11167.04973034114
+      },
+      {
+        "signal": "2025-02-08",
+        "horizon": "2025-02-14",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -1.9706482737031097,
+        "selected_trades": 3,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 11224.74579827967
+      },
+      {
+        "signal": "2025-02-14",
+        "horizon": "2025-02-21",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 2.468646153282299,
+        "selected_trades": 6,
+        "hold_trades": 2,
+        "incremental_cost_yuan": 7754.530469608279
+      },
+      {
+        "signal": "2025-03-07",
+        "horizon": "2025-03-14",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.234480704228385,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 7661.162277786347
+      },
+      {
+        "signal": "2025-03-14",
+        "horizon": "2025-03-21",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.937168718157874,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 10870.718037165178
+      },
+      {
+        "signal": "2025-03-21",
+        "horizon": "2025-03-28",
+        "selected_index": 2,
+        "selected_minus_hold_bp": -6.14481940321975,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 21350.328493832712
+      },
+      {
+        "signal": "2025-04-07",
+        "horizon": "2025-04-14",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.16269688663569654,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18777.734137239822
+      },
+      {
+        "signal": "2025-04-21",
+        "horizon": "2025-04-27",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 0.22637555219577768,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18651.407946732368
+      },
+      {
+        "signal": "2025-04-27",
+        "horizon": "2025-05-07",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.231609210992896,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18739.048897810455
+      },
+      {
+        "signal": "2025-05-07",
+        "horizon": "2025-05-14",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 3.1717571684884907,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 15406.72480689769
+      },
+      {
+        "signal": "2025-05-14",
+        "horizon": "2025-05-21",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.8713334080524417,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18648.08429558534
+      }
+    ],
+    "confirmation": {
+      "fold": 21,
+      "band": 2,
+      "controls": {
+        "zero": {
+          "days": 75,
+          "different_faces_days": 65,
+          "trades": 45,
+          "reference_trades": 2,
+          "cost_difference_yuan": 160494.27822204583,
+          "net_difference_bp": -8.883428640415488
+        },
+        "label_fixed": {
+          "days": 75,
+          "different_faces_days": 65,
+          "trades": 45,
+          "reference_trades": 2,
+          "cost_difference_yuan": 160494.27822204583,
+          "net_difference_bp": -8.883428640415488
+        },
+        "continuous_fixed": {
+          "days": 75,
+          "different_faces_days": 75,
+          "trades": 45,
+          "reference_trades": 7,
+          "cost_difference_yuan": 152019.18054257717,
+          "net_difference_bp": -7.3454629330199035
+        }
+      },
+      "vs_zero": {
+        "days": 75,
+        "different_faces_days": 60,
+        "trades": 10,
+        "reference_trades": 2,
+        "cost_difference_yuan": 22941.850109584084,
+        "net_difference_bp": -7.586406951237996
+      },
+      "raw_indices": [
+        2,
+        0,
+        2,
+        2,
+        2,
+        0,
+        3,
+        2,
+        2,
+        3,
+        3,
+        2,
+        3,
+        2,
+        3
+      ],
+      "confirmed_indices": [
+        0,
+        0,
+        0,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "gain_vs_ridge_bp": 1.297021689177492,
+      "gain_vs_label_fixed_bp": -7.586406951237996,
+      "gain_vs_continuous_fixed_bp": -6.0484412438424116
+    }
+  },
+  {
+    "fold": 21,
+    "band": 1,
+    "comparison_to_one_time_hold": [
+      {
+        "signal": "2025-01-26",
+        "horizon": "2025-02-08",
+        "selected_index": 2,
+        "selected_minus_hold_bp": -3.597061028455639,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 11393.680713797665
+      },
+      {
+        "signal": "2025-02-08",
+        "horizon": "2025-02-14",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -2.127318743996017,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 11451.05795762571
+      },
+      {
+        "signal": "2025-02-14",
+        "horizon": "2025-02-21",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 2.468073921682007,
+        "selected_trades": 6,
+        "hold_trades": 2,
+        "incremental_cost_yuan": 7754.530469608279
+      },
+      {
+        "signal": "2025-03-07",
+        "horizon": "2025-03-14",
+        "selected_index": 0,
+        "selected_minus_hold_bp": -3.3666462046662176,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 11132.835587566064
+      },
+      {
+        "signal": "2025-03-14",
+        "horizon": "2025-03-21",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.9359993863372784,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 10870.718037165178
+      },
+      {
+        "signal": "2025-03-21",
+        "horizon": "2025-03-28",
+        "selected_index": 2,
+        "selected_minus_hold_bp": -6.142370577727146,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 21350.328493832712
+      },
+      {
+        "signal": "2025-04-07",
+        "horizon": "2025-04-14",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 0.29487323271716354,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 15391.62219334963
+      },
+      {
+        "signal": "2025-04-21",
+        "horizon": "2025-04-27",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 0.22622530071278688,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18651.407946732368
+      },
+      {
+        "signal": "2025-04-27",
+        "horizon": "2025-05-07",
+        "selected_index": 3,
+        "selected_minus_hold_bp": 2.2301285952226526,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18739.048897810455
+      },
+      {
+        "signal": "2025-05-07",
+        "horizon": "2025-05-14",
+        "selected_index": 2,
+        "selected_minus_hold_bp": 3.169658927768077,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 15406.72480689769
+      },
+      {
+        "signal": "2025-05-14",
+        "horizon": "2025-05-21",
+        "selected_index": 3,
+        "selected_minus_hold_bp": -0.8707563385278767,
+        "selected_trades": 4,
+        "hold_trades": 0,
+        "incremental_cost_yuan": 18648.08429558534
+      }
+    ],
+    "confirmation": {
+      "fold": 21,
+      "band": 1,
+      "controls": {
+        "zero": {
+          "days": 75,
+          "different_faces_days": 65,
+          "trades": 52,
+          "reference_trades": 6,
+          "cost_difference_yuan": 167752.33942352014,
+          "net_difference_bp": -4.508713169209797
+        },
+        "label_fixed": {
+          "days": 75,
+          "different_faces_days": 65,
+          "trades": 52,
+          "reference_trades": 6,
+          "cost_difference_yuan": 167752.33942352014,
+          "net_difference_bp": -4.508713169209797
+        },
+        "continuous_fixed": {
+          "days": 75,
+          "different_faces_days": 50,
+          "trades": 52,
+          "reference_trades": 27,
+          "cost_difference_yuan": 132898.09312100123,
+          "net_difference_bp": -0.2781255753208192
+        }
+      },
+      "vs_zero": {
+        "days": 75,
+        "different_faces_days": 60,
+        "trades": 31,
+        "reference_trades": 6,
+        "cost_difference_yuan": 49624.581019797784,
+        "net_difference_bp": -9.67392661400818
+      },
+      "raw_indices": [
+        2,
+        0,
+        2,
+        2,
+        2,
+        0,
+        3,
+        2,
+        2,
+        3,
+        3,
+        2,
+        3,
+        2,
+        3
+      ],
+      "confirmed_indices": [
+        0,
+        0,
+        0,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "gain_vs_ridge_bp": -5.165213444798383,
+      "gain_vs_label_fixed_bp": -9.67392661400818,
+      "gain_vs_continuous_fixed_bp": -5.443339020119202
+    }
+  }
+]
