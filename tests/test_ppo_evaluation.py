@@ -107,3 +107,25 @@ def test_budget_pilot_fixed_pairs_and_reference(ev):
     verify_reference(ref, fold, seed, row, spec)
     with pytest.raises(ValueError, match="reproduce"):
         verify_reference(ref, fold, seed, dict(row, trades=3), spec)
+
+
+def test_execution_trace_hold_and_date_alignment(ev):
+    from audit_ppo_execution import compare, decision_ledger
+
+    end = date(2019, 3, 8)
+    market = ev.Market(end)
+    start = date(2019, 2, 1)
+    rows = {}
+
+    def trace(rollout, proposals, book):
+        rows.update(decision_ledger(rollout, proposals, book, start))
+
+    book, _ = ev.replay(market, start, end, 2, lambda ctx, prev: None, audit=trace)
+    paired = compare(rows, rows)
+    assert paired["pnl_vs_zero_yuan"] == 0
+    assert paired["same_faces_days"] == len(book) - 1
+    assert paired["decision_count"] == int(book.decision.sum()) > 0
+    assert all(r["target_krd"] is None for r in rows.values() if r["decision"])
+    assert sum(r["net_pnl_yuan"] for r in rows.values()) == pytest.approx(
+        book.net_nav.iloc[-1] - book.net_nav.iloc[0]
+    )

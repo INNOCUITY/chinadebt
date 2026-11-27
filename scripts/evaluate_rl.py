@@ -60,17 +60,14 @@ def load_actor(path, spec, update, market, cfg):
         or np.any(encoder.scale <= 0)
     ):
         raise ValueError("checkpoint 观测或归一化状态无效")
-    model = ActorCritic(len(encoder.names), spec["hidden"])
+    model = ActorCritic(len(encoder.names), spec["hidden"], actions=spec.get("actions"))
     model.load_state_dict(saved["model"])
     model.eval()
 
     @torch.inference_mode()
     def act(ctx, previous):
         obs = torch.tensor(encoder.encode(ctx, previous), dtype=torch.float32)
-        value = model.actor(obs).tanh().item()
-        if not np.isfinite(value):
-            raise ValueError("非有限策略动作")
-        return value
+        return model.deterministic(obs)
 
     return act
 
@@ -125,7 +122,7 @@ def daily_book(rollout, cfg):
     return daily, max(errors)
 
 
-def replay(market, anchor, end, band, action):
+def replay(market, anchor, end, band, action, *, audit=None):
     cfg = market.cfg
     cfg = cfg.model_copy(
         update={"constraints": cfg.constraints.model_copy(update={"rebalance_band_lots": band})}
@@ -145,12 +142,19 @@ def replay(market, anchor, end, band, action):
         nonlocal previous
         if ctx.as_of == end:
             return None
-        previous = action(ctx, previous)
-        proposals[ctx.as_of] = previous
+        proposal = action(ctx, previous)
+        proposals[ctx.as_of] = proposal
+        if proposal is None:  # Explicit hold leaves the last numeric proposal in memory.
+            return None
+        previous = proposal
         return prediction_to_target(previous, ctx.benchmark, as_of=ctx.as_of)
 
-    book, error = daily_book(env.rollout(policy, anchor, end), cfg)
+    rollout = env.rollout(policy, anchor, end)
+    book, error = daily_book(rollout, cfg)
     book["proposal_z"] = pd.Series(proposals, dtype=float).reindex(book.index)
+    book["decision"] = book.index.isin(proposals)
+    if audit is not None:
+        audit(rollout, proposals, book)
     return book, error
 
 
@@ -178,7 +182,7 @@ def score(book, zero, start, end, calendar, annual_days):
         net_cost_yuan=window.cost.sum(),
         turnover=window.turnover.sum(),
         trades=int(window.trades.sum()),
-        decisions=int(window.proposal_z.count()),
+        decisions=int(window.get("decision", window.proposal_z.notna()).sum()),
         nonzero_proposals=int((window.proposal_z.fillna(0).abs() > 1e-8).sum()),
     )
 
@@ -187,7 +191,7 @@ def winner(rows):
     return max(rows, key=lambda r: (round(r["net_excess_vs_zero_bp"], 8), -r["update"]))
 
 
-def validation_rows(plan, spec, checkpoints, updates, band):
+def validation_rows(plan, spec, checkpoints, updates, band, *, audit=None):
     start, end = map(date.fromisoformat, spec["validation"])
     anchor = date.fromisoformat(plan["anchor"])
     market = Market(end)
@@ -202,11 +206,18 @@ def validation_rows(plan, spec, checkpoints, updates, band):
             end,
             band,
             lambda ctx, prev, act=act: act(ctx, prev) if ctx.as_of >= start else 0.0,
+            audit=audit,
         )
         rows.append(
             dict(
                 update=update,
-                mean_abs_action=float(book.loc[start:end, "proposal_z"].abs().mean()),
+                mean_abs_action=float(
+                    book.loc[start:end]
+                    .loc[lambda x: x.decision, "proposal_z"]
+                    .fillna(0)
+                    .abs()
+                    .mean()
+                ),
                 checkpoint_sha256=sha(p),
                 ledger_error_yuan=error,
                 **score(book, zero, start, end, market.calendar, market.cfg.backtest.annual_days),

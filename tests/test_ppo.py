@@ -183,3 +183,40 @@ def test_factorial_clips_only_market_features(market):
     assert max(abs(v) for v in raw[:n]) > 5
     np.testing.assert_allclose(clipped[:n], np.clip(raw[:n], -5, 5))
     assert raw[n:] == clipped[n:]
+
+
+def test_categorical_hold_and_probabilities(market):
+    torch = pytest.importorskip("torch")
+    from ficc.rl.ppo import ActorCritic, update
+
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(date(2019, 2, 1), date(2019, 4, 30))
+    enc = Encoder.fit(panel, funding, days[0], days[19], cfg.portfolio.universe)
+    model = ActorCritic(len(enc.names), 8, actions=[None, 0.0, -1.0, 1.0])
+    actions = iter([3, 0, 1, 2])
+    ep = collect(
+        RebalanceEnv(panel, calendar, funding, cfg, decision_step_days=5),
+        enc,
+        lambda obs: model.draw(obs, fixed_latent=next(actions)),
+        days[20],
+        days[40],
+    )
+    assert [r["z"] for r in ep.samples] == [1.0, None, 0.0, -1.0]
+    assert ep.samples[1]["target_krd"] is None and ep.samples[2]["target_krd"]
+    assert ep.samples[2]["obs"][-1] == 1.0
+    for r in ep.samples:
+        logits = model.actor(torch.tensor(r["obs"]))
+        assert r["log_prob"] == pytest.approx(
+            logits.log_softmax(-1)[int(r["latent"])].item(), abs=1e-6
+        )
+    metrics = update(
+        model,
+        torch.optim.Adam(model.parameters()),
+        ep,
+        dict(gae_lambda=0.95, epochs=2, clip_ratio=0.2, value_coef=0.5, max_grad_norm=0.5),
+    )
+    assert metrics["max_parameter_change"] > 0
+    with torch.no_grad():
+        model.actor[-1].weight.zero_()
+        model.actor[-1].bias.zero_()
+        assert model.deterministic(torch.tensor(ep.samples[0]["obs"])) is None

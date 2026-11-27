@@ -83,7 +83,7 @@ class Encoder:
 @dataclass(frozen=True)
 class Draw:
     latent: float
-    z: float
+    z: float | None
     log_prob: float
     value: float
 
@@ -120,14 +120,16 @@ def collect(env: RebalanceEnv, encoder: Encoder, draw: Callable, start: date, en
         tick = perf_counter()
         action = draw(obs)
         inference += perf_counter() - tick
-        target = prediction_to_target(action.z, ctx.benchmark, as_of=ctx.as_of)
-        previous = action.z
+        target = None
+        if action.z is not None:
+            target = prediction_to_target(action.z, ctx.benchmark, as_of=ctx.as_of)
+            previous = action.z
         decisions[ctx.as_of] = dict(
             date=ctx.as_of,
             available_through=ctx.curve.as_of,
             obs=obs,
             **asdict(action),
-            target_krd=dict(target.krd),
+            target_krd=dict(target.krd) if target is not None else None,
         )
         return target
 

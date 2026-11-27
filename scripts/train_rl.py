@@ -41,7 +41,10 @@ PILOT_SPEC = ROOT / "config/experiments/ppo_budget_pilot.json"
 FACTOR_SPEC = ROOT / "config/experiments/ppo_factorial.json"
 
 
-def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None):
+GRID_SPEC = ROOT / "config/experiments/ppo_action_grid.json"
+
+
+def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None, action_grid=False):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
         plan = json.loads(EVAL_SPEC.read_text())
@@ -65,6 +68,15 @@ def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None):
             market_clip=clip,
             updates=design["updates"],
             design_sha256=hashlib.sha256(FACTOR_SPEC.read_bytes()).hexdigest(),
+        )
+    if action_grid:
+        grid = json.loads(GRID_SPEC.read_text())
+        if arm or budget_pilot or fold not in grid["folds"] or seed not in grid["seeds"]:
+            raise ValueError("invalid action-grid experiment pair")
+        spec.update(
+            actions=grid["actions"],
+            updates=grid["updates"],
+            grid_sha256=hashlib.sha256(GRID_SPEC.read_bytes()).hexdigest(),
         )
     return spec
 
@@ -129,6 +141,7 @@ def main(argv=None):
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
+    parser.add_argument("--action-grid", action="store_true")
     parser.add_argument("--budget-pilot", action="store_true")
     parser.add_argument("--fold", type=int)
     parser.add_argument("--seed", type=int)
@@ -142,7 +155,13 @@ def main(argv=None):
         parser.error("resume 需要指定 --checkpoint")
     if (args.fold is None) != (args.seed is None):
         parser.error("--fold 和 --seed 必须配对")
-    spec = training_spec(args.fold, args.seed, budget_pilot=args.budget_pilot, arm=args.arm)
+    spec = training_spec(
+        args.fold,
+        args.seed,
+        budget_pilot=args.budget_pilot,
+        arm=args.arm,
+        action_grid=args.action_grid,
+    )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
     out = args.output
@@ -189,7 +208,7 @@ def main(argv=None):
         information_lag_days=protocol.information_lag_days,
         decision_step_days=protocol.decision_step_days,
     )
-    model = ActorCritic(len(encoder.names), spec["hidden"]).to(device)
+    model = ActorCritic(len(encoder.names), spec["hidden"], actions=spec.get("actions")).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=spec["learning_rate"])
     identity = dict(
         spec=spec,
@@ -236,7 +255,11 @@ def main(argv=None):
     def run_episode():
         model.eval()
         # 固定回放的预设动作与网络参数无关，同时测量相同网络的推理路径。
-        fixed = iter([math.atanh(z) for z in (0.0, 0.75, -0.75, 0.5)])
+        fixed = (
+            iter(range(4))
+            if args.action_grid
+            else iter([math.atanh(z) for z in (0.0, 0.75, -0.75, 0.5)])
+        )
 
         def draw(obs):
             return model.draw(obs, fixed_latent=next(fixed) if profile else None)

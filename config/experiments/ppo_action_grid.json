@@ -1,0 +1,9 @@
+{
+  "version": "categorical-duration-validation-v1",
+  "folds": [0, 10, 21], "seeds": [20261111, 20261112],
+  "actions": [null, 0.0, -1.0, 1.0],
+  "updates": 2, "bands": [2, 1],
+  "control": "frozen total continuous PPO update 2, same fold, seed and band",
+  "inference": "argmax logits, first index on tie",
+  "gate": "2 lot: >=4/6 paired improvements at 8 decimals and positive median improvement; 1 lot: nonnegative median improvement. Also require positive median absolute net excess vs zero at 2 lot before expanding."
+}

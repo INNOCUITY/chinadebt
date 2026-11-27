@@ -7,42 +7,59 @@ import math
 import numpy as np
 import torch
 from torch import nn
-from torch.distributions import Normal
+from torch.distributions import Categorical, Normal
 from torch.nn import functional as F
 
 from ficc.rl.collector import Draw, Episode
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, width: int, hidden: int):
+    def __init__(self, width: int, hidden: int, *, actions=None):
         super().__init__()
 
-        def network():
+        def network(outputs):
             return nn.Sequential(
                 nn.Linear(width, hidden),
                 nn.Tanh(),
                 nn.Linear(hidden, hidden),
                 nn.Tanh(),
-                nn.Linear(hidden, 1),
+                nn.Linear(hidden, outputs),
             )
 
-        self.actor = network()
-        self.critic = network()
-        self.log_std = nn.Parameter(torch.tensor(-0.5))
+        self.actions = actions
+        self.actor = network(len(actions) if actions else 1)
+        self.critic = network(1)
+        if not actions:
+            self.log_std = nn.Parameter(torch.tensor(-0.5))
 
     def distribution(self, obs):
+        if self.actions:
+            return Categorical(logits=self.actor(obs))
         return Normal(self.actor(obs).squeeze(-1), self.log_std.exp())
 
     @staticmethod
     def log_prob(distribution, latent):
+        if isinstance(distribution, Categorical):
+            return distribution.log_prob(latent)
         # log(1-tanh(u)^2) 的稳定形式，在饱和区仍使用原始 u。
         return distribution.log_prob(latent) - 2 * (math.log(2) - latent - F.softplus(-2 * latent))
 
+    def deterministic(self, obs):
+        scores = self.actor(obs)
+        if not torch.isfinite(scores).all():
+            raise ValueError("non-finite policy output")
+        return self.actions[scores.argmax().item()] if self.actions else scores.tanh().item()
+
     @torch.no_grad()
     def draw(self, obs, *, fixed_latent=None):
-        x = torch.tensor(obs, dtype=torch.float32, device=self.log_std.device)
+        x = torch.tensor(obs, dtype=torch.float32, device=next(self.parameters()).device)
         dist = self.distribution(x)
         u = dist.sample() if fixed_latent is None else x.new_tensor(fixed_latent)
+        if self.actions:
+            i, prob, value = (
+                torch.stack((u, dist.log_prob(u), self.critic(x).squeeze(-1))).cpu().tolist()
+            )
+            return Draw(int(i), self.actions[int(i)], prob, value)
         values = torch.stack((u, u.tanh(), self.log_prob(dist, u), self.critic(x).squeeze(-1)))
         return Draw(*values.cpu().tolist())
 
@@ -63,7 +80,7 @@ def advantages(rewards, values, *, gae_lambda, terminated, next_value=None):
 
 def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
     samples = episode.samples
-    device = model.log_std.device
+    device = next(model.parameters()).device
 
     def tensor(field):
         return torch.tensor([row[field] for row in samples], device=device, dtype=torch.float32)
