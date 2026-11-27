@@ -149,3 +149,40 @@ def test_critic_budget_requires_stable_profit_and_policy(ev):
     assert plateau(curve, design)
     assert not plateau([*curve[:-1], dict(train_active_bp=10, mean_action_tv=0.01)], design)
     assert not plateau([*curve[:-1], dict(train_active_bp=8, mean_action_tv=0.1)], design)
+
+
+def test_actor_step_only_changes_actor_adam_rate(ev):
+    import copy
+
+    import torch
+    from train_rl import make_optimizer, training_spec
+
+    from ficc.rl.ppo import ActorCritic
+
+    flags = dict(
+        action_grid=True,
+        grid_active=True,
+        zero_critic=True,
+        critic_budget=True,
+        invested_start=True,
+    )
+    original = training_spec(0, 20261111, **flags)
+    new = training_spec(0, 20261111, actor_step=True, **flags)
+    assert {
+        k: v for k, v in new.items() if k not in ("actor_learning_rate", "actor_step_sha256")
+    } == original
+    with pytest.raises(ValueError, match="invested"):
+        training_spec(0, 20261111, actor_step=True)
+    base = ActorCritic(4, 8, actions=original["actions"])
+    a, b = copy.deepcopy(base), copy.deepcopy(base)
+    for model, spec in [(a, original), (b, new)]:
+        optim = make_optimizer(model, spec)
+        for param in model.parameters():
+            param.grad = torch.ones_like(param)
+        optim.step()
+    for x, y in zip(a.critic.parameters(), b.critic.parameters(), strict=True):
+        torch.testing.assert_close(x, y, rtol=0, atol=0)
+    for x, y, z in zip(
+        a.actor.parameters(), b.actor.parameters(), base.actor.parameters(), strict=True
+    ):
+        torch.testing.assert_close((x - z) / 4, y - z, rtol=0, atol=4e-8)

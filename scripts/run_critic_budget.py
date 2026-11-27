@@ -12,6 +12,7 @@ from statistics import median
 import torch
 from evaluate_rl import Market, load_actor, replay, sha, validation_rows
 from train_rl import (
+    ACTOR_STEP_SPEC,
     CRITIC_BUDGET,
     CRITIC_SPEC,
     EVAL_SPEC,
@@ -40,7 +41,27 @@ def plateau(history, design):
     )
 
 
-def run(root, reference, fold, seed, device, cash_reference=None):
+def archived_budget_control(directory, fold, seed, *, invested):
+    result = read(directory / "validation.json")
+    expected = (fold, seed, sha(CRITIC_BUDGET), sha(INVESTED_SPEC) if invested else None)
+    if (
+        result["fold"],
+        result["seed"],
+        result["design_sha256"],
+        result.get("opening_sha256"),
+    ) != expected or "actor_step_sha256" in result:
+        raise ValueError("paired control identity mismatch")
+    digest = sha(directory / "training/update-16.pt")
+    if (
+        len(result["rows"]) != 2
+        or {r["band"] for r in result["rows"]} != {1, 2}
+        or any(r["update"] != 16 or r["checkpoint_sha256"] != digest for r in result["rows"])
+    ):
+        raise ValueError("paired control checkpoint mismatch")
+    return {r["band"]: r["net_excess_vs_zero_bp"] for r in result["rows"]}
+
+
+def run(root, reference, fold, seed, device, cash_reference=None, invested_reference=None):
     spec = training_spec(
         fold,
         seed,
@@ -49,6 +70,7 @@ def run(root, reference, fold, seed, device, cash_reference=None):
         zero_critic=True,
         critic_budget=True,
         invested_start=cash_reference is not None,
+        actor_step=invested_reference is not None,
     )
     design = read(CRITIC_BUDGET)
     out = root / f"fold-{fold}/seed-{seed}"
@@ -62,6 +84,16 @@ def run(root, reference, fold, seed, device, cash_reference=None):
         control["active"],
     ) != (sha(CRITIC_SPEC), sha(GRID_SPEC), fold, seed, True):
         raise ValueError("reference mismatch")
+    paired_controls = {}
+    if cash_reference is not None:
+        paired_controls["gain_vs_cash_16"] = archived_budget_control(
+            cash_reference / out.parent.name / out.name, fold, seed, invested=False
+        )
+    if invested_reference is not None:
+        invested_dir = invested_reference / out.parent.name / out.name
+        paired_controls["gain_vs_invested_16"] = archived_budget_control(
+            invested_dir, fold, seed, invested=True
+        )
     out.mkdir(parents=True, exist_ok=False)
     ck = out / "training"
     subprocess.run(
@@ -73,6 +105,7 @@ def run(root, reference, fold, seed, device, cash_reference=None):
             "--grid-active",
             "--zero-critic",
             "--critic-budget",
+            *(["--actor-step"] if invested_reference is not None else []),
             *(["--invested-start"] if cash_reference is not None else []),
             "--fold",
             str(fold),
@@ -94,19 +127,14 @@ def run(root, reference, fold, seed, device, cash_reference=None):
     new = saved(ck / "update-2.pt")
     if old["identity"]["data"] != new["identity"]["data"]:
         raise ValueError("training data changed")
-    if cash_reference is None:
-        if any(not state_equal(old[k], new[k]) for k in ("model", "optimizer", "rng")):
-            raise ValueError("first two updates did not reproduce archived boundary")
-    else:
-        source = cash_reference / out.parent.name / out.name
-        cash_result = read(source / "validation.json")
-        if (cash_result["fold"], cash_result["seed"], cash_result["design_sha256"]) != (
-            fold,
-            seed,
-            sha(CRITIC_BUDGET),
-        ) or "opening_sha256" in cash_result:
-            raise ValueError("cash-start control mismatch")
-        cash_hash = sha(source / "training/update-16.pt")
+    if cash_reference is None and any(
+        not state_equal(old[k], new[k]) for k in ("model", "optimizer", "rng")
+    ):
+        raise ValueError("first two updates did not reproduce archived boundary")
+    if invested_reference is not None and read(ck / "trajectory-1.json") != read(
+        invested_dir / "training/trajectory-1.json"
+    ):
+        raise ValueError("pre-update sampling changed before the learning-rate intervention")
     start, end = map(date.fromisoformat, new["identity"]["episode"])
     market = Market(end)
     begin = date.fromisoformat(read(EVAL_SPEC)["anchor"]) if cash_reference is not None else start
@@ -165,13 +193,8 @@ def run(root, reference, fold, seed, device, cash_reference=None):
                 gain_vs_continuous=gain + old_row["gain_vs_continuous_bp"],
             )
         )
-        if cash_reference is not None:
-            (cash,) = [r for r in cash_result["rows"] if r["band"] == band and r["update"] == 16]
-            if cash["checkpoint_sha256"] != cash_hash:
-                raise ValueError("cash-start checkpoint mismatch")
-            rows[-1]["gain_vs_cash_16"] = (
-                row["net_excess_vs_zero_bp"] - cash["net_excess_vs_zero_bp"]
-            )
+        for name, by_band in paired_controls.items():
+            rows[-1][name] = row["net_excess_vs_zero_bp"] - by_band[band]
     dump(
         out / "validation.json",
         dict(
@@ -180,12 +203,17 @@ def run(root, reference, fold, seed, device, cash_reference=None):
             design_sha256=sha(CRITIC_BUDGET),
             plateau=plateau(history, design),
             rows=rows,
+            **(
+                {"actor_step_sha256": sha(ACTOR_STEP_SPEC)}
+                if invested_reference is not None
+                else {}
+            ),
             **({"opening_sha256": sha(INVESTED_SPEC)} if cash_reference is not None else {}),
         ),
     )
 
 
-def summarize(root, invested=False):
+def summarize(root, invested=False, actor_step=False):
     grid = read(GRID_SPEC)
     design = read(CRITIC_BUDGET)
     records = []
@@ -195,10 +223,14 @@ def summarize(root, invested=False):
             raise ValueError("budget result mismatch")
         if d.get("opening_sha256") != (sha(INVESTED_SPEC) if invested else None):
             raise ValueError("opening protocol mismatch")
+        if d.get("actor_step_sha256") != (sha(ACTOR_STEP_SPEC) if actor_step else None):
+            raise ValueError("actor step protocol mismatch")
         records.append(d)
     controls = ["gain_vs_2", "gain_vs_continuous"]
     if invested:
         controls.append("gain_vs_cash_16")
+    if actor_step:
+        controls.append("gain_vs_invested_16")
     stats = {}
     for b in grid["bands"]:
         rows = []
@@ -226,17 +258,33 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     job = sub.add_parser("run")
+    job.add_argument("--invested-reference", type=Path)
     job.add_argument("--cash-reference", type=Path)
     job.add_argument("--fold", type=int, required=True)
     job.add_argument("--seed", type=int, required=True)
     job.add_argument("--reference", type=Path, required=True)
     job.add_argument("--device", choices=["cpu", "cuda"], required=True)
     summary = sub.add_parser("summary")
+    summary.add_argument("--actor-step", action="store_true")
     summary.add_argument("--invested", action="store_true")
     for c in (summary, job):
         c.add_argument("--root", type=Path, required=True)
     a = p.parse_args()
     if a.cmd == "run":
-        run(a.root.resolve(), a.reference.resolve(), a.fold, a.seed, a.device, a.cash_reference)
+        run(
+            a.root.resolve(),
+            a.reference.resolve(),
+            a.fold,
+            a.seed,
+            a.device,
+            a.cash_reference,
+            a.invested_reference,
+        )
     else:
-        print(json.dumps(summarize(a.root, a.invested), indent=2, allow_nan=False))
+        print(
+            json.dumps(
+                summarize(a.root, a.invested or a.actor_step, a.actor_step),
+                indent=2,
+                allow_nan=False,
+            )
+        )

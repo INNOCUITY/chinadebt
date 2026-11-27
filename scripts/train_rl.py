@@ -53,6 +53,9 @@ CRITIC_BUDGET = ROOT / "config/experiments/ppo_critic_budget.json"
 INVESTED_SPEC = ROOT / "config/experiments/ppo_invested_start.json"
 
 
+ACTOR_STEP_SPEC = ROOT / "config/experiments/ppo_actor_step.json"
+
+
 def training_spec(
     fold=None,
     seed=None,
@@ -64,6 +67,7 @@ def training_spec(
     zero_critic=False,
     critic_budget=False,
     invested_start=False,
+    actor_step=False,
 ):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
@@ -117,7 +121,24 @@ def training_spec(
         if not critic_budget:
             raise ValueError("invested pilot requires the frozen critic budget")
         spec["opening_sha256"] = hashlib.sha256(INVESTED_SPEC.read_bytes()).hexdigest()
+    if actor_step:
+        if not invested_start:
+            raise ValueError("actor-step pilot requires the registered invested start")
+        spec["actor_step_sha256"] = hashlib.sha256(ACTOR_STEP_SPEC.read_bytes()).hexdigest()
+        spec["actor_learning_rate"] = json.loads(ACTOR_STEP_SPEC.read_text())["actor_learning_rate"]
     return spec
+
+
+def make_optimizer(model, spec):
+    if "actor_learning_rate" in spec:
+        return torch.optim.Adam(
+            [
+                {"params": model.actor.parameters(), "lr": spec["actor_learning_rate"]},
+                {"params": model.critic.parameters()},
+            ],
+            lr=spec["learning_rate"],
+        )
+    return torch.optim.Adam(model.parameters(), lr=spec["learning_rate"])
 
 
 def market_digest(panel, funding):
@@ -181,6 +202,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--grid-active", action="store_true")
+    parser.add_argument("--actor-step", action="store_true")
     parser.add_argument("--invested-start", action="store_true")
     parser.add_argument("--critic-budget", action="store_true")
     parser.add_argument("--zero-critic", action="store_true")
@@ -208,6 +230,7 @@ def main(argv=None):
         zero_critic=args.zero_critic,
         critic_budget=args.critic_budget,
         invested_start=args.invested_start,
+        actor_step=args.actor_step,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
@@ -259,7 +282,7 @@ def main(argv=None):
     if args.zero_critic:
         torch.nn.init.zeros_(model.critic[-1].weight)
         torch.nn.init.zeros_(model.critic[-1].bias)
-    optimizer = torch.optim.Adam(model.parameters(), lr=spec["learning_rate"])
+    optimizer = make_optimizer(model, spec)
     identity = dict(
         spec=spec,
         protocol=protocol_fingerprint(cfg, protocol),

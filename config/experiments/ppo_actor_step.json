@@ -1,0 +1,7 @@
+{
+  "version": "categorical-invested-actor-step-v1",
+  "actor_learning_rate": 0.000075,
+  "control": "archived invested-start update 16, with actor and critic both at 0.0003",
+  "design": "Keep critic Adam learning rate, joint gradient clipping, original six pairs, invested opening, active net reward and 16 updates. Compare fixed update 16, without checkpoint selection.",
+  "screen": "Keep all invested-start gates and require the same paired validation gain screen vs invested-start update 16. A probability plateau alone does not qualify."
+}
