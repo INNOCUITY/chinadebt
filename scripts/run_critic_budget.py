@@ -18,6 +18,7 @@ from train_rl import (
     EVAL_SPEC,
     GRID_SPEC,
     INVESTED_SPEC,
+    NEUTRAL_SPEC,
     ROOT,
     dump,
     state_equal,
@@ -41,15 +42,20 @@ def plateau(history, design):
     )
 
 
-def archived_budget_control(directory, fold, seed, *, invested):
+def archived_budget_control(directory, fold, seed, *, invested, slow=False):
     result = read(directory / "validation.json")
     expected = (fold, seed, sha(CRITIC_BUDGET), sha(INVESTED_SPEC) if invested else None)
     if (
-        result["fold"],
-        result["seed"],
-        result["design_sha256"],
-        result.get("opening_sha256"),
-    ) != expected or "actor_step_sha256" in result:
+        (
+            result["fold"],
+            result["seed"],
+            result["design_sha256"],
+            result.get("opening_sha256"),
+        )
+        != expected
+        or result.get("actor_step_sha256") != (sha(ACTOR_STEP_SPEC) if slow else None)
+        or "neutral_actor_sha256" in result
+    ):
         raise ValueError("paired control identity mismatch")
     digest = sha(directory / "training/update-16.pt")
     if (
@@ -61,7 +67,16 @@ def archived_budget_control(directory, fold, seed, *, invested):
     return {r["band"]: r["net_excess_vs_zero_bp"] for r in result["rows"]}
 
 
-def run(root, reference, fold, seed, device, cash_reference=None, invested_reference=None):
+def run(
+    root,
+    reference,
+    fold,
+    seed,
+    device,
+    cash_reference=None,
+    invested_reference=None,
+    slow_reference=None,
+):
     spec = training_spec(
         fold,
         seed,
@@ -71,6 +86,7 @@ def run(root, reference, fold, seed, device, cash_reference=None, invested_refer
         critic_budget=True,
         invested_start=cash_reference is not None,
         actor_step=invested_reference is not None,
+        neutral_actor=slow_reference is not None,
     )
     design = read(CRITIC_BUDGET)
     out = root / f"fold-{fold}/seed-{seed}"
@@ -94,6 +110,10 @@ def run(root, reference, fold, seed, device, cash_reference=None, invested_refer
         paired_controls["gain_vs_invested_16"] = archived_budget_control(
             invested_dir, fold, seed, invested=True
         )
+    if slow_reference is not None:
+        paired_controls["gain_vs_slow_16"] = archived_budget_control(
+            slow_reference / out.parent.name / out.name, fold, seed, invested=True, slow=True
+        )
     out.mkdir(parents=True, exist_ok=False)
     ck = out / "training"
     subprocess.run(
@@ -105,6 +125,7 @@ def run(root, reference, fold, seed, device, cash_reference=None, invested_refer
             "--grid-active",
             "--zero-critic",
             "--critic-budget",
+            *(["--neutral-actor"] if slow_reference is not None else []),
             *(["--actor-step"] if invested_reference is not None else []),
             *(["--invested-start"] if cash_reference is not None else []),
             "--fold",
@@ -131,10 +152,24 @@ def run(root, reference, fold, seed, device, cash_reference=None, invested_refer
         not state_equal(old[k], new[k]) for k in ("model", "optimizer", "rng")
     ):
         raise ValueError("first two updates did not reproduce archived boundary")
-    if invested_reference is not None and read(ck / "trajectory-1.json") != read(
-        invested_dir / "training/trajectory-1.json"
+    if (
+        invested_reference is not None
+        and slow_reference is None
+        and read(ck / "trajectory-1.json") != read(invested_dir / "training/trajectory-1.json")
     ):
         raise ValueError("pre-update sampling changed before the learning-rate intervention")
+    if slow_reference is not None:
+        # Initial exploratory logits are state independent and the deterministic action is zero tilt.
+        logits = torch.zeros(len(spec["actions"]))
+        logits[spec["actions"].index(0.0)] = spec["zero_tilt_logit"]
+        logs = logits.log_softmax(0)
+        first = [r for r in read(ck / "trajectory-1.json")["decisions"] if r["actor_sample"]]
+        if not first or any(
+            abs(float(logs[int(r["latent"])]) - r["log_prob"]) > 2e-6 for r in first
+        ):
+            raise ValueError(
+                "neutral initialization did not reproduce initial sampling probabilities"
+            )
     start, end = map(date.fromisoformat, new["identity"]["episode"])
     market = Market(end)
     begin = date.fromisoformat(read(EVAL_SPEC)["anchor"]) if cash_reference is not None else start
@@ -208,12 +243,13 @@ def run(root, reference, fold, seed, device, cash_reference=None, invested_refer
                 if invested_reference is not None
                 else {}
             ),
+            **({"neutral_actor_sha256": sha(NEUTRAL_SPEC)} if slow_reference is not None else {}),
             **({"opening_sha256": sha(INVESTED_SPEC)} if cash_reference is not None else {}),
         ),
     )
 
 
-def summarize(root, invested=False, actor_step=False):
+def summarize(root, invested=False, actor_step=False, neutral_actor=False):
     grid = read(GRID_SPEC)
     design = read(CRITIC_BUDGET)
     records = []
@@ -225,12 +261,16 @@ def summarize(root, invested=False, actor_step=False):
             raise ValueError("opening protocol mismatch")
         if d.get("actor_step_sha256") != (sha(ACTOR_STEP_SPEC) if actor_step else None):
             raise ValueError("actor step protocol mismatch")
+        if d.get("neutral_actor_sha256") != (sha(NEUTRAL_SPEC) if neutral_actor else None):
+            raise ValueError("neutral actor protocol mismatch")
         records.append(d)
     controls = ["gain_vs_2", "gain_vs_continuous"]
     if invested:
         controls.append("gain_vs_cash_16")
     if actor_step:
         controls.append("gain_vs_invested_16")
+    if neutral_actor:
+        controls.append("gain_vs_slow_16")
     stats = {}
     for b in grid["bands"]:
         rows = []
@@ -258,6 +298,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     job = sub.add_parser("run")
+    job.add_argument("--slow-reference", type=Path)
     job.add_argument("--invested-reference", type=Path)
     job.add_argument("--cash-reference", type=Path)
     job.add_argument("--fold", type=int, required=True)
@@ -265,6 +306,7 @@ if __name__ == "__main__":
     job.add_argument("--reference", type=Path, required=True)
     job.add_argument("--device", choices=["cpu", "cuda"], required=True)
     summary = sub.add_parser("summary")
+    summary.add_argument("--neutral-actor", action="store_true")
     summary.add_argument("--actor-step", action="store_true")
     summary.add_argument("--invested", action="store_true")
     for c in (summary, job):
@@ -279,11 +321,17 @@ if __name__ == "__main__":
             a.device,
             a.cash_reference,
             a.invested_reference,
+            a.slow_reference,
         )
     else:
         print(
             json.dumps(
-                summarize(a.root, a.invested or a.actor_step, a.actor_step),
+                summarize(
+                    a.root,
+                    a.invested or a.actor_step or a.neutral_actor,
+                    a.actor_step or a.neutral_actor,
+                    a.neutral_actor,
+                ),
                 indent=2,
                 allow_nan=False,
             )

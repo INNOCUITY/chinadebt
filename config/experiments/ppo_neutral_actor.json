@@ -1,0 +1,7 @@
+{
+  "version": "invested-slow-actor-neutral-head-v1",
+  "zero_tilt_logit": 0.001,
+  "change": "Zero the categorical actor output weights and biases and give literal zero tilt the stated logit. The initial deterministic policy always rebalances to the benchmark. Sampling remains nearly uniform. Preserve hidden weights, critic, rates, reward, data, seeds and 16 updates.",
+  "control": "Same fold, seed and band, invested slow actor update 16 with its original random output layer.",
+  "screen": "Retain all previous gates and require the same paired gain screen against slow actor update 16. Use development validation only."
+}

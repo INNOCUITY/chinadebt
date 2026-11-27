@@ -186,3 +186,42 @@ def test_actor_step_only_changes_actor_adam_rate(ev):
         a.actor.parameters(), b.actor.parameters(), base.actor.parameters(), strict=True
     ):
         torch.testing.assert_close((x - z) / 4, y - z, rtol=0, atol=4e-8)
+
+
+def test_neutral_actor_starts_at_benchmark_and_preserves_exploration(ev):
+    import torch
+    from audit_ppo_initial_policy import recover_initial
+    from train_rl import initialize_neutral_actor, training_spec
+
+    flags = dict(
+        action_grid=True,
+        grid_active=True,
+        zero_critic=True,
+        critic_budget=True,
+        invested_start=True,
+        actor_step=True,
+    )
+    spec = training_spec(0, 20261111, neutral_actor=True, **flags)
+    torch.manual_seed(spec["seed"])
+    model = ev.ActorCritic(3, spec["hidden"], actions=spec["actions"])
+    obs = [[0, 1, 0], [1, -3, 0.25]]
+    first = []
+    for x in obs:
+        d = model.draw(x)
+        first.append(dict(obs=x, actor_sample=True, latent=d.latent, z=d.z, log_prob=d.log_prob))
+    original, error = recover_initial(spec, first)
+    assert error < 2e-6 and torch.equal(original.actor[-1].weight, model.actor[-1].weight)
+    first[0]["log_prob"] += 0.1
+    with pytest.raises(ValueError, match="initial policy"):
+        recover_initial(spec, first)
+    with pytest.raises(ValueError, match="slow actor"):
+        training_spec(0, 20261111, neutral_actor=True)
+    original = {k: v.clone() for k, v in model.state_dict().items()}
+    initialize_neutral_actor(model, spec)
+    x = torch.tensor(obs, dtype=torch.float32)
+    assert [model.deterministic(v) for v in x] == [0.0, 0.0]
+    assert torch.all((model.distribution(x).probs - 0.25).abs() < 0.001)
+    assert {k for k, v in model.state_dict().items() if not torch.equal(v, original[k])} == {
+        "actor.4.weight",
+        "actor.4.bias",
+    }

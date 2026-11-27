@@ -30,7 +30,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def load_actor(path, spec, update, market, cfg):
+def load_policy(path, spec, update, market, cfg):
     """只接受已登记 fold/seed 的完整训练产物及原始标准化统计。"""
     saved = torch.load(path, map_location="cpu", weights_only=False)
     ident = saved["identity"]
@@ -62,14 +62,20 @@ def load_actor(path, spec, update, market, cfg):
         raise ValueError("checkpoint 观测或归一化状态无效")
     model = ActorCritic(len(encoder.names), spec["hidden"], actions=spec.get("actions"))
     model.load_state_dict(saved["model"])
-    model.eval()
+    return model.eval(), encoder
 
+
+def inference_actor(model, encoder):
     @torch.inference_mode()
     def act(ctx, previous):
         obs = torch.tensor(encoder.encode(ctx, previous), dtype=torch.float32)
         return model.deterministic(obs)
 
     return act
+
+
+def load_actor(path, spec, update, market, cfg):
+    return inference_actor(*load_policy(path, spec, update, market, cfg))
 
 
 class Market:
