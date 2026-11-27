@@ -45,7 +45,7 @@ def inputs(encoder, ctx):
     return encoder.encode(ctx, 0.0)[:width]
 
 
-def make_label(market, anchor, d, h, schedule, encoder, cfg):
+def make_label(market, anchor, d, h, schedule, encoder, cfg, *, observe=None):
     states = []
     nets = []
     costs = []
@@ -57,6 +57,8 @@ def make_label(market, anchor, d, h, schedule, encoder, cfg):
             if ctx.as_of == d:
                 if ctx.curve.as_of != market.calendar.prev_trading_day(d):
                     raise ValueError("decision feature cutoff differs")
+                if observe is not None:
+                    observe(ctx)
                 states.append(inputs(encoder, ctx))
                 return action
             return schedule.get(ctx.as_of, 0.0)

@@ -1,0 +1,13 @@
+{
+  "version": "reachable-inventory-coverage-v1",
+  "folds": [0, 10, 21],
+  "bands": [2, 1],
+  "paths": [[-1, -1, 0, 1, 1, 0], [1, 1, 0, -1, -1, 0], [null], [0], [-1], [1]],
+  "path_names": ["cycle_down", "cycle_up", "hold", "zero", "down", "up"],
+  "actions": [null, 0, -1, 1],
+  "tie_tolerance_bp": 1e-8,
+  "scope": "All 29 purged fit intervals of the original three folds. Paths start at the first fit decision after a common zero-tilt prefix. Each execution band builds its own reachable inventory.",
+  "deduplication": "Report exact bond-code and face-value groups, and distinct (faces, lagged cash, lagged NAV, opening net NAV) states within them. Equal weight per distinct state within date, then equal weight per market interval. Validate duplicate-state labels agree.",
+  "diagnostics": "Net four-action gains versus hold, common-optimal-action intersection, mean and quantiles of ex-post gain from state-specific selection, action cost and trade counts. Ex-post opportunity is a diagnostic, not forecast performance or an expansion gate.",
+  "boundary": "No validation or test access. Preserve original inventory experiment gate. This stage does not fit a new selector."
+}

@@ -415,3 +415,54 @@ def test_inventory_value_forks_and_forward_gate(ev, tmp_path, monkeypatch):
     assert confirmation["start"] > inner["end"] and len(confirmation["bands"]) == 2
     with pytest.raises(ValueError, match="already recorded"):
         inventory.confirm(tmp_path)
+
+
+def test_coverage_dedup_and_common_optimum(ev):
+    from run_inventory_coverage import date_summary
+
+    def row(faces, cash, labels):
+        return dict(
+            state=dict(faces=faces, lagged_cash=cash, lagged_nav=100.0),
+            opening_net_nav=100.0,
+            net_bp=labels,
+        )
+
+    a = row([["bond-a", 100]], 0, [0, 2, 2, 0])
+    b = row([["bond-b", 100]], 0, [0, 2, 0, 0])
+    result = date_summary([a, a, b], 1e-8)
+    assert result["distinct_faces"] == result["distinct_states"] == 2
+    assert not result["no_common_best"] and result["hindsight_gain_bp"] == 0
+    c = row([["bond-a", 100]], 1, [0, 0, 4, 0])
+    result = date_summary([b, c], 1e-8)
+    assert result["no_common_best"] and result["hindsight_gain_bp"] == 1
+    assert date_summary([a, c], 1e-8)["distinct_states"] == 2
+    with pytest.raises(ValueError, match="inconsistent"):
+        date_summary([a, row([["bond-a", 100]], 0, [0, 3, 2, 0])], 1e-8)
+
+
+def test_coverage_paths_reuse_matched_ledger(ev, tmp_path, monkeypatch):
+    import run_inventory_coverage as coverage
+    import run_inventory_value as inventory
+
+    cfg, market, anchor, intervals, start, end, enc = inventory.window(0)
+    intervals = intervals[:2]
+    monkeypatch.setattr(
+        coverage, "window", lambda fold: (cfg, market, anchor, intervals, start, end, enc)
+    )
+    for shard in (0, 1):
+        coverage.collect(tmp_path, 0, 2, shard, 2)
+    rows = [json.loads(p.read_text()) for p in (tmp_path / "fold-0/band-2").glob("*.json")]
+    assert len(rows) == 12
+    first = [r for r in rows if r["signal"] == str(intervals[0][0])]
+    assert coverage.date_summary(first, 1e-8)["distinct_states"] == 1
+    old = inventory.make_label(
+        market,
+        anchor,
+        *intervals[1],
+        {d: cfg["prefix_paths"][0][j] for j, (d, _) in enumerate(intervals)},
+        enc,
+        cfg,
+    )
+    saved = next(r for r in rows if r["path"] == 0 and r["signal"] == str(intervals[1][0]))
+    assert saved["net_bp"] == old["net_bp"]
+    coverage.collect(tmp_path, 0, 2, 0, 2)

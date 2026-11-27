@@ -78,7 +78,9 @@ def advantages(rewards, values, *, gae_lambda, terminated, next_value=None):
     return adv
 
 
-def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
+def update(
+    model: ActorCritic, optimizer, episode: Episode, spec: dict, *, diagnostics=None
+) -> dict:
     samples = episode.samples
     device = next(model.parameters()).device
 
@@ -109,6 +111,26 @@ def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
             raise FloatingPointError("PPO loss 非有限")
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        if diagnostics is not None:
+
+            def gradient_norm(parameters):
+                return float(
+                    torch.stack(
+                        [p.grad.detach().norm().square() for p in parameters if p.grad is not None]
+                    )
+                    .sum()
+                    .sqrt()
+                )
+
+            diagnostics.append(
+                dict(
+                    epoch=epoch,
+                    actor_gradient_norm=gradient_norm(model.actor.parameters()),
+                    critic_gradient_norm=gradient_norm(model.critic.parameters()),
+                    sampled_approx_kl=float(((ratio - 1) - (logp - old_prob)).mean().detach()),
+                    clip_fraction=float(((ratio - 1).abs() > spec["clip_ratio"]).float().mean()),
+                )
+            )
         norm = nn.utils.clip_grad_norm_(
             model.parameters(), spec["max_grad_norm"], error_if_nonfinite=True
         )
