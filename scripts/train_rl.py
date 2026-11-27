@@ -24,7 +24,7 @@ import torch
 from run_strategies import load_market
 
 from ficc.research.protocol import ExperimentProtocol, protocol_config, protocol_fingerprint
-from ficc.rl.collector import Encoder, collect
+from ficc.rl.collector import Draw, Encoder, apply_training_reward, collect
 from ficc.rl.env import RebalanceEnv
 from ficc.rl.ppo import ActorCritic, update
 
@@ -38,7 +38,10 @@ EVAL_SPEC = ROOT / "config/experiments/ppo_evaluation.json"
 PILOT_SPEC = ROOT / "config/experiments/ppo_budget_pilot.json"
 
 
-def training_spec(fold=None, seed=None, *, budget_pilot=False):
+FACTOR_SPEC = ROOT / "config/experiments/ppo_factorial.json"
+
+
+def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
         plan = json.loads(EVAL_SPEC.read_text())
@@ -50,6 +53,19 @@ def training_spec(fold=None, seed=None, *, budget_pilot=False):
         if fold not in pilot["folds"] or seed not in pilot["seeds"]:
             raise ValueError("fold/seed outside budget pilot")
         spec.update(updates=max(pilot["updates"]), budget_protocol=pilot["version"])
+    if arm is not None:
+        design = json.loads(FACTOR_SPEC.read_text())
+        if budget_pilot or fold not in design["folds"] or seed not in design["seeds"]:
+            raise ValueError("invalid factorial experiment pair")
+        active, scale, clip = design["arms"][arm]
+        spec.update(
+            arm=arm,
+            active_reward=active,
+            reward_scale=scale,
+            market_clip=clip,
+            updates=design["updates"],
+            design_sha256=hashlib.sha256(FACTOR_SPEC.read_bytes()).hexdigest(),
+        )
     return spec
 
 
@@ -112,6 +128,7 @@ def main(argv=None):
     parser.add_argument("mode", choices=["profile", "train", "resume"])
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--budget-pilot", action="store_true")
     parser.add_argument("--fold", type=int)
     parser.add_argument("--seed", type=int)
@@ -125,7 +142,7 @@ def main(argv=None):
         parser.error("resume 需要指定 --checkpoint")
     if (args.fold is None) != (args.seed is None):
         parser.error("--fold 和 --seed 必须配对")
-    spec = training_spec(args.fold, args.seed, budget_pilot=args.budget_pilot)
+    spec = training_spec(args.fold, args.seed, budget_pilot=args.budget_pilot, arm=args.arm)
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
     out = args.output
@@ -163,6 +180,7 @@ def main(argv=None):
     panel = panel.loc[: pd.Timestamp(end)]
     funding = funding.loc[: pd.Timestamp(end)]
     encoder = Encoder.fit(panel, funding, days[0], days[calibration - 1], cfg.portfolio.universe)
+    encoder.market_clip = spec.get("market_clip")
     env = RebalanceEnv(
         panel,
         calendar,
@@ -211,6 +229,10 @@ def main(argv=None):
     boundary = args.checkpoint
     profile = args.mode == "profile"
 
+    reference = None
+    if spec.get("active_reward"):
+        reference = collect(env, encoder, lambda _: Draw(0, 0, 0, 0), start, end)
+
     def run_episode():
         model.eval()
         # 固定回放的预设动作与网络参数无关，同时测量相同网络的推理路径。
@@ -219,7 +241,10 @@ def main(argv=None):
         def draw(obs):
             return model.draw(obs, fixed_latent=next(fixed) if profile else None)
 
-        return collect(env, encoder, draw, start, end)
+        episode = collect(env, encoder, draw, start, end)
+        if args.arm is not None:
+            apply_training_reward(episode, reference, spec["reward_scale"])
+        return episode
 
     for i in range(first + 1, limit + 1):
         episode = run_episode()

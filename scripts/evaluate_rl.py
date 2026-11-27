@@ -49,6 +49,7 @@ def load_actor(path, spec, update, market, cfg):
         np.array(ident["mean"]),
         np.array(ident["scale"]),
         tuple(cfg.portfolio.universe),
+        market_clip=spec.get("market_clip"),
     )
     if (
         encoder.names != ident["schema"]

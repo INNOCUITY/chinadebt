@@ -70,9 +70,8 @@ def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
 
     obs, latent, old_prob = tensor("obs"), tensor("latent"), tensor("log_prob")
     values = np.array([row["value"] for row in samples])
-    adv = advantages(
-        [row["reward"] for row in samples], values, gae_lambda=spec["gae_lambda"], terminated=True
-    )
+    rewards = [row["training_reward" if "arm" in spec else "reward"] for row in samples]
+    adv = advantages(rewards, values, gae_lambda=spec["gae_lambda"], terminated=True)
     if len(adv) < 2:
         raise ValueError("PPO 至少需要两个决策")
     targets = torch.tensor(values + adv, dtype=torch.float32, device=device)
@@ -108,5 +107,8 @@ def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
         policy_loss=policy_loss.item(),
         value_loss=value_loss.item(),
         gradient_norm=norm.item(),
+        reward_sd=float(np.std(rewards)),
+        value_sd=float(values.std()),
+        advantage_sd=float(adv.std()),
         max_parameter_change=delta,
     )

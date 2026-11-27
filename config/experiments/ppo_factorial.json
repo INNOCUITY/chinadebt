@@ -1,0 +1,14 @@
+{
+  "version": "ppo-validation-factorial-v1",
+  "folds": [0, 10, 21], "seeds": [20261111, 20261112],
+  "updates": 2, "bands": [2, 1],
+  "arms": {
+    "total": [false, 1, null], "total_clip": [false, 1, 5],
+    "total_pct": [false, 100, null], "total_pct_clip": [false, 100, 5],
+    "active": [true, 1, null], "active_clip": [true, 1, 5],
+    "active_pct": [true, 100, null], "active_pct_clip": [true, 100, 5]
+  },
+  "primary": "active_pct_clip minus total at update 2 on 2 lot validation",
+  "gate": "at least 4 of 6 strictly positive paired differences rounded to 8 decimals and positive median; 1 lot paired median must be nonnegative",
+  "secondary": "average marginal factorial effects within each fold and seed, then summarize the six pairs"
+}

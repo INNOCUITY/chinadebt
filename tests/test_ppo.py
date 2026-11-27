@@ -121,3 +121,65 @@ def test_cli_resume_and_audit(tmp_path, monkeypatch):
     short.write_text(json.dumps(spec))
     with pytest.raises(ValueError, match="checkpoint"):
         run("resume", "mismatch", "--checkpoint", tmp_path / "first/update-1.pt")
+
+
+def test_training_reward_uses_actor_ownership_and_terminal_fees():
+    from ficc.rl.collector import Episode, apply_training_reward
+
+    def make(rewards, fee, owners):
+        initial = 100
+        ledger = [
+            dict(date=i, reward_owner=owner, reward_yuan=r, terminal_fee_yuan=fee if i == 2 else 0)
+            for i, (r, owner) in enumerate(zip(rewards, owners, strict=True))
+        ]
+        decisions = [
+            dict(
+                date=o,
+                actor_sample=True,
+                reward=sum(
+                    (r["reward_yuan"] - r["terminal_fee_yuan"]) / initial
+                    for r in ledger
+                    if r["reward_owner"] == o
+                ),
+            )
+            for o in sorted(set(owners) - {None})
+        ]
+        prefix = sum(r["reward_yuan"] / initial for r in ledger if r["reward_owner"] is None)
+        return Episode(
+            decisions, ledger, initial, initial + sum(rewards) - fee, fee, prefix, 0, 0, 0
+        )
+
+    ep = make([2, 4, 6], 1, [None, 1, 1])
+    base = make([1, 1, 3], 2, [0, 0, 2])
+    assert apply_training_reward(ep, base, 100) == pytest.approx(0)
+    assert ep.samples[0]["training_reward"] == pytest.approx(7)
+    assert ep.samples[0]["reward"] == pytest.approx(0.09)
+    apply_training_reward(ep, ep, 100)
+    assert ep.samples[0]["training_reward"] == pytest.approx(0)
+    base.ledger[-1]["date"] = 99
+    with pytest.raises(ValueError, match="valuation date"):
+        apply_training_reward(ep, base, 100)
+
+
+def test_factorial_clips_only_market_features(market):
+    cfg, panel, funding, calendar = market
+    days = calendar.trading_days_between(date(2019, 2, 1), date(2019, 4, 1))
+    encoder = Encoder.fit(panel, funding, days[0], days[19], cfg.portfolio.universe)
+    encoder.scale[:] = 1e-8
+
+    def replay():
+        return collect(
+            RebalanceEnv(panel, calendar, funding, cfg, decision_step_days=5),
+            encoder,
+            lambda obs: Draw(0, 0, 0, 0),
+            days[20],
+            days[26],
+        )
+
+    raw = replay().samples[0]["obs"]
+    encoder.market_clip = 5
+    clipped = replay().samples[0]["obs"]
+    n = len(encoder.mean)
+    assert max(abs(v) for v in raw[:n]) > 5
+    np.testing.assert_allclose(clipped[:n], np.clip(raw[:n], -5, 5))
+    assert raw[n:] == clipped[n:]

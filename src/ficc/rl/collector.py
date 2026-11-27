@@ -24,6 +24,7 @@ class Encoder:
     mean: np.ndarray
     scale: np.ndarray
     tenors: tuple[float, ...]
+    market_clip: float | None = None
 
     @staticmethod
     def market_features(panel, funding):
@@ -59,6 +60,8 @@ class Encoder:
         rates = self.market.loc[pd.Timestamp(cutoff)].to_numpy(dtype=float)
         missing = np.isnan(rates)
         values = np.where(missing, 0, (rates - self.mean) / self.scale)
+        if self.market_clip is not None:
+            values = np.clip(values, -self.market_clip, self.market_clip)
         notional = ctx.cfg.benchmark.notional
         faces = dict.fromkeys(self.tenors, 0.0)
         for position in ctx.positions:
@@ -187,3 +190,30 @@ def collect(env: RebalanceEnv, encoder: Encoder, draw: Callable, start: date, en
         inference,
         perf_counter() - started - inference,
     )
+
+
+def apply_training_reward(episode: Episode, reference: Episode | None, scale: float):
+    """Subtract the same-calendar zero ledger in actor ownership intervals; preserve raw rewards."""
+    deductions = {r["date"]: 0.0 for r in episode.samples}
+    prefix = episode.prefix_reward
+    target = episode.net_terminal - episode.initial_nav
+    if reference is not None:
+        if episode.initial_nav != reference.initial_nav:
+            raise ValueError("reference opening NAV differs")
+        for row, base in zip(episode.ledger, reference.ledger, strict=True):
+            if row["date"] != base["date"]:
+                raise ValueError("reference valuation date differs")
+            net = (base["reward_yuan"] - base["terminal_fee_yuan"]) / episode.initial_nav
+            if row["reward_owner"] is None:
+                prefix -= net
+            else:
+                deductions[row["reward_owner"]] += net
+        target = episode.net_terminal - reference.net_terminal
+    for row in episode.samples:
+        row["training_reward"] = (row["reward"] - deductions[row["date"]]) * scale
+    error = (
+        prefix + sum(r["training_reward"] for r in episode.samples) / scale
+    ) * episode.initial_nav - target
+    if not np.isfinite(error) or abs(error) > 1e-5:
+        raise ValueError("training reward failed terminal reconciliation")
+    return error
