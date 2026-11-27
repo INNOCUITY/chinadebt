@@ -478,3 +478,77 @@ def test_coverage_paths_reuse_matched_ledger(ev, tmp_path, monkeypatch):
     next((tmp_path / "fold-0/band-2").glob("*.json")).unlink()
     with pytest.raises(FileNotFoundError):
         coverage.summarize(tmp_path)
+
+
+def test_lambda_one_changes_only_target_and_preserves_first_rollout(ev, tmp_path, monkeypatch):
+    import torch
+    import train_rl as cli
+
+    from ficc.rl.ppo import advantages
+
+    flags = dict(
+        action_grid=True,
+        grid_active=True,
+        zero_critic=True,
+        critic_budget=True,
+        invested_start=True,
+        actor_step=True,
+        neutral_actor=True,
+    )
+    old = cli.training_spec(0, 20261111, **flags)
+    new = cli.training_spec(0, 20261111, lambda_one=True, **flags)
+    assert {k for k in new if new[k] != old.get(k)} == {"gae_lambda", "lambda_sha256"}
+    assert new["gae_lambda"] == 1
+    with pytest.raises(ValueError, match="registered neutral"):
+        cli.training_spec(0, 20261111, lambda_one=True)
+    rewards = np.array([0.01, -0.02, 0.005, -0.001])
+    values = np.array([0.3, -0.7, 0.2, 0.4])
+    target = values + advantages(rewards, values, gae_lambda=1, terminated=True)
+    np.testing.assert_allclose(target, rewards[::-1].cumsum()[::-1], atol=1e-15, rtol=0)
+
+    plan = json.loads(cli.EVAL_SPEC.read_text())
+    plan["folds"][0]["train"][1] = "2019-04-02"
+    path = tmp_path / "folds.json"
+    path.write_text(json.dumps(plan))
+    monkeypatch.setattr(cli, "EVAL_SPEC", path)
+    options = [
+        "--action-grid",
+        "--grid-active",
+        "--zero-critic",
+        "--critic-budget",
+        "--invested-start",
+        "--actor-step",
+        "--neutral-actor",
+        "--fold",
+        "0",
+        "--seed",
+        "20261111",
+        "--device",
+        "cpu",
+        "--stop-after",
+        "2",
+    ]
+    cli.main(["train", "--output", str(tmp_path / "control"), *options])
+    cli.main(
+        [
+            "train",
+            "--output",
+            str(tmp_path / "candidate"),
+            *options,
+            "--lambda-one",
+            "--verify-resume",
+        ]
+    )
+    assert (tmp_path / "control/trajectory-1.json").read_bytes() == (
+        tmp_path / "candidate/trajectory-1.json"
+    ).read_bytes()
+    metrics = json.loads((tmp_path / "candidate/metrics-2.json").read_text())
+    assert metrics["resume_verified"] and metrics["closure_error_yuan"] < 1e-5
+    candidate = tmp_path / "candidate/update-2.pt"
+    spec = cli.training_spec(0, 20261111, lambda_one=True, **flags)
+    market = ev.Market(date(2019, 4, 2))
+    ev.load_policy(candidate, spec, 2, market, market.cfg)
+    with pytest.raises(ValueError, match="checkpoint"):
+        ev.load_policy(candidate, cli.training_spec(0, 20261111, **flags), 2, market, market.cfg)
+    saved = torch.load(candidate, map_location="cpu", weights_only=False)
+    assert saved["identity"]["spec"]["gae_lambda"] == 1.0

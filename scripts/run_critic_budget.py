@@ -18,6 +18,7 @@ from train_rl import (
     EVAL_SPEC,
     GRID_SPEC,
     INVESTED_SPEC,
+    LAMBDA_SPEC,
     NEUTRAL_SPEC,
     ROOT,
     dump,
@@ -42,7 +43,7 @@ def plateau(history, design):
     )
 
 
-def archived_budget_control(directory, fold, seed, *, invested, slow=False):
+def archived_budget_control(directory, fold, seed, *, invested, slow=False, neutral=False):
     result = read(directory / "validation.json")
     expected = (fold, seed, sha(CRITIC_BUDGET), sha(INVESTED_SPEC) if invested else None)
     if (
@@ -54,7 +55,8 @@ def archived_budget_control(directory, fold, seed, *, invested, slow=False):
         )
         != expected
         or result.get("actor_step_sha256") != (sha(ACTOR_STEP_SPEC) if slow else None)
-        or "neutral_actor_sha256" in result
+        or result.get("neutral_actor_sha256") != (sha(NEUTRAL_SPEC) if neutral else None)
+        or "lambda_sha256" in result
     ):
         raise ValueError("paired control identity mismatch")
     digest = sha(directory / "training/update-16.pt")
@@ -76,7 +78,10 @@ def run(
     cash_reference=None,
     invested_reference=None,
     slow_reference=None,
+    lambda_reference=None,
 ):
+    if lambda_reference is not None and slow_reference is None:
+        raise ValueError("lambda control requires neutral actor references")
     spec = training_spec(
         fold,
         seed,
@@ -87,6 +92,7 @@ def run(
         invested_start=cash_reference is not None,
         actor_step=invested_reference is not None,
         neutral_actor=slow_reference is not None,
+        lambda_one=lambda_reference is not None,
     )
     design = read(CRITIC_BUDGET)
     out = root / f"fold-{fold}/seed-{seed}"
@@ -114,6 +120,11 @@ def run(
         paired_controls["gain_vs_slow_16"] = archived_budget_control(
             slow_reference / out.parent.name / out.name, fold, seed, invested=True, slow=True
         )
+    if lambda_reference is not None:
+        neutral_dir = lambda_reference / out.parent.name / out.name
+        paired_controls["gain_vs_neutral_16"] = archived_budget_control(
+            neutral_dir, fold, seed, invested=True, slow=True, neutral=True
+        )
     out.mkdir(parents=True, exist_ok=False)
     ck = out / "training"
     subprocess.run(
@@ -125,6 +136,7 @@ def run(
             "--grid-active",
             "--zero-critic",
             "--critic-budget",
+            *(["--lambda-one"] if lambda_reference is not None else []),
             *(["--neutral-actor"] if slow_reference is not None else []),
             *(["--actor-step"] if invested_reference is not None else []),
             *(["--invested-start"] if cash_reference is not None else []),
@@ -170,6 +182,17 @@ def run(
             raise ValueError(
                 "neutral initialization did not reproduce initial sampling probabilities"
             )
+    if lambda_reference is not None:
+        neutral = saved(neutral_dir / "training/update-16.pt")
+        baseline_spec = dict(spec)
+        baseline_spec.pop("lambda_sha256")
+        baseline_spec["gae_lambda"] = 0.95
+        if neutral["identity"]["spec"] != baseline_spec:
+            raise ValueError("lambda comparison changed more than GAE lambda")
+        if neutral["identity"]["data"] != new["identity"]["data"]:
+            raise ValueError("lambda comparison training data differs")
+        if read(ck / "trajectory-1.json") != read(neutral_dir / "training/trajectory-1.json"):
+            raise ValueError("lambda comparison changed the pre-update trajectory")
     start, end = map(date.fromisoformat, new["identity"]["episode"])
     market = Market(end)
     begin = date.fromisoformat(read(EVAL_SPEC)["anchor"]) if cash_reference is not None else start
@@ -237,6 +260,7 @@ def run(
             seed=seed,
             design_sha256=sha(CRITIC_BUDGET),
             plateau=plateau(history, design),
+            **({"lambda_sha256": sha(LAMBDA_SPEC)} if lambda_reference is not None else {}),
             rows=rows,
             **(
                 {"actor_step_sha256": sha(ACTOR_STEP_SPEC)}
@@ -249,7 +273,7 @@ def run(
     )
 
 
-def summarize(root, invested=False, actor_step=False, neutral_actor=False):
+def summarize(root, invested=False, actor_step=False, neutral_actor=False, lambda_one=False):
     grid = read(GRID_SPEC)
     design = read(CRITIC_BUDGET)
     records = []
@@ -263,6 +287,8 @@ def summarize(root, invested=False, actor_step=False, neutral_actor=False):
             raise ValueError("actor step protocol mismatch")
         if d.get("neutral_actor_sha256") != (sha(NEUTRAL_SPEC) if neutral_actor else None):
             raise ValueError("neutral actor protocol mismatch")
+        if d.get("lambda_sha256") != (sha(LAMBDA_SPEC) if lambda_one else None):
+            raise ValueError("lambda protocol mismatch")
         records.append(d)
     controls = ["gain_vs_2", "gain_vs_continuous"]
     if invested:
@@ -271,6 +297,8 @@ def summarize(root, invested=False, actor_step=False, neutral_actor=False):
         controls.append("gain_vs_invested_16")
     if neutral_actor:
         controls.append("gain_vs_slow_16")
+    if lambda_one:
+        controls.append("gain_vs_neutral_16")
     stats = {}
     for b in grid["bands"]:
         rows = []
@@ -299,6 +327,7 @@ if __name__ == "__main__":
     sub = p.add_subparsers(dest="cmd", required=True)
     job = sub.add_parser("run")
     job.add_argument("--slow-reference", type=Path)
+    job.add_argument("--lambda-reference", type=Path)
     job.add_argument("--invested-reference", type=Path)
     job.add_argument("--cash-reference", type=Path)
     job.add_argument("--fold", type=int, required=True)
@@ -307,6 +336,7 @@ if __name__ == "__main__":
     job.add_argument("--device", choices=["cpu", "cuda"], required=True)
     summary = sub.add_parser("summary")
     summary.add_argument("--neutral-actor", action="store_true")
+    summary.add_argument("--lambda-one", action="store_true")
     summary.add_argument("--actor-step", action="store_true")
     summary.add_argument("--invested", action="store_true")
     for c in (summary, job):
@@ -322,15 +352,17 @@ if __name__ == "__main__":
             a.cash_reference,
             a.invested_reference,
             a.slow_reference,
+            a.lambda_reference,
         )
     else:
         print(
             json.dumps(
                 summarize(
                     a.root,
-                    a.invested or a.actor_step or a.neutral_actor,
-                    a.actor_step or a.neutral_actor,
-                    a.neutral_actor,
+                    a.invested or a.actor_step or a.neutral_actor or a.lambda_one,
+                    a.actor_step or a.neutral_actor or a.lambda_one,
+                    a.neutral_actor or a.lambda_one,
+                    a.lambda_one,
                 ),
                 indent=2,
                 allow_nan=False,

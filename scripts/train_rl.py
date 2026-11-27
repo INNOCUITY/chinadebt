@@ -59,6 +59,9 @@ ACTOR_STEP_SPEC = ROOT / "config/experiments/ppo_actor_step.json"
 NEUTRAL_SPEC = ROOT / "config/experiments/ppo_neutral_actor.json"
 
 
+LAMBDA_SPEC = ROOT / "config/experiments/ppo_lambda_one.json"
+
+
 def training_spec(
     fold=None,
     seed=None,
@@ -72,6 +75,7 @@ def training_spec(
     invested_start=False,
     actor_step=False,
     neutral_actor=False,
+    lambda_one=False,
 ):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
@@ -135,6 +139,12 @@ def training_spec(
             raise ValueError("neutral actor requires the frozen invested slow actor")
         spec["neutral_actor_sha256"] = hashlib.sha256(NEUTRAL_SPEC.read_bytes()).hexdigest()
         spec["zero_tilt_logit"] = json.loads(NEUTRAL_SPEC.read_text())["zero_tilt_logit"]
+    if lambda_one:
+        design = json.loads(LAMBDA_SPEC.read_text())
+        if not neutral_actor or fold not in design["folds"] or seed not in design["seeds"]:
+            raise ValueError("lambda experiment requires the registered neutral actor pair")
+        spec["gae_lambda"] = design["gae_lambda"]
+        spec["lambda_sha256"] = hashlib.sha256(LAMBDA_SPEC.read_bytes()).hexdigest()
     return spec
 
 
@@ -220,6 +230,7 @@ def main(argv=None):
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--grid-active", action="store_true")
     parser.add_argument("--neutral-actor", action="store_true")
+    parser.add_argument("--lambda-one", action="store_true")
     parser.add_argument("--actor-step", action="store_true")
     parser.add_argument("--invested-start", action="store_true")
     parser.add_argument("--critic-budget", action="store_true")
@@ -250,6 +261,7 @@ def main(argv=None):
         invested_start=args.invested_start,
         actor_step=args.actor_step,
         neutral_actor=args.neutral_actor,
+        lambda_one=args.lambda_one,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")

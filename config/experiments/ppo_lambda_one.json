@@ -1,0 +1,12 @@
+{
+  "version": "neutral-actor-lambda-one-v1",
+  "gae_lambda": 1.0,
+  "folds": [0, 10, 21],
+  "seeds": [20261111, 20261112],
+  "checkpoints": [2, 4, 8, 12, 16],
+  "control": "Archived neutral actor, same fold and seed, lambda 0.95, update 16.",
+  "change": "Only GAE lambda changes. Preserve active net reward, reward units, invested opening, neutral actor initialization, zero critic head, two-layer 64-unit networks, optimizer, learning rates, four epochs per update, and 16 updates.",
+  "identity": "Before the first update, reproduce the entire archived trajectory and training data hash. Gamma remains 1. Verify values plus GAE equal undiscounted realized reward-to-go when lambda=1.",
+  "primary": "Compare fixed update 16 on both registered development validation bands. Retain original neutral-actor gates and additionally require at least four of six improvements and positive median gain against neutral update 16 at 2 lot, with nonnegative median gain at 1 lot.",
+  "interpretation": "A bounded value-target experiment. Same-batch MC error reduction and hindsight inventory opportunity do not establish predictive returns. No independent forward confirmation without passing the frozen development gates."
+}
