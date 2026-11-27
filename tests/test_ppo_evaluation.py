@@ -274,3 +274,22 @@ def test_action_value_fit_and_sequential_holdout(ev, tmp_path, monkeypatch):
     assert all(r["net_bp"][0] == 0.0 and len(r["net_bp"]) == 4 for r in labels)
     assert {r["band"] for r in result["rows"]} == {1, 2}
     assert type(probe.summarize(tmp_path)["consider_development_replay"]) is bool
+    import audit_action_values as audit
+
+    monkeypatch.setattr(audit, "DESIGN", path)
+    out = tmp_path / "audit"
+    audit.continuous(out, tmp_path, 0, 2)
+    for i in (0, 1):
+        audit.one_step(out, 0, 2, i, 2)
+    audit.join(out, tmp_path, 0, 2)
+    ref = json.loads((out / "fold-0/band-2/audit.json").read_text())
+    assert len(ref["decisions"]) > 1
+    for row in ref["decisions"]:
+        assert row["selected_bp"] == row["actual_bp"][row["selected_index"]]
+    assert ref["comparisons"]["zero"]["net_difference_bp"] == pytest.approx(
+        result["rows"][0]["selector"]["net_bp"]
+    )
+    labels[0]["features"][0] += 50
+    (tmp_path / "fold-0/fit_labels.json").write_text(json.dumps(labels))
+    with pytest.raises(ValueError, match="identity"):
+        audit.join(out, tmp_path, 0, 2)

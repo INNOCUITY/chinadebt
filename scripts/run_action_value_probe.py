@@ -47,8 +47,7 @@ def probe_labels(market, zero, anchor, signal, end, design):
         yield active_bp(book, zero, signal, end)
 
 
-def run(output, fold):
-    design = json.loads(DESIGN.read_text())
+def probe_window(fold, design):
     if fold not in design["folds"]:
         raise ValueError("unregistered fold")
     plan = json.loads(EVAL_SPEC.read_text())
@@ -59,7 +58,6 @@ def run(output, fold):
     days = calendar.trading_days_between(first, last)
     n = json.loads(SPEC.read_text())["calibration_days"]
     grid = [d for d in ExperimentProtocol().decision_dates(calendar, anchor, last) if d >= days[n]]
-    intervals, inner_start, end = training_split(grid)
     calibration_mean = market.features.loc[str(first) : str(days[n - 1])].mean().to_numpy()
     if not np.isfinite(calibration_mean).all():
         raise ValueError("invalid training calibration")
@@ -69,6 +67,25 @@ def run(output, fold):
         missing = np.isnan(raw)
         return np.r_[np.where(missing, calibration_mean, raw), missing]
 
+    return market, anchor, grid, features
+
+
+def fit_selector(samples, design):
+    x = np.array([r["features"] for r in samples])
+    y = np.array([r["net_bp"] for r in samples])
+    models = [fit_ridge(x, col, design["ridge_alpha"]) for col in y.T[1:]]
+
+    def predict(x):
+        return np.array([0.0, *(m.predict(x) for m in models)])
+
+    return predict, int(y.mean(axis=0).argmax())
+
+
+def run(output, fold):
+    design = json.loads(DESIGN.read_text())
+    market, anchor, grid, features = probe_window(fold, design)
+    calendar = market.calendar
+    intervals, inner_start, end = training_split(grid)
     dest = output / f"fold-{fold}"
     dest.mkdir(parents=True, exist_ok=False)
     band = design["label_band"]
@@ -87,17 +104,15 @@ def run(output, fold):
             )
         )
         dump(dest / "fit_labels.json", samples)
-    x = np.array([r["features"] for r in samples])
     y = np.array([r["net_bp"] for r in samples])
-    models = [fit_ridge(x, col, design["ridge_alpha"]) for col in y.T[1:]]
+    predict, fixed_index = fit_selector(samples, design)
     actions = design["actions"]
-    fixed = actions[int(y.mean(axis=0).argmax())]
+    fixed = actions[fixed_index]
 
     def choose(ctx, prev):
         if ctx.curve.as_of != calendar.prev_trading_day(ctx.as_of):
             raise ValueError("feature cutoff mismatch")
-        x = features(ctx.curve.as_of)
-        return actions[int(np.argmax([0.0, *(m.predict(x) for m in models)]))]
+        return actions[int(predict(features(ctx.curve.as_of)).argmax())]
 
     rows = []
     for b in design["replay_bands"]:
