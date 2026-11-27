@@ -47,6 +47,9 @@ GRID_SPEC = ROOT / "config/experiments/ppo_action_grid.json"
 CRITIC_SPEC = ROOT / "config/experiments/ppo_critic_init.json"
 
 
+CRITIC_BUDGET = ROOT / "config/experiments/ppo_critic_budget.json"
+
+
 def training_spec(
     fold=None,
     seed=None,
@@ -56,6 +59,7 @@ def training_spec(
     action_grid=False,
     grid_active=False,
     zero_critic=False,
+    critic_budget=False,
 ):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
@@ -98,6 +102,13 @@ def training_spec(
         if not action_grid:
             raise ValueError("critic pilot requires registered categorical policy")
         spec["critic_init_sha256"] = hashlib.sha256(CRITIC_SPEC.read_bytes()).hexdigest()
+    if critic_budget:
+        if not (zero_critic and grid_active):
+            raise ValueError("critic budget requires registered active zero-critic grid")
+        spec.update(
+            updates=max(json.loads(CRITIC_BUDGET.read_text())["checkpoints"]),
+            budget_sha256=hashlib.sha256(CRITIC_BUDGET.read_bytes()).hexdigest(),
+        )
     return spec
 
 
@@ -162,6 +173,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--grid-active", action="store_true")
+    parser.add_argument("--critic-budget", action="store_true")
     parser.add_argument("--zero-critic", action="store_true")
     parser.add_argument("--action-grid", action="store_true")
     parser.add_argument("--budget-pilot", action="store_true")
@@ -185,6 +197,7 @@ def main(argv=None):
         action_grid=args.action_grid,
         grid_active=args.grid_active,
         zero_critic=args.zero_critic,
+        critic_budget=args.critic_budget,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")

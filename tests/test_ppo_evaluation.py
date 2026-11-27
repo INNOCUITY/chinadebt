@@ -129,3 +129,23 @@ def test_execution_trace_hold_and_date_alignment(ev):
     assert sum(r["net_pnl_yuan"] for r in rows.values()) == pytest.approx(
         book.net_nav.iloc[-1] - book.net_nav.iloc[0]
     )
+
+
+def test_critic_budget_requires_stable_profit_and_policy(ev):
+    from run_critic_budget import plateau
+    from train_rl import CRITIC_BUDGET, training_spec
+
+    design = json.loads(CRITIC_BUDGET.read_text())
+    spec = training_spec(
+        0, 20261111, zero_critic=True, grid_active=True, action_grid=True, critic_budget=True
+    )
+    assert spec["updates"] == 16
+    with pytest.raises(ValueError):
+        training_spec(0, 20261111, action_grid=True, critic_budget=True)
+    curve = [
+        dict(train_active_bp=x, mean_action_tv=y) for x, y in [(8, None), (8.8, 0.02), (8.4, 0.01)]
+    ]
+    assert not plateau(curve[:2], design)
+    assert plateau(curve, design)
+    assert not plateau([*curve[:-1], dict(train_active_bp=10, mean_action_tv=0.01)], design)
+    assert not plateau([*curve[:-1], dict(train_active_bp=8, mean_action_tv=0.1)], design)

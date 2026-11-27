@@ -1,0 +1,9 @@
+{
+  "version": "active-grid-critic-budget-v1",
+  "checkpoints": [2, 4, 8, 12, 16],
+  "primary": "fixed update 16 minus 2, active net reward with zero-initialized critic; all six original pairs",
+  "plateau": "last three registered training replays span <=1 bp deterministic active net return and each of the two adjacent mean total variation distances on first-rollout observations is <=0.02",
+  "max_training_range_bp": 1.0,
+  "max_mean_action_tv": 0.02,
+  "validation": "at budget cap compare all pairs with archived update 2 and original continuous PPO at bands 2 and 1. No reward or checkpoint selection on test. Require all six terminal plateaus and prior paired and absolute screening conditions before considering other validation folds."
+}
