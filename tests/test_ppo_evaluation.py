@@ -78,3 +78,32 @@ def test_matrix_rejects_invalid_gate(ev, tmp_path, monkeypatch):
     (folder / "selection.json").write_text("{}")
     with pytest.raises(ValueError, match="第 0 折"):
         check_gate(tmp_path, plan)
+
+
+def test_budget_pilot_fixed_pairs_and_reference(ev):
+    from run_ppo_budget_pilot import verify_reference
+    from train_rl import PILOT_SPEC, training_spec
+
+    pilot = json.loads(PILOT_SPEC.read_text())
+    assert pilot["folds"] == [0, 10, 21] and pilot["updates"] == [2, 4, 8]
+    for fold in pilot["folds"]:
+        for seed in pilot["seeds"]:
+            spec = training_spec(fold, seed, budget_pilot=True)
+            original = training_spec(fold, seed)
+            assert spec == dict(original, updates=8, budget_protocol=pilot["version"])
+            assert original["updates"] == 2 and spec["validation"][1] < spec["test"][0]
+    with pytest.raises(ValueError):
+        training_spec(1, pilot["seeds"][0], budget_pilot=True)
+    row = dict(
+        update=2, net_excess_vs_zero_bp=-1, te_vs_zero_bp=1, turnover=1, trades=2, net_cost_yuan=12
+    )
+    ref = dict(
+        fold=fold,
+        seed=seed,
+        candidates=[row],
+        validation=spec["validation"],
+        plan_sha256=ev.sha(ev.EVAL_SPEC),
+    )
+    verify_reference(ref, fold, seed, row, spec)
+    with pytest.raises(ValueError, match="reproduce"):
+        verify_reference(ref, fold, seed, dict(row, trades=3), spec)

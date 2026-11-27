@@ -35,13 +35,21 @@ SPEC = ROOT / "config/experiments/ppo_smoke.json"
 EVAL_SPEC = ROOT / "config/experiments/ppo_evaluation.json"
 
 
-def training_spec(fold=None, seed=None):
+PILOT_SPEC = ROOT / "config/experiments/ppo_budget_pilot.json"
+
+
+def training_spec(fold=None, seed=None, *, budget_pilot=False):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
         plan = json.loads(EVAL_SPEC.read_text())
         if fold < 0 or fold >= len(plan["folds"]) or seed not in plan["seeds"]:
             raise ValueError("fold 或 seed 超出冻结实验清单")
         spec.update(plan["folds"][fold], seed=seed)
+    if budget_pilot:
+        pilot = json.loads(PILOT_SPEC.read_text())
+        if fold not in pilot["folds"] or seed not in pilot["seeds"]:
+            raise ValueError("fold/seed outside budget pilot")
+        spec.update(updates=max(pilot["updates"]), budget_protocol=pilot["version"])
     return spec
 
 
@@ -104,6 +112,7 @@ def main(argv=None):
     parser.add_argument("mode", choices=["profile", "train", "resume"])
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--budget-pilot", action="store_true")
     parser.add_argument("--fold", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--checkpoint", type=Path)
@@ -116,7 +125,7 @@ def main(argv=None):
         parser.error("resume 需要指定 --checkpoint")
     if (args.fold is None) != (args.seed is None):
         parser.error("--fold 和 --seed 必须配对")
-    spec = training_spec(args.fold, args.seed)
+    spec = training_spec(args.fold, args.seed, budget_pilot=args.budget_pilot)
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
     out = args.output

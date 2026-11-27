@@ -1,0 +1,9 @@
+{
+  "version": "validation-budget-v1",
+  "folds": [0, 10, 21],
+  "seeds": [20261111, 20261112],
+  "updates": [2, 4, 8],
+  "band_lots": 2,
+  "primary_comparison": "update 8 minus update 2 validation net excess vs zero, bp",
+  "expansion_rule": "At least 4 of 6 paired gains strictly positive at 8 decimal places and median gain positive. Update 4 is descriptive."
+}

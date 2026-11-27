@@ -186,15 +186,13 @@ def winner(rows):
     return max(rows, key=lambda r: (round(r["net_excess_vs_zero_bp"], 8), -r["update"]))
 
 
-def select(plan, fold, seed, checkpoints, out):
-    spec = training_spec(fold, seed)
+def validation_rows(plan, spec, checkpoints, updates, band):
     start, end = map(date.fromisoformat, spec["validation"])
     anchor = date.fromisoformat(plan["anchor"])
     market = Market(end)
-    band = plan["bands"][0]
     zero, _ = replay(market, anchor, end, band, lambda ctx, prev: 0.0)
     rows = []
-    for update in plan["updates"]:
+    for update in updates:
         p = checkpoints / f"update-{update}.pt"
         act = load_actor(p, spec, update, market, market.cfg)
         book, error = replay(
@@ -207,11 +205,18 @@ def select(plan, fold, seed, checkpoints, out):
         rows.append(
             dict(
                 update=update,
+                mean_abs_action=float(book.loc[start:end, "proposal_z"].abs().mean()),
                 checkpoint_sha256=sha(p),
                 ledger_error_yuan=error,
                 **score(book, zero, start, end, market.calendar, market.cfg.backtest.annual_days),
             )
         )
+    return rows
+
+
+def select(plan, fold, seed, checkpoints, out):
+    spec = training_spec(fold, seed)
+    rows = validation_rows(plan, spec, checkpoints, plan["updates"], plan["bands"][0])
     best = winner(rows)
     result = dict(
         fold=fold,
