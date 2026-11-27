@@ -444,6 +444,11 @@ def test_coverage_paths_reuse_matched_ledger(ev, tmp_path, monkeypatch):
     import run_inventory_coverage as coverage
     import run_inventory_value as inventory
 
+    plan = coverage.read(coverage.PLAN)
+    plan.update(folds=[0], bands=[2])
+    plan_path = tmp_path / "coverage-plan.json"
+    plan_path.write_text(json.dumps(plan))
+    monkeypatch.setattr(coverage, "PLAN", plan_path)
     cfg, market, anchor, intervals, start, end, enc = inventory.window(0)
     intervals = intervals[:2]
     monkeypatch.setattr(
@@ -466,3 +471,10 @@ def test_coverage_paths_reuse_matched_ledger(ev, tmp_path, monkeypatch):
     saved = next(r for r in rows if r["path"] == 0 and r["signal"] == str(intervals[1][0]))
     assert saved["net_bp"] == old["net_bp"]
     coverage.collect(tmp_path, 0, 2, 0, 2)
+    coverage.summarize(tmp_path)
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["results"][0]["intervals"] == 2
+    assert summary["results"][0]["dates"][0]["distinct_states"] == 1
+    next((tmp_path / "fold-0/band-2").glob("*.json")).unlink()
+    with pytest.raises(FileNotFoundError):
+        coverage.summarize(tmp_path)
