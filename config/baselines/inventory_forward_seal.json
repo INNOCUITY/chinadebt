@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-11-27",
+  "training_commit": "b0163a1838dda42109e42fa1b6afef6a131038e7",
+  "design_sha256": "428096ff7dc7623564e26d5c2c74aa6a69bdc7052685f9e1fcccb3877097a07f",
+  "inner_sha256": {
+    "0": "99912fc9060b58f278d4403ab181c1d0ffdbda350f6259fb0fced73a3dc9c05e",
+    "10": "ab7ad1889403e5178cf87bd052fdc5c3c475adb33483c3b68d1f92581abc6c61",
+    "21": "df0cae1f0684938d761a6b5f9e2b9d0283d9e7742ea41376b42f7de15600e13a"
+  },
+  "model_sha256": "15a4b5cf2bbb28b7b221e94ccb3da1bd02525d726a5475a1561af152baaaa0da",
+  "fixed_action": 1.0,
+  "calendar_sha256": "8cd2ca3d3e3b8e599be2cbdffbe363e069c1e8d55f49d1eaea92c4863fb82eca",
+  "runtime_sha256": "b20f09e83718e2b6bd31fd4c624533c4afe8992b508c49b3f6015331e0077fb0"
+}

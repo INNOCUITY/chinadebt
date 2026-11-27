@@ -1,0 +1,17 @@
+{
+  "0": {
+    "dates": 29,
+    "disjoint_best_dates": 0,
+    "mean_hindsight_gain_bp": 0.0
+  },
+  "10": {
+    "dates": 29,
+    "disjoint_best_dates": 1,
+    "mean_hindsight_gain_bp": 0.04887561188799689
+  },
+  "21": {
+    "dates": 29,
+    "disjoint_best_dates": 0,
+    "mean_hindsight_gain_bp": 0.0
+  }
+}

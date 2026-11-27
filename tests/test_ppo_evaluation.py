@@ -320,13 +320,18 @@ def test_confirmation_uses_only_current_and_previous_suggestions(ev):
 def test_inventory_value_forks_and_forward_gate(ev, tmp_path, monkeypatch):
     import run_action_value_probe as probe
     import run_inventory_value as inventory
+    from inventory_forward import digest_lines, scheduled_window
+
+    from ficc.utils.calendar import TradingCalendar
 
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
         json.dumps({"anchor": "2019-02-01", "folds": [{"train": ["2019-02-01", "2019-04-30"]}]})
     )
     cfg = json.loads(inventory.DESIGN.read_text())
-    cfg.update(folds=[0], confirmation_fold=0)
+    cfg.update(
+        folds=[0], confirmation_fold=0, confirmation_start="2019-05-01", confirmation_intervals=2
+    )
     path = tmp_path / "design.json"
     path.write_text(json.dumps(cfg))
     monkeypatch.setattr(probe, "EVAL_SPEC", plan_path)
@@ -352,13 +357,61 @@ def test_inventory_value_forks_and_forward_gate(ev, tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="screen failed"):
         inventory.confirm(tmp_path)
     monkeypatch.setattr(inventory, "gates", lambda root: {"eligible": True})
-    monkeypatch.setattr(inventory, "Market", lambda end: ev.Market(date(2019, 6, 1)))
-    with pytest.raises(ValueError, match="not available"):
+    anchor, cutoff = date(2019, 2, 1), date(2019, 4, 30)
+    full = ev.Market(date(2019, 6, 1))
+    history = full.calendar.trading_days_between(anchor, cutoff)
+    # Static synthetic source, independent of every damaged input below; includes a makeup Sunday.
+    suffix = [
+        f"2019-05-{d:02d}"
+        for d in (5, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 20, 21, 22, 23, 24, 27, 28, 29, 30, 31)
+    ]
+    plan = dict(
+        anchor=str(anchor),
+        history_end=str(cutoff),
+        verified_through=suffix[-1],
+        history_sessions=len(history),
+        history_sha256=digest_lines(history),
+        sessions=suffix,
+    )
+    calendar_file = tmp_path / "calendar.json"
+    seal_file = tmp_path / "seal.json"
+    calendar_file.write_text(json.dumps(plan))
+    seal = dict(
+        calendar_sha256=ev.sha(calendar_file),
+        design_sha256=ev.sha(path),
+        model_sha256=inner["model_sha256"],
+        fixed_action=model["fixed_action"],
+        inner_sha256={"0": ev.sha(tmp_path / "fold-0/inner.json")},
+        runtime_sha256=inventory.runtime_digest(inventory.ROOT),
+    )
+    seal_file.write_text(json.dumps(seal))
+    monkeypatch.setattr(inventory, "CALENDAR", calendar_file)
+    monkeypatch.setattr(inventory, "SEAL", seal_file)
+    start, end, dates = scheduled_window(plan, cfg, anchor)
+    with pytest.raises(ValueError, match="verified calendar"):
+        scheduled_window({**plan, "sessions": suffix[:5]}, cfg, anchor)
+    # The would-be extra session remains available even after deleting a full curve.
+    for omitted in (dates[dates.index(start) + 1], end):
+        damaged = ev.Market(dates[-1])
+        damaged.panel = damaged.panel.drop(ev.pd.Timestamp(omitted))
+        damaged.calendar = TradingCalendar.from_dates(damaged.panel.index)
+        monkeypatch.setattr(inventory, "Market", lambda through, m=damaged: m)
+        with pytest.raises(ValueError, match=str(omitted)):
+            inventory.confirm(tmp_path)
+        assert not (tmp_path / "confirmation.json").exists()
+    damaged = ev.Market(end)
+    damaged.funding = damaged.funding.drop(ev.pd.Timestamp(start))
+    monkeypatch.setattr(inventory, "Market", lambda through: damaged)
+    with pytest.raises(ValueError, match="funding observations incomplete"):
         inventory.confirm(tmp_path)
-    cfg.update(confirmation_start="2019-05-01", confirmation_intervals=2)
-    path.write_text(json.dumps(cfg))
+    monkeypatch.setattr(inventory, "Market", ev.Market)
+    seal_file.write_text(json.dumps({**seal, "model_sha256": "changed"}))
+    with pytest.raises(ValueError, match="artifacts differ"):
+        inventory.confirm(tmp_path)
+    seal_file.write_text(json.dumps(seal))
     inventory.confirm(tmp_path)
     confirmation = json.loads((tmp_path / "confirmation.json").read_text())
+    assert [confirmation[k] for k in ("start", "end")] == [str(start), str(end)]
     assert confirmation["start"] > inner["end"] and len(confirmation["bands"]) == 2
     with pytest.raises(ValueError, match="already recorded"):
         inventory.confirm(tmp_path)

@@ -8,17 +8,20 @@ from statistics import median
 from tempfile import TemporaryDirectory
 
 import numpy as np
-import pandas as pd
 from audit_action_values import matched, read
 from evaluate_rl import Market, replay, sha
+from inventory_forward import checked_calendar, runtime_digest, scheduled_window
 from run_action_value_probe import active_bp, probe_window, training_split
 from run_ml_baseline import RidgeModel, fit_ridge
 from train_rl import EVAL_SPEC, ROOT, SPEC, dump
 
-from ficc.research.protocol import ExperimentProtocol
 from ficc.rl.collector import Encoder
 
 DESIGN = ROOT / "config/experiments/inventory_value.json"
+
+
+CALENDAR = ROOT / "config/baselines/inventory_forward_calendar.json"
+SEAL = ROOT / "config/baselines/inventory_forward_seal.json"
 
 
 def window(fold):
@@ -295,24 +298,24 @@ def confirm(root):
         raise ValueError("confirmation already recorded")
     model_path = root / f"fold-{cfg['confirmation_fold']}/model.json"
     model = read(model_path)
-    m = Market(date.today())
-    anchor = date.fromisoformat(read(EVAL_SPEC)["anchor"])
-    last = min(m.panel.dropna(how="all").index.max(), m.funding.dropna().index.max()).date()
-    first = date.fromisoformat(cfg["confirmation_start"])
-    if last < first:
-        raise ValueError("forward period not available")
-    g = [d for d in ExperimentProtocol().decision_dates(m.calendar, anchor, last) if d >= first]
-    n = cfg["confirmation_intervals"]
-    if len(g) <= n:
-        raise ValueError("forward period incomplete")
-    dates = pd.DatetimeIndex(
-        m.calendar.trading_days_between(m.calendar.prev_trading_day(g[0]), g[n])
-    )
+    seal = read(SEAL)
     if (
-        m.panel.reindex(index=dates, columns=model["tenors"]).isna().any().any()
-        or m.funding.reindex(dates).isna().any()
+        seal["design_sha256"] != sha(DESIGN)
+        or model["design_sha256"] != seal["design_sha256"]
+        or seal["model_sha256"] != sha(model_path)
+        or model["fixed_action"] != seal["fixed_action"]
+        or seal["calendar_sha256"] != sha(CALENDAR)
+        or seal["runtime_sha256"] != runtime_digest(ROOT)
+        or any(
+            sha(root / f"fold-{f}/inner.json") != seal["inner_sha256"][str(f)] for f in cfg["folds"]
+        )
     ):
-        raise ValueError("forward curve or funding observations incomplete")
+        raise ValueError("frozen confirmation artifacts differ")
+    plan = read(CALENDAR)
+    anchor = date.fromisoformat(read(EVAL_SPEC)["anchor"])
+    start, end, suffix = scheduled_window(plan, cfg, anchor)
+    m = Market(end)
+    m.calendar = checked_calendar(m, anchor, end, plan, suffix)
     enc = Encoder(
         m.features,
         np.array(model["encoder_mean"]),
@@ -321,7 +324,7 @@ def confirm(root):
     )
     if enc.names[: len(model["names"])] != model["names"]:
         raise ValueError("forward feature schema changed")
-    result = evaluate(m, anchor, g[0], g[n], enc, cfg, model)
+    result = evaluate(m, anchor, start, end, enc, cfg, model)
     passed = all(
         all(
             v["net_difference_bp"] > 0 if row["band"] == 2 else v["net_difference_bp"] >= 0
@@ -335,8 +338,9 @@ def confirm(root):
             staged,
             dict(
                 model_sha256=sha(model_path),
-                start=str(g[0]),
-                end=str(g[n]),
+                seal_sha256=sha(SEAL),
+                start=str(start),
+                end=str(end),
                 bands=result,
                 passed=passed,
             ),

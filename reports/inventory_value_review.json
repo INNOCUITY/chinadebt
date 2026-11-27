@@ -1,0 +1,281 @@
+{
+  "training_commit": "b0163a1838dda42109e42fa1b6afef6a131038e7",
+  "folds": {
+    "0": {
+      "fit_rows": 58,
+      "fit_intervals": 29,
+      "distinct_face_dates": 19,
+      "fixed_action": 1.0,
+      "labels_sha256": "7e4fad882c0dfa02c5a9e2071674112c04bf3501f4a376501479873387ac9e8d",
+      "fold": 0,
+      "model_sha256": "5630163ebc7d30beeb307154a0e9af1a629a23a176774780d9ea8900aa8cc99c",
+      "start": "2019-10-12",
+      "end": "2020-02-10",
+      "bands": [
+        {
+          "band": 2,
+          "controls": {
+            "zero": {
+              "days": 80,
+              "different_faces_days": 80,
+              "trades": 6,
+              "reference_trades": 3,
+              "cost_difference_yuan": 91717.53430022276,
+              "net_difference_bp": 40.49852424663697
+            },
+            "hold": {
+              "days": 80,
+              "different_faces_days": 80,
+              "trades": 6,
+              "reference_trades": 2,
+              "cost_difference_yuan": 92496.56550770023,
+              "net_difference_bp": 38.62014916535859
+            },
+            "fixed": {
+              "days": 80,
+              "different_faces_days": 5,
+              "trades": 6,
+              "reference_trades": 10,
+              "cost_difference_yuan": -5249.279562673198,
+              "net_difference_bp": 5.699561133867145
+            },
+            "market": {
+              "days": 80,
+              "different_faces_days": 40,
+              "trades": 6,
+              "reference_trades": 35,
+              "cost_difference_yuan": -21806.325980089096,
+              "net_difference_bp": 40.82455056625162
+            }
+          }
+        },
+        {
+          "band": 1,
+          "controls": {
+            "zero": {
+              "days": 80,
+              "different_faces_days": 65,
+              "trades": 17,
+              "reference_trades": 5,
+              "cost_difference_yuan": 83377.0286701567,
+              "net_difference_bp": 7.863938732007312
+            },
+            "hold": {
+              "days": 80,
+              "different_faces_days": 70,
+              "trades": 17,
+              "reference_trades": 2,
+              "cost_difference_yuan": 89734.94690833475,
+              "net_difference_bp": 5.658536147532027
+            },
+            "fixed": {
+              "days": 80,
+              "different_faces_days": 25,
+              "trades": 17,
+              "reference_trades": 24,
+              "cost_difference_yuan": -22635.709108609357,
+              "net_difference_bp": -17.914262552890314
+            },
+            "market": {
+              "days": 80,
+              "different_faces_days": 20,
+              "trades": 17,
+              "reference_trades": 39,
+              "cost_difference_yuan": -29983.03146097029,
+              "net_difference_bp": 9.794347461154645
+            }
+          }
+        }
+      ]
+    },
+    "10": {
+      "fit_rows": 58,
+      "fit_intervals": 29,
+      "distinct_face_dates": 19,
+      "fixed_action": 1.0,
+      "labels_sha256": "4d22748d35e3b0d277c820ed9386ff0c5908b53be0af81b6c863be6386a9f8d1",
+      "fold": 10,
+      "model_sha256": "af19c721793b2eb902ca567b3a176af9b9beca655d835b96785a98ee0010ad8f",
+      "start": "2022-04-21",
+      "end": "2022-08-15",
+      "bands": [
+        {
+          "band": 2,
+          "controls": {
+            "zero": {
+              "days": 80,
+              "different_faces_days": 70,
+              "trades": 3,
+              "reference_trades": 0,
+              "cost_difference_yuan": 703.0520764009323,
+              "net_difference_bp": 1.9735356303600504
+            },
+            "hold": {
+              "days": 80,
+              "different_faces_days": 70,
+              "trades": 3,
+              "reference_trades": 0,
+              "cost_difference_yuan": 703.0520764009323,
+              "net_difference_bp": 1.9735356303600504
+            },
+            "fixed": {
+              "days": 80,
+              "different_faces_days": 0,
+              "trades": 3,
+              "reference_trades": 3,
+              "cost_difference_yuan": 0.0,
+              "net_difference_bp": 0.0
+            },
+            "market": {
+              "days": 80,
+              "different_faces_days": 0,
+              "trades": 3,
+              "reference_trades": 3,
+              "cost_difference_yuan": 0.0,
+              "net_difference_bp": 0.0
+            }
+          }
+        },
+        {
+          "band": 1,
+          "controls": {
+            "zero": {
+              "days": 80,
+              "different_faces_days": 80,
+              "trades": 13,
+              "reference_trades": 9,
+              "cost_difference_yuan": 3933.8958038083238,
+              "net_difference_bp": 6.459960627725799
+            },
+            "hold": {
+              "days": 80,
+              "different_faces_days": 80,
+              "trades": 13,
+              "reference_trades": 0,
+              "cost_difference_yuan": 5646.149453635516,
+              "net_difference_bp": 6.446542913979957
+            },
+            "fixed": {
+              "days": 80,
+              "different_faces_days": 0,
+              "trades": 13,
+              "reference_trades": 13,
+              "cost_difference_yuan": 0.0,
+              "net_difference_bp": 0.0
+            },
+            "market": {
+              "days": 80,
+              "different_faces_days": 0,
+              "trades": 13,
+              "reference_trades": 13,
+              "cost_difference_yuan": 0.0,
+              "net_difference_bp": 0.0
+            }
+          }
+        }
+      ]
+    },
+    "21": {
+      "fit_rows": 58,
+      "fit_intervals": 29,
+      "distinct_face_dates": 19,
+      "fixed_action": 1.0,
+      "labels_sha256": "b095bdc96245d5a19953a7fa13209773bb3431c9b5876009673d6fb490267f08",
+      "fold": 21,
+      "model_sha256": "15a4b5cf2bbb28b7b221e94ccb3da1bd02525d726a5475a1561af152baaaa0da",
+      "start": "2025-01-26",
+      "end": "2025-05-21",
+      "bands": [
+        {
+          "band": 2,
+          "controls": {
+            "zero": {
+              "days": 75,
+              "different_faces_days": 75,
+              "trades": 11,
+              "reference_trades": 2,
+              "cost_difference_yuan": 30392.917737741675,
+              "net_difference_bp": 0.5461079134781197
+            },
+            "hold": {
+              "days": 75,
+              "different_faces_days": 75,
+              "trades": 11,
+              "reference_trades": 2,
+              "cost_difference_yuan": 30392.917737741675,
+              "net_difference_bp": 0.5461079134781197
+            },
+            "fixed": {
+              "days": 75,
+              "different_faces_days": 75,
+              "trades": 11,
+              "reference_trades": 7,
+              "cost_difference_yuan": 21917.820058273017,
+              "net_difference_bp": 2.08407362087715
+            },
+            "market": {
+              "days": 75,
+              "different_faces_days": 5,
+              "trades": 11,
+              "reference_trades": 19,
+              "cost_difference_yuan": -42463.404673473975,
+              "net_difference_bp": -6.16477174086672
+            }
+          }
+        },
+        {
+          "band": 1,
+          "controls": {
+            "zero": {
+              "days": 75,
+              "different_faces_days": 75,
+              "trades": 27,
+              "reference_trades": 6,
+              "cost_difference_yuan": 49124.50193667144,
+              "net_difference_bp": -0.5974420695482743
+            },
+            "hold": {
+              "days": 75,
+              "different_faces_days": 75,
+              "trades": 27,
+              "reference_trades": 2,
+              "cost_difference_yuan": 49993.53327621485,
+              "net_difference_bp": -0.691866176380757
+            },
+            "fixed": {
+              "days": 75,
+              "different_faces_days": 50,
+              "trades": 27,
+              "reference_trades": 27,
+              "cost_difference_yuan": 14270.255634152525,
+              "net_difference_bp": 3.633145524342999
+            },
+            "market": {
+              "days": 75,
+              "different_faces_days": 10,
+              "trades": 27,
+              "reference_trades": 28,
+              "cost_difference_yuan": -34634.31719668277,
+              "net_difference_bp": -7.773311288872666
+            }
+          }
+        }
+      ]
+    }
+  },
+  "median_bp": {
+    "2": {
+      "zero": 1.9735356303600504,
+      "hold": 1.9735356303600504,
+      "fixed": 2.08407362087715,
+      "market": 0.0
+    },
+    "1": {
+      "zero": 6.459960627725799,
+      "hold": 5.658536147532027,
+      "fixed": 0.0,
+      "market": 0.0
+    }
+  },
+  "eligible": false
+}
