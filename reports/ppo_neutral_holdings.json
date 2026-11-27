@@ -1,0 +1,248 @@
+[
+  {
+    "fold": 0,
+    "seed": 20261111,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "zero": 12
+    },
+    "trades": 4,
+    "zero_trades": 4,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "no_trade_deadband": 8,
+      "executed": 4
+    }
+  },
+  {
+    "fold": 0,
+    "seed": 20261112,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 60,
+    "actions": {
+      "short": 7,
+      "long": 5
+    },
+    "trades": 21,
+    "zero_trades": 4,
+    "mean_abs_dv01_difference": 7908.606881258002,
+    "net_excess_bp": -45.14970776358762,
+    "net_pnl_difference_yuan": -475442.58551853895,
+    "cost_difference_yuan": 48707.5747843161,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "executed": 12
+    }
+  },
+  {
+    "fold": 0,
+    "seed": 20261111,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "zero": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "no_trade_deadband": 12
+    }
+  },
+  {
+    "fold": 0,
+    "seed": 20261112,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 60,
+    "actions": {
+      "short": 7,
+      "long": 5
+    },
+    "trades": 8,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 8214.608892984508,
+    "net_excess_bp": -39.62920286777694,
+    "net_pnl_difference_yuan": -417322.86194330454,
+    "cost_difference_yuan": 39688.31599549905,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "executed": 2,
+      "no_trade_deadband": 10
+    }
+  },
+  {
+    "fold": 10,
+    "seed": 20261111,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  },
+  {
+    "fold": 10,
+    "seed": 20261112,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  },
+  {
+    "fold": 10,
+    "seed": 20261111,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  },
+  {
+    "fold": 10,
+    "seed": 20261112,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 1.4901161193847656e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  },
+  {
+    "fold": 21,
+    "seed": 20261111,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 58,
+    "actions": {
+      "long": 12
+    },
+    "trades": 10,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 7251.4690474381405,
+    "net_excess_bp": -8.573997652664422,
+    "net_pnl_difference_yuan": -111509.64293418825,
+    "cost_difference_yuan": 25522.085249306925,
+    "ledger_error_yuan": 2.9802322387695312e-08,
+    "outcomes": {
+      "executed": 6,
+      "no_trade_deadband": 6
+    }
+  },
+  {
+    "fold": 21,
+    "seed": 20261112,
+    "band": 1,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 2.9802322387695312e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  },
+  {
+    "fold": 21,
+    "seed": 20261111,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 58,
+    "actions": {
+      "long": 12
+    },
+    "trades": 4,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 5901.47133305506,
+    "net_excess_bp": -4.236441241136646,
+    "net_pnl_difference_yuan": -55084.87970414758,
+    "cost_difference_yuan": 7897.46001269317,
+    "ledger_error_yuan": 2.9802322387695312e-08,
+    "outcomes": {
+      "executed": 1,
+      "no_trade_deadband": 11
+    }
+  },
+  {
+    "fold": 21,
+    "seed": 20261112,
+    "band": 2,
+    "valuation_days": 63,
+    "different_faces_days": 0,
+    "actions": {
+      "hold": 12
+    },
+    "trades": 0,
+    "zero_trades": 0,
+    "mean_abs_dv01_difference": 0.0,
+    "net_excess_bp": 0.0,
+    "net_pnl_difference_yuan": 0.0,
+    "cost_difference_yuan": 0.0,
+    "ledger_error_yuan": 2.9802322387695312e-08,
+    "outcomes": {
+      "hold": 12
+    }
+  }
+]

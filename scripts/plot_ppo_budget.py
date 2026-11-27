@@ -43,6 +43,9 @@ def plot(report, output):
     if "gain_vs_invested_16" in report["summary"]["paired"]["2"]:
         keys.insert(0, "gain_vs_invested_16")
         labels.insert(0, "Invested start, standard step (16)")
+    if "gain_vs_slow_16" in report["summary"]["paired"]["2"]:
+        keys.insert(0, "gain_vs_slow_16")
+        labels.insert(0, "Invested start, slow actor (16)")
     positions = np.arange(len(keys))
     for band, offset, color in [("2", -0.16, "#17619c"), ("1", 0.16, "#a54d27")]:
         vals = [median(report["summary"]["paired"][band][key]) for key in keys]

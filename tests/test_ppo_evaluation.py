@@ -225,3 +225,52 @@ def test_neutral_actor_starts_at_benchmark_and_preserves_exploration(ev):
         "actor.4.weight",
         "actor.4.bias",
     }
+
+
+def test_action_value_labels_use_matched_opening_and_future_only_as_target(ev):
+    from run_action_value_probe import active_bp, probe_labels, training_split
+
+    market = ev.Market(date(2019, 5, 20))
+    anchor = date(2019, 2, 1)
+    grid = market.calendar.trading_days_between(anchor, date(2019, 5, 20))[::5]
+    intervals, inner, end = training_split(grid)
+    assert intervals[-1][1] < inner and end == grid[-1]
+    assert all(grid.index(b) == grid.index(a) + 1 for a, b in intervals)
+    day, horizon = intervals[-1]
+    zero, _ = ev.replay(market, anchor, end, 2, lambda ctx, prev: 0.0)
+    shorter, _ = ev.replay(market, anchor, horizon, 2, lambda ctx, prev: 0.0)
+    assert active_bp(shorter, zero, day, horizon) == pytest.approx(0, abs=1e-8)
+    labels = list(
+        probe_labels(
+            market, zero, anchor, day, horizon, {"label_band": 2, "actions": [0.0, None, -1.0, 1.0]}
+        )
+    )
+    assert len(labels) == 3 and np.isfinite(labels).all()
+    book, _ = ev.replay(market, anchor, end, 2, lambda ctx, prev: -1.0 if ctx.as_of == day else 0.0)
+    assert labels[1] == pytest.approx(active_bp(book, zero, day, horizon), abs=1e-8)
+    bad = zero.copy()
+    bad.at[day, "net_nav"] += 1.0
+    with pytest.raises(ValueError, match="opening"):
+        active_bp(book, bad, day, horizon)
+
+
+def test_action_value_fit_and_sequential_holdout(ev, tmp_path, monkeypatch):
+    import run_action_value_probe as probe
+
+    plan = {"anchor": "2019-02-01", "folds": [{"train": ["2019-02-01", "2019-05-20"]}]}
+    plan_path = tmp_path / "windows.json"
+    plan_path.write_text(json.dumps(plan))
+    monkeypatch.setattr(probe, "EVAL_SPEC", plan_path)
+    cfg = json.loads(probe.DESIGN.read_text())
+    cfg["folds"] = [0]
+    path = tmp_path / "design.json"
+    path.write_text(json.dumps(cfg))
+    monkeypatch.setattr(probe, "DESIGN", path)
+    probe.run(tmp_path, 0)
+    result = json.loads((tmp_path / "fold-0/result.json").read_text())
+    labels = json.loads((tmp_path / "fold-0/fit_labels.json").read_text())
+    assert all(r["cutoff"] < r["signal"] < r["horizon"] < result["inner_start"] for r in labels)
+    assert result["fit_intervals"] == len(labels) and result["end"] <= plan["folds"][0]["train"][1]
+    assert all(r["net_bp"][0] == 0.0 and len(r["net_bp"]) == 4 for r in labels)
+    assert {r["band"] for r in result["rows"]} == {1, 2}
+    assert type(probe.summarize(tmp_path)["consider_development_replay"]) is bool

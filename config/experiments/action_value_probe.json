@@ -1,0 +1,13 @@
+{
+  "version": "training-only-one-decision-active-values-v1",
+  "folds": [0, 10, 21],
+  "actions": [0.0, null, -1.0, 1.0],
+  "label_band": 2,
+  "replay_bands": [2, 1],
+  "ridge_alpha": 10.0,
+  "inner_split": "First two thirds of complete decision intervals for fitting, removing labels ending on or after the first inner evaluation decision. Last third for a continuous training-only ledger. Exclude incomplete last interval.",
+  "target": "At an invested benchmark opening, intervene at only one decision. Measure net NAV relative to zero tilt at the next scheduled decision, including trade costs and unsettled fees. No forced liquidation.",
+  "predictors": "Nine market features as of the previous trading day. Impute missing features with the initial training calibration mean and include missing indicators. Ridge standardizes on fit rows. One scalar model per non-benchmark action. Ties prefer zero.",
+  "controls": "Zero tilt and the single fixed action with the highest mean net label in the fit segment. Freeze both action selector and fixed control from 2 lot, apply unchanged at 1 lot.",
+  "screen": "Only consider evaluation on existing development windows if the three training-only inner replays have positive median paired net gains vs both controls at 2 lot and nonnegative median gains vs both at 1 lot. No expansion of folds or test access."
+}
