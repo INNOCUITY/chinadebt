@@ -1,0 +1,459 @@
+{
+  "gate": {
+    "bands": {
+      "2": {
+        "gain_bp": [
+          -14.303088588851764,
+          14.791800402043087,
+          0.18345836142352745,
+          -0.21431014758266365,
+          -5.242456410821106,
+          -4.1941682732982155
+        ],
+        "net_vs_zero_bp": [
+          -14.303088588851764,
+          14.791800402043087,
+          0.18345836142352745,
+          0.0,
+          -5.242456410821106,
+          -4.1941682732982155
+        ],
+        "positive": 2,
+        "median_gain": -2.2042392104404396,
+        "median_net": -2.0970841366491078
+      },
+      "1": {
+        "gain_bp": [
+          -13.323512700720297,
+          11.692205884243911,
+          -1.222933096580725,
+          -0.049134261208561014,
+          -7.023351773721709,
+          -3.7402861081015093
+        ],
+        "net_vs_zero_bp": [
+          -17.20045401550241,
+          13.128941346143286,
+          -1.222933096580725,
+          0.0,
+          -5.080631214726683,
+          -4.193223431970816
+        ],
+        "positive": 1,
+        "median_gain": -2.481609602341117,
+        "median_net": -2.7080782642757706
+      }
+    },
+    "expand_validation": false,
+    "active_minus_total_grid_bp": {
+      "2": [
+        0.0,
+        0.0,
+        -0.014775250010146124,
+        0.0,
+        0.0,
+        4.988618399613953
+      ],
+      "1": [
+        0.0,
+        0.0,
+        -0.4304272319433089,
+        0.0,
+        0.0,
+        4.98749458852199
+      ]
+    }
+  },
+  "pairs": {
+    "2": [
+      {
+        "fold": 0,
+        "seed": 20261111,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": -14.3030885888536,
+          "cost_delta_bp": 1.9065143967246565,
+          "trades": 4,
+          "actions": {
+            "0.0": 7,
+            "1.0": 5
+          },
+          "days": 63,
+          "days_different": 25,
+          "mean_abs_dv01_vs_zero": 3411.7678113613815
+        },
+        "active": {
+          "net_bp": -14.3030885888536,
+          "cost_delta_bp": 1.9065143967246565,
+          "trades": 4,
+          "actions": {
+            "0.0": 7,
+            "1.0": 5
+          },
+          "days": 63,
+          "days_different": 25,
+          "mean_abs_dv01_vs_zero": 3411.7678113613815
+        }
+      },
+      {
+        "fold": 0,
+        "seed": 20261112,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": 14.79180040204234,
+          "cost_delta_bp": 3.5857342390005487,
+          "trades": 4,
+          "actions": {
+            "1.0": 7,
+            "hold": 5
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 7607.552767831177
+        },
+        "active": {
+          "net_bp": 14.79180040204234,
+          "cost_delta_bp": 3.5857342390005487,
+          "trades": 4,
+          "actions": {
+            "1.0": 7,
+            "hold": 5
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 7607.552767831177
+        }
+      },
+      {
+        "fold": 10,
+        "seed": 20261111,
+        "between_reward_different_days": 40,
+        "total": {
+          "net_bp": 0.18345836142409713,
+          "cost_delta_bp": 0.07156981541475044,
+          "trades": 3,
+          "actions": {
+            "1.0": 3,
+            "hold": 9
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 347.5595694600144
+        },
+        "active": {
+          "net_bp": 0.1686831114136529,
+          "cost_delta_bp": 0.1300015040570477,
+          "trades": 5,
+          "actions": {
+            "1.0": 10,
+            "hold": 2
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 214.3888648097837
+        }
+      },
+      {
+        "fold": 10,
+        "seed": 20261112,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": 0.0,
+          "cost_delta_bp": 0.0,
+          "trades": 0,
+          "actions": {
+            "hold": 12
+          },
+          "days": 63,
+          "days_different": 0,
+          "mean_abs_dv01_vs_zero": 0.0
+        },
+        "active": {
+          "net_bp": 0.0,
+          "cost_delta_bp": 0.0,
+          "trades": 0,
+          "actions": {
+            "hold": 12
+          },
+          "days": 63,
+          "days_different": 0,
+          "mean_abs_dv01_vs_zero": 0.0
+        }
+      },
+      {
+        "fold": 21,
+        "seed": 20261111,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": -5.242456410821186,
+          "cost_delta_bp": 2.581751921790709,
+          "trades": 12,
+          "actions": {
+            "0.0": 9,
+            "1.0": 1,
+            "-1.0": 2
+          },
+          "days": 63,
+          "days_different": 13,
+          "mean_abs_dv01_vs_zero": 1762.0714469261982
+        },
+        "active": {
+          "net_bp": -5.242456410821186,
+          "cost_delta_bp": 2.581751921790709,
+          "trades": 12,
+          "actions": {
+            "0.0": 9,
+            "1.0": 1,
+            "-1.0": 2
+          },
+          "days": 63,
+          "days_different": 13,
+          "mean_abs_dv01_vs_zero": 1762.0714469261982
+        }
+      },
+      {
+        "fold": 21,
+        "seed": 20261112,
+        "between_reward_different_days": 15,
+        "total": {
+          "net_bp": -4.194168273298425,
+          "cost_delta_bp": 0.6036823093582492,
+          "trades": 4,
+          "actions": {
+            "hold": 10,
+            "1.0": 2
+          },
+          "days": 63,
+          "days_different": 23,
+          "mean_abs_dv01_vs_zero": 2378.7897008298087
+        },
+        "active": {
+          "net_bp": 0.7944501263150072,
+          "cost_delta_bp": 0.5859739106422858,
+          "trades": 4,
+          "actions": {
+            "hold": 11,
+            "1.0": 1
+          },
+          "days": 63,
+          "days_different": 8,
+          "mean_abs_dv01_vs_zero": 818.9457693904884
+        }
+      }
+    ],
+    "1": [
+      {
+        "fold": 0,
+        "seed": 20261111,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": -17.200454015502068,
+          "cost_delta_bp": 2.6309362023609055,
+          "trades": 12,
+          "actions": {
+            "0.0": 7,
+            "1.0": 5
+          },
+          "days": 63,
+          "days_different": 25,
+          "mean_abs_dv01_vs_zero": 3478.999028713169
+        },
+        "active": {
+          "net_bp": -17.200454015502068,
+          "cost_delta_bp": 2.6309362023609055,
+          "trades": 12,
+          "actions": {
+            "0.0": 7,
+            "1.0": 5
+          },
+          "days": 63,
+          "days_different": 25,
+          "mean_abs_dv01_vs_zero": 3478.999028713169
+        }
+      },
+      {
+        "fold": 0,
+        "seed": 20261112,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": 13.128941346143167,
+          "cost_delta_bp": 3.2982259731206183,
+          "trades": 12,
+          "actions": {
+            "1.0": 7,
+            "hold": 5
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 7510.723919098899
+        },
+        "active": {
+          "net_bp": 13.128941346143167,
+          "cost_delta_bp": 3.2982259731206183,
+          "trades": 12,
+          "actions": {
+            "1.0": 7,
+            "hold": 5
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 7510.723919098899
+        }
+      },
+      {
+        "fold": 10,
+        "seed": 20261111,
+        "between_reward_different_days": 35,
+        "total": {
+          "net_bp": -1.2229330965803393,
+          "cost_delta_bp": 0.35510118071865293,
+          "trades": 6,
+          "actions": {
+            "1.0": 3,
+            "hold": 9
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 2768.1155840417164
+        },
+        "active": {
+          "net_bp": -1.6533603285239813,
+          "cost_delta_bp": 0.46183029761756395,
+          "trades": 10,
+          "actions": {
+            "1.0": 10,
+            "hold": 2
+          },
+          "days": 63,
+          "days_different": 60,
+          "mean_abs_dv01_vs_zero": 2645.3920447318123
+        }
+      },
+      {
+        "fold": 10,
+        "seed": 20261112,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": 0.0,
+          "cost_delta_bp": 0.0,
+          "trades": 0,
+          "actions": {
+            "hold": 12
+          },
+          "days": 63,
+          "days_different": 0,
+          "mean_abs_dv01_vs_zero": 0.0
+        },
+        "active": {
+          "net_bp": 0.0,
+          "cost_delta_bp": 0.0,
+          "trades": 0,
+          "actions": {
+            "hold": 12
+          },
+          "days": 63,
+          "days_different": 0,
+          "mean_abs_dv01_vs_zero": 0.0
+        }
+      },
+      {
+        "fold": 21,
+        "seed": 20261111,
+        "between_reward_different_days": 0,
+        "total": {
+          "net_bp": -5.080631214727227,
+          "cost_delta_bp": 2.8430205597865448,
+          "trades": 13,
+          "actions": {
+            "0.0": 9,
+            "1.0": 1,
+            "-1.0": 2
+          },
+          "days": 63,
+          "days_different": 13,
+          "mean_abs_dv01_vs_zero": 1658.0537477541377
+        },
+        "active": {
+          "net_bp": -5.080631214727227,
+          "cost_delta_bp": 2.8430205597865448,
+          "trades": 13,
+          "actions": {
+            "0.0": 9,
+            "1.0": 1,
+            "-1.0": 2
+          },
+          "days": 63,
+          "days_different": 13,
+          "mean_abs_dv01_vs_zero": 1658.0537477541377
+        }
+      },
+      {
+        "fold": 21,
+        "seed": 20261112,
+        "between_reward_different_days": 15,
+        "total": {
+          "net_bp": -4.193223431971267,
+          "cost_delta_bp": 0.6035463148160208,
+          "trades": 4,
+          "actions": {
+            "hold": 10,
+            "1.0": 2
+          },
+          "days": 63,
+          "days_different": 23,
+          "mean_abs_dv01_vs_zero": 2378.7897008298087
+        },
+        "active": {
+          "net_bp": 0.7942711565508387,
+          "cost_delta_bp": 0.5858419053598971,
+          "trades": 4,
+          "actions": {
+            "hold": 11,
+            "1.0": 1
+          },
+          "days": 63,
+          "days_different": 8,
+          "mean_abs_dv01_vs_zero": 818.9457693904884
+        }
+      }
+    ]
+  },
+  "initial_advantage_corr": [
+    {
+      "fold": 0,
+      "seed": 20261111,
+      "archived": 0.9904891086521089,
+      "zero_head": 0.6118579643413451
+    },
+    {
+      "fold": 0,
+      "seed": 20261112,
+      "archived": 0.9928892896014839,
+      "zero_head": 0.02433384918786329
+    },
+    {
+      "fold": 10,
+      "seed": 20261111,
+      "archived": 0.9945489905254274,
+      "zero_head": -0.5082156715660444
+    },
+    {
+      "fold": 10,
+      "seed": 20261112,
+      "archived": 0.9990484924675813,
+      "zero_head": -0.3338038559616665
+    },
+    {
+      "fold": 21,
+      "seed": 20261111,
+      "archived": 0.9968811884274426,
+      "zero_head": 0.5612384651415292
+    },
+    {
+      "fold": 21,
+      "seed": 20261112,
+      "archived": 0.9952144645141939,
+      "zero_head": -0.13221905034098363
+    }
+  ]
+}

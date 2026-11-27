@@ -220,3 +220,46 @@ def test_categorical_hold_and_probabilities(market):
         model.actor[-1].weight.zero_()
         model.actor[-1].bias.zero_()
         assert model.deterministic(torch.tensor(ep.samples[0]["obs"])) is None
+
+
+def test_critic_initialization_keeps_first_grid_rollout_paired(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    from pathlib import Path
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    cli = importlib.import_module("train_rl")
+    registered = cli.training_spec
+
+    def short_spec(*args, **kwargs):
+        spec = registered(*args, **kwargs)
+        spec["train"] = [spec["train"][0], "2019-04-02"]
+        return spec
+
+    monkeypatch.setattr(cli, "training_spec", short_spec)
+    records = []
+    for label, flags in (("ordinary", []), ("zero", ["--zero-critic"])):
+        folder = tmp_path / label
+        cli.main(
+            [
+                "train",
+                "--action-grid",
+                "--grid-active",
+                "--fold",
+                "0",
+                "--seed",
+                "20261111",
+                "--device",
+                "cpu",
+                "--stop-after",
+                "1",
+                "--output",
+                str(folder),
+                *flags,
+            ]
+        )
+        records.append(json.loads((folder / "trajectory-1.json").read_text())["decisions"])
+    assert any(row["value"] != 0 for row in records[0])
+    for ordinary, zero in zip(*records, strict=True):
+        assert zero.pop("value") == 0
+        ordinary.pop("value")
+        assert ordinary == zero

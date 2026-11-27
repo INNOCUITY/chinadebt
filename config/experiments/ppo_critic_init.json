@@ -1,0 +1,8 @@
+{
+  "version": "categorical-critic-zero-v1",
+  "base": "ppo_action_grid.json",
+  "change": "after normal initialization zero the scalar critic output weight and bias only",
+  "primary": "active reward, zero critic head vs archived active reward, ordinary critic head",
+  "secondary": "same comparison under total reward; difference of the two paired changes",
+  "screen": "2 lot at least 4/6 strict gains at 8 decimals, positive median gain and positive absolute median vs zero; 1 lot nonnegative median gain. Also apply these conditions against frozen continuous PPO. Screening permits further validation only."
+}

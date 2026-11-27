@@ -44,8 +44,18 @@ FACTOR_SPEC = ROOT / "config/experiments/ppo_factorial.json"
 GRID_SPEC = ROOT / "config/experiments/ppo_action_grid.json"
 
 
+CRITIC_SPEC = ROOT / "config/experiments/ppo_critic_init.json"
+
+
 def training_spec(
-    fold=None, seed=None, *, budget_pilot=False, arm=None, action_grid=False, grid_active=False
+    fold=None,
+    seed=None,
+    *,
+    budget_pilot=False,
+    arm=None,
+    action_grid=False,
+    grid_active=False,
+    zero_critic=False,
 ):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
@@ -84,6 +94,10 @@ def training_spec(
         )
     if grid_active:
         spec.update(active_reward=True, reward_scale=1)
+    if zero_critic:
+        if not action_grid:
+            raise ValueError("critic pilot requires registered categorical policy")
+        spec["critic_init_sha256"] = hashlib.sha256(CRITIC_SPEC.read_bytes()).hexdigest()
     return spec
 
 
@@ -148,6 +162,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
     parser.add_argument("--grid-active", action="store_true")
+    parser.add_argument("--zero-critic", action="store_true")
     parser.add_argument("--action-grid", action="store_true")
     parser.add_argument("--budget-pilot", action="store_true")
     parser.add_argument("--fold", type=int)
@@ -169,6 +184,7 @@ def main(argv=None):
         arm=args.arm,
         action_grid=args.action_grid,
         grid_active=args.grid_active,
+        zero_critic=args.zero_critic,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
@@ -217,6 +233,9 @@ def main(argv=None):
         decision_step_days=protocol.decision_step_days,
     )
     model = ActorCritic(len(encoder.names), spec["hidden"], actions=spec.get("actions")).to(device)
+    if args.zero_critic:
+        torch.nn.init.zeros_(model.critic[-1].weight)
+        torch.nn.init.zeros_(model.critic[-1].bias)
     optimizer = torch.optim.Adam(model.parameters(), lr=spec["learning_rate"])
     identity = dict(
         spec=spec,
