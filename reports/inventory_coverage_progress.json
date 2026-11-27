@@ -1,0 +1,1896 @@
+{
+  "status": "incomplete",
+  "snapshot_date": "2026-11-27",
+  "source_commit": "a7ecc5dcac736d86408bafaf1c109c72ff299fa6",
+  "plan_sha256": "527a322ae0c0a8336ff099f5e36460d479e5e7be74e1bcb0d1b51c6e93fd0113",
+  "expected_labels": 1044,
+  "downloaded_labels": 514,
+  "downloaded_by_fold_band": {
+    "0/2": 174,
+    "0/1": 174,
+    "10/2": 52,
+    "10/1": 52,
+    "21/2": 32,
+    "21/1": 30
+  },
+  "original_labels_matched": 87,
+  "complete_results": [
+    {
+      "fold": 0,
+      "band": 2,
+      "complete": true,
+      "intervals": 29,
+      "distinct_states": 137,
+      "distinct_faces": 115,
+      "no_common_best_dates": 2,
+      "mean_hindsight_gain_bp": 0.002064070331753469,
+      "max_hindsight_gain_bp": 0.050003253972819274,
+      "dates": [
+        {
+          "signal": "2019-03-06",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 1,
+          "distinct_states": 1,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.0,
+            -2.805641063964947,
+            0.1900696924208039
+          ]
+        },
+        {
+          "signal": "2019-03-13",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 3,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.40646543472032226,
+            -0.8880071976622895,
+            -0.798161607642348
+          ]
+        },
+        {
+          "signal": "2019-03-20",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 3,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.12341039895169237,
+            -3.4507452463791566,
+            2.8822314123956354
+          ]
+        },
+        {
+          "signal": "2019-03-27",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.7531779910571743,
+            6.231642051083011,
+            -11.355869729071882
+          ]
+        },
+        {
+          "signal": "2019-04-03",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.25713023449992123,
+            2.700784573772407,
+            -4.925897163468937
+          ]
+        },
+        {
+          "signal": "2019-04-11",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.4654101696365697,
+            2.6668061113293122,
+            -5.121524178837807
+          ]
+        },
+        {
+          "signal": "2019-04-18",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.37191187391587266,
+            1.3830091402632223,
+            -4.029410248582155
+          ]
+        },
+        {
+          "signal": "2019-04-25",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.48648425800646977,
+            -2.681059195472293,
+            1.0205502326031248
+          ]
+        },
+        {
+          "signal": "2019-05-05",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.5066984561504719,
+            -3.557713837360088,
+            1.3719969744436105
+          ]
+        },
+        {
+          "signal": "2019-05-10",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.3346191139009286,
+            0.39200336600897706,
+            -1.8819443048269435
+          ]
+        },
+        {
+          "signal": "2019-05-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.7360383211787446,
+            -0.2334181589361985,
+            -1.7030347485996433
+          ]
+        },
+        {
+          "signal": "2019-05-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.2521544090815704,
+            -3.9215950694931245,
+            3.535963124103678
+          ]
+        },
+        {
+          "signal": "2019-05-31",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.03128309085013017,
+            -4.175431542277737,
+            1.8387085818410995
+          ]
+        },
+        {
+          "signal": "2019-06-10",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.17040666547327818,
+            -3.634640829236104,
+            3.187867804335297
+          ]
+        },
+        {
+          "signal": "2019-06-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.7128886027444424,
+            0.4377890330045545,
+            -2.6051160941643436
+          ]
+        },
+        {
+          "signal": "2019-06-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.050003253972819274,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.17439848232138755,
+            -1.374258103224383,
+            -0.09256565653002231
+          ]
+        },
+        {
+          "signal": "2019-07-01",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.4829188263882254,
+            -0.342116685369105,
+            -1.1698391891489717
+          ]
+        },
+        {
+          "signal": "2019-07-08",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.499749809985668,
+            -0.5392653166630068,
+            -1.1482229946492881
+          ]
+        },
+        {
+          "signal": "2019-07-15",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.00985478564803133,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.22441015357351465,
+            -1.3537763298351286,
+            -0.2291824630777155
+          ]
+        },
+        {
+          "signal": "2019-07-22",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.428925254889431,
+            1.2154019477946094,
+            -2.7273611886189797
+          ]
+        },
+        {
+          "signal": "2019-07-29",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.6621373644953664,
+            -9.42135557348347,
+            9.985270968400917
+          ]
+        },
+        {
+          "signal": "2019-08-05",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.10096692138373128,
+            -3.0816532143973587,
+            1.1829647641339633
+          ]
+        },
+        {
+          "signal": "2019-08-12",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.15326372555578788,
+            -2.6442792115611895,
+            0.7739412935966804
+          ]
+        },
+        {
+          "signal": "2019-08-19",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.6447840567223976,
+            0.4082665205257303,
+            -2.5335601023065544
+          ]
+        },
+        {
+          "signal": "2019-08-26",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.3861258851492345,
+            1.0052920641319614,
+            -3.6729916972179573
+          ]
+        },
+        {
+          "signal": "2019-09-02",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.5730338180357948,
+            -4.643566124578141,
+            3.979036762169089
+          ]
+        },
+        {
+          "signal": "2019-09-09",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.44772756958647475,
+            2.0159983318723085,
+            -4.418285050235243
+          ]
+        },
+        {
+          "signal": "2019-09-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.21082895822649023,
+            -1.0388012364885106,
+            -0.6330040405919802
+          ]
+        },
+        {
+          "signal": "2019-09-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 5,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.46192775336597,
+            0.8824415377777305,
+            -2.8775805557149616
+          ]
+        }
+      ]
+    },
+    {
+      "fold": 0,
+      "band": 1,
+      "complete": true,
+      "intervals": 29,
+      "distinct_states": 137,
+      "distinct_faces": 85,
+      "no_common_best_dates": 9,
+      "mean_hindsight_gain_bp": 0.040605984103494766,
+      "max_hindsight_gain_bp": 0.26867056002709094,
+      "dates": [
+        {
+          "signal": "2019-03-06",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 1,
+          "distinct_states": 1,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.0,
+            -2.805641063964947,
+            0.1900696924208039
+          ]
+        },
+        {
+          "signal": "2019-03-13",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 3,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0
+            ],
+            [
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.40646543472032226,
+            -0.9695876619199767,
+            -0.9097635845613151
+          ]
+        },
+        {
+          "signal": "2019-03-20",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 3,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.842097366368255,
+            -3.8913568864587673,
+            2.6041796556566887
+          ]
+        },
+        {
+          "signal": "2019-03-27",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.4430777862224824,
+            6.779452797184876,
+            -10.707354725556572
+          ]
+        },
+        {
+          "signal": "2019-04-03",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.060907677058078404,
+            2.808708947366852,
+            -4.715802378782373
+          ]
+        },
+        {
+          "signal": "2019-04-11",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.09289203080781654,
+            2.8965432570472625,
+            -4.7929298729998795
+          ]
+        },
+        {
+          "signal": "2019-04-18",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.048851149727795654,
+            1.4963806329748857,
+            -3.8195965232148383
+          ]
+        },
+        {
+          "signal": "2019-04-25",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.22237567318668172,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.6897001877494003,
+            -3.071196296685823,
+            0.7405318823681561
+          ]
+        },
+        {
+          "signal": "2019-05-05",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.18806696887976737,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.46919818857234025,
+            -3.6893703013113592,
+            1.154388868546801
+          ]
+        },
+        {
+          "signal": "2019-05-10",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.3351117524683903,
+            0.39258004902451427,
+            -1.8827559453036287
+          ]
+        },
+        {
+          "signal": "2019-05-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0
+            ],
+            [
+              0
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.7366477788572035,
+            -0.5023320043782002,
+            -1.9970762141064888
+          ]
+        },
+        {
+          "signal": "2019-05-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -1.1284532602674688,
+            -4.458504380616756,
+            3.1971275726548476
+          ]
+        },
+        {
+          "signal": "2019-05-31",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.2639095065759123,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.4564511597686242,
+            -4.738354338940772,
+            1.3773646054793118
+          ]
+        },
+        {
+          "signal": "2019-06-10",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.31211114318919664,
+            -3.443666960346698,
+            3.3608817117755914
+          ]
+        },
+        {
+          "signal": "2019-06-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.2678025505351666,
+            0.5640793286795345,
+            -2.286117852019852
+          ]
+        },
+        {
+          "signal": "2019-06-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.035184523989052155,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.2985218568681143,
+            -1.4831218826022685,
+            -0.10751137068964511
+          ]
+        },
+        {
+          "signal": "2019-07-01",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0
+            ],
+            [
+              0
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.41462909611669174,
+            -0.4254992020826084,
+            -1.1273058569240233
+          ]
+        },
+        {
+          "signal": "2019-07-08",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0
+            ],
+            [
+              0
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.5611890391370818,
+            -0.6887134786414024,
+            -1.4277026288789179
+          ]
+        },
+        {
+          "signal": "2019-07-15",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.026736898468091908,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.28332979107011524,
+            -1.428937661003257,
+            -0.21234583076910124
+          ]
+        },
+        {
+          "signal": "2019-07-22",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.14162750801853735,
+            1.3802578348263892,
+            -2.453366673556043
+          ]
+        },
+        {
+          "signal": "2019-07-29",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.08182366265207222,
+            -8.213934464316504,
+            11.081616416195429
+          ]
+        },
+        {
+          "signal": "2019-08-05",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.16309124417620624,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.403032053331696,
+            -3.4528122105942565,
+            0.9163613489753988
+          ]
+        },
+        {
+          "signal": "2019-08-12",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.11220537814317892,
+            -2.622883537274853,
+            0.7931148434820783
+          ]
+        },
+        {
+          "signal": "2019-08-19",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.26867056002709094,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0
+            ],
+            [
+              2
+            ],
+            [
+              0
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.5973450819238421,
+            0.1646582479910726,
+            -2.7976346841853483
+          ]
+        },
+        {
+          "signal": "2019-08-26",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.0665507331182944,
+            1.1169291365021308,
+            -3.4658012221661862
+          ]
+        },
+        {
+          "signal": "2019-09-02",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              3
+            ],
+            [
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -1.1787308031699524,
+            -4.994924806459784,
+            3.724182574352946
+          ]
+        },
+        {
+          "signal": "2019-09-09",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": false,
+          "hindsight_gain_bp": 0.0,
+          "best_indices": [
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ],
+            [
+              2
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            0.0389488404283143,
+            2.212449254031413,
+            -4.128417478038244
+          ]
+        },
+        {
+          "signal": "2019-09-17",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.0018108420573647202,
+          "best_indices": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0
+            ],
+            [
+              3
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.2598032213367768,
+            -1.1177185073545668,
+            -0.6093005624691081
+          ]
+        },
+        {
+          "signal": "2019-09-24",
+          "same_face_conflict_groups": 0,
+          "distinct_faces": 3,
+          "distinct_states": 5,
+          "no_common_best": true,
+          "hindsight_gain_bp": 0.007727321641180729,
+          "best_indices": [
+            [
+              2
+            ],
+            [
+              0
+            ],
+            [
+              2
+            ],
+            [
+              0
+            ],
+            [
+              2
+            ]
+          ],
+          "mean_action_net_bp": [
+            0.0,
+            -0.2247658841602373,
+            0.9418699998604229,
+            -2.730358640699472
+          ]
+        }
+      ]
+    }
+  ],
+  "decision": "Completed fold 0 has small state-specific hindsight gains. Folds 10 and 21 are still running. No new lambda training was started in this check."
+}
