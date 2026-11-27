@@ -87,7 +87,7 @@ def update(model: ActorCritic, optimizer, episode: Episode, spec: dict) -> dict:
 
     obs, latent, old_prob = tensor("obs"), tensor("latent"), tensor("log_prob")
     values = np.array([row["value"] for row in samples])
-    rewards = [row["training_reward" if "arm" in spec else "reward"] for row in samples]
+    rewards = [row["training_reward" if "reward_scale" in spec else "reward"] for row in samples]
     adv = advantages(rewards, values, gae_lambda=spec["gae_lambda"], terminated=True)
     if len(adv) < 2:
         raise ValueError("PPO 至少需要两个决策")

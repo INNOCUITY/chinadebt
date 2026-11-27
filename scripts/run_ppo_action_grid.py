@@ -15,11 +15,11 @@ from evaluate_rl import sha, validation_rows
 from train_rl import EVAL_SPEC, FACTOR_SPEC, GRID_SPEC, ROOT, dump, training_spec
 
 
-def run(root, reference, fold, seed, device):
-    spec = training_spec(fold, seed, action_grid=True)
+def run(root, reference, fold, seed, device, active=False):
+    spec = training_spec(fold, seed, action_grid=True, grid_active=active)
     plan = json.loads(EVAL_SPEC.read_text())
     grid = json.loads(GRID_SPEC.read_text())
-    out = root / f"fold-{fold}" / f"seed-{seed}"
+    out = root / ("active" if active else "total") / f"fold-{fold}" / f"seed-{seed}"
     baseline = json.loads(
         (reference / out.parent.name / out.name / "total/validation.json").read_text()
     )
@@ -39,6 +39,7 @@ def run(root, reference, fold, seed, device):
             str(ROOT / "scripts/train_rl.py"),
             "train",
             "--action-grid",
+            *(["--grid-active"] if active else []),
             "--device",
             device,
             "--fold",
@@ -85,21 +86,39 @@ def run(root, reference, fold, seed, device):
             )
         )
         dump(out / f"days-{band}.json", days)
-    dump(out / "validation.json", dict(grid_sha256=sha(GRID_SPEC), fold=fold, seed=seed, rows=rows))
+    dump(
+        out / "validation.json",
+        dict(grid_sha256=sha(GRID_SPEC), fold=fold, seed=seed, active=active, rows=rows),
+    )
 
 
 def summarize(root):
     grid = json.loads(GRID_SPEC.read_text())
     bands = {band: [] for band in grid["bands"]}
+    reward = {band: [] for band in bands}
     for fold, seed in product(grid["folds"], grid["seeds"]):
-        d = json.loads((root / f"fold-{fold}/seed-{seed}/validation.json").read_text())
-        if (d["grid_sha256"], d["fold"], d["seed"]) != (sha(GRID_SPEC), fold, seed):
-            raise ValueError("inconsistent grid result")
+        pair = {}
+        for active, label in [(False, "total"), (True, "active")]:
+            d = json.loads((root / label / f"fold-{fold}/seed-{seed}/validation.json").read_text())
+            if (d["grid_sha256"], d["fold"], d["seed"], d["active"]) != (
+                sha(GRID_SPEC),
+                fold,
+                seed,
+                active,
+            ):
+                raise ValueError("inconsistent grid result")
+            pair[label] = {}
+            for band in bands:
+                (row,) = [
+                    r
+                    for r in d["rows"]
+                    if r["band_lots"] == band and r["update"] == grid["updates"]
+                ]
+                pair[label][band] = row["net_excess_vs_zero_bp"]
+                if not active:
+                    bands[band].append(row)
         for band in bands:
-            (row,) = [
-                r for r in d["rows"] if r["band_lots"] == band and r["update"] == grid["updates"]
-            ]
-            bands[band].append(row)
+            reward[band].append(pair["active"][band] - pair["total"][band])
     result = {}
     for b, rows in bands.items():
         gain = [r["gain_vs_continuous_bp"] for r in rows]
@@ -117,13 +136,14 @@ def summarize(root):
         and result[1]["median_gain"] >= 0
         and result[2]["median_net"] > 0
     )
-    return dict(bands=result, expand_validation=passed)
+    return dict(bands=result, expand_validation=passed, active_minus_total_grid_bp=reward)
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
     job = sub.add_parser("run")
+    job.add_argument("--active", action="store_true")
     job.add_argument("--reference", type=Path, required=True)
     job.add_argument("--fold", type=int, required=True)
     job.add_argument("--seed", type=int, required=True)
@@ -132,6 +152,6 @@ if __name__ == "__main__":
         cmd.add_argument("--root", type=Path, required=True)
     a = p.parse_args()
     if a.command == "run":
-        run(a.root.resolve(), a.reference, a.fold, a.seed, a.device)
+        run(a.root.resolve(), a.reference, a.fold, a.seed, a.device, a.active)
     else:
         print(json.dumps(summarize(a.root), indent=2, allow_nan=False))

@@ -44,7 +44,9 @@ FACTOR_SPEC = ROOT / "config/experiments/ppo_factorial.json"
 GRID_SPEC = ROOT / "config/experiments/ppo_action_grid.json"
 
 
-def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None, action_grid=False):
+def training_spec(
+    fold=None, seed=None, *, budget_pilot=False, arm=None, action_grid=False, grid_active=False
+):
     spec = json.loads(SPEC.read_text())
     if fold is not None:
         plan = json.loads(EVAL_SPEC.read_text())
@@ -69,6 +71,8 @@ def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None, action_
             updates=design["updates"],
             design_sha256=hashlib.sha256(FACTOR_SPEC.read_bytes()).hexdigest(),
         )
+    if grid_active and not action_grid:
+        raise ValueError("grid reward requires categorical actions")
     if action_grid:
         grid = json.loads(GRID_SPEC.read_text())
         if arm or budget_pilot or fold not in grid["folds"] or seed not in grid["seeds"]:
@@ -78,6 +82,8 @@ def training_spec(fold=None, seed=None, *, budget_pilot=False, arm=None, action_
             updates=grid["updates"],
             grid_sha256=hashlib.sha256(GRID_SPEC.read_bytes()).hexdigest(),
         )
+    if grid_active:
+        spec.update(active_reward=True, reward_scale=1)
     return spec
 
 
@@ -141,6 +147,7 @@ def main(argv=None):
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arm", choices=json.loads(FACTOR_SPEC.read_text())["arms"])
+    parser.add_argument("--grid-active", action="store_true")
     parser.add_argument("--action-grid", action="store_true")
     parser.add_argument("--budget-pilot", action="store_true")
     parser.add_argument("--fold", type=int)
@@ -161,6 +168,7 @@ def main(argv=None):
         budget_pilot=args.budget_pilot,
         arm=args.arm,
         action_grid=args.action_grid,
+        grid_active=args.grid_active,
     )
     if args.stop_after is not None and not 1 <= args.stop_after <= spec["updates"]:
         parser.error("stop-after 超出更新预算")
@@ -265,7 +273,7 @@ def main(argv=None):
             return model.draw(obs, fixed_latent=next(fixed) if profile else None)
 
         episode = collect(env, encoder, draw, start, end)
-        if args.arm is not None:
+        if "reward_scale" in spec:
             apply_training_reward(episode, reference, spec["reward_scale"])
         return episode
 
