@@ -315,3 +315,50 @@ def test_confirmation_uses_only_current_and_previous_suggestions(ev):
     expected = [0, 0, 0, 3, 3, 3, 1, 1, 2]
     assert list(confirmed_targets(original, 0)) == expected
     assert list(confirmed_targets(original[:4], 0)) == expected[:4]
+
+
+def test_inventory_value_forks_and_forward_gate(ev, tmp_path, monkeypatch):
+    import run_action_value_probe as probe
+    import run_inventory_value as inventory
+
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"anchor": "2019-02-01", "folds": [{"train": ["2019-02-01", "2019-04-30"]}]})
+    )
+    cfg = json.loads(inventory.DESIGN.read_text())
+    cfg.update(folds=[0], confirmation_fold=0)
+    path = tmp_path / "design.json"
+    path.write_text(json.dumps(cfg))
+    monkeypatch.setattr(probe, "EVAL_SPEC", plan_path)
+    monkeypatch.setattr(inventory, "EVAL_SPEC", plan_path)
+    monkeypatch.setattr(inventory, "DESIGN", path)
+    for shard in (0, 1):
+        inventory.labels(tmp_path, 0, shard, 2)
+    rows = [json.loads(p.read_text()) for p in sorted((tmp_path / "fold-0/labels").glob("*.json"))]
+    assert all(r["net_bp"][0] == r["delta_cost_yuan"][0] == 0 for r in rows)
+    assert all(r["cutoff"] < r["signal"] < r["horizon"] for r in rows)
+    assert rows[0]["x"] == rows[1]["x"] and rows[0]["net_bp"] == rows[1]["net_bp"]
+    assert any(a["x"] != b["x"] for a, b in zip(rows[::2], rows[1::2], strict=True))
+    inventory.fit(tmp_path, 0)
+    model = json.loads((tmp_path / "fold-0/model.json").read_text())
+    inner = json.loads((tmp_path / "fold-0/inner.json").read_text())
+    assert model["fit_rows"] == len(rows) == 2 * model["fit_intervals"]
+    assert max(r["horizon"] for r in rows) < inner["start"]
+    assert (
+        len(model["market"][0]["coef"]) < len(model["inventory"][0]["coef"]) == len(model["names"])
+    )
+    assert set(inventory.gates(tmp_path)["median_bp"][2]) == {"zero", "hold", "fixed", "market"}
+    monkeypatch.setattr(inventory, "gates", lambda root: {"eligible": False})
+    with pytest.raises(ValueError, match="screen failed"):
+        inventory.confirm(tmp_path)
+    monkeypatch.setattr(inventory, "gates", lambda root: {"eligible": True})
+    monkeypatch.setattr(inventory, "Market", lambda end: ev.Market(date(2019, 6, 1)))
+    with pytest.raises(ValueError, match="not available"):
+        inventory.confirm(tmp_path)
+    cfg.update(confirmation_start="2019-05-01", confirmation_intervals=2)
+    path.write_text(json.dumps(cfg))
+    inventory.confirm(tmp_path)
+    confirmation = json.loads((tmp_path / "confirmation.json").read_text())
+    assert confirmation["start"] > inner["end"] and len(confirmation["bands"]) == 2
+    with pytest.raises(ValueError, match="already recorded"):
+        inventory.confirm(tmp_path)

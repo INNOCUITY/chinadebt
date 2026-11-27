@@ -1,0 +1,17 @@
+{
+  "version": "inventory-action-minus-hold-v1",
+  "folds": [0, 10, 21],
+  "actions": [null, 0.0, -1.0, 1.0],
+  "prefix_paths": [[-1.0, -1.0, 0.0, 1.0, 1.0, 0.0], [1.0, 1.0, 0.0, -1.0, -1.0, 0.0]],
+  "fit_band": 2,
+  "bands": [2, 1],
+  "ridge_alpha": 10.0,
+  "target": "At each fit decision on each scheduled portfolio path, fork four actions from the same state; next-decision marked net NAV minus the explicit hold branch, bp of common opening NAV. No forced liquidation.",
+  "features": "Causal market features and missing indicators, observed face value by tenor, and lagged cash divided by notional. Exclude prior proposal. Training calibration only.",
+  "controls": "Market-only Ridge on identical labels; zero tilt; explicit continuous hold; best continuously executed fixed action chosen on the purged fit segment at 2 lots. Hold wins prediction ties.",
+  "development_gate": "At 2 lot the three-fold median gain against each control must be positive; at 1 lot each must be nonnegative. Already examined internal periods are development only.",
+  "confirmation_start": "2026-12-01",
+  "confirmation_intervals": 12,
+  "confirmation_fold": 21,
+  "confirmation": "Only after passing development, evaluate frozen fold-21 models and fixed control once on the first 12 complete grid intervals at or after the registered date. Apply the same per-control sign requirements at 2 and 1 lot. No refitting. A pass warrants further research; no automatic PPO launch."
+}
