@@ -125,6 +125,14 @@ def run(
         paired_controls["gain_vs_neutral_16"] = archived_budget_control(
             neutral_dir, fold, seed, invested=True, slow=True, neutral=True
         )
+        neutral = torch.load(
+            neutral_dir / "training/update-16.pt", map_location="cpu", weights_only=False
+        )
+        baseline_spec = dict(spec)
+        baseline_spec.pop("lambda_sha256")
+        baseline_spec["gae_lambda"] = 0.95
+        if neutral["identity"]["spec"] != baseline_spec:
+            raise ValueError("lambda comparison changed more than GAE lambda")
     out.mkdir(parents=True, exist_ok=False)
     ck = out / "training"
     subprocess.run(
@@ -136,7 +144,15 @@ def run(
             "--grid-active",
             "--zero-critic",
             "--critic-budget",
-            *(["--lambda-one"] if lambda_reference is not None else []),
+            *(
+                [
+                    "--lambda-one",
+                    "--paired-reference",
+                    str(neutral_dir / "training"),
+                ]
+                if lambda_reference is not None
+                else []
+            ),
             *(["--neutral-actor"] if slow_reference is not None else []),
             *(["--actor-step"] if invested_reference is not None else []),
             *(["--invested-start"] if cash_reference is not None else []),
@@ -183,12 +199,6 @@ def run(
                 "neutral initialization did not reproduce initial sampling probabilities"
             )
     if lambda_reference is not None:
-        neutral = saved(neutral_dir / "training/update-16.pt")
-        baseline_spec = dict(spec)
-        baseline_spec.pop("lambda_sha256")
-        baseline_spec["gae_lambda"] = 0.95
-        if neutral["identity"]["spec"] != baseline_spec:
-            raise ValueError("lambda comparison changed more than GAE lambda")
         if neutral["identity"]["data"] != new["identity"]["data"]:
             raise ValueError("lambda comparison training data differs")
         if read(ck / "trajectory-1.json") != read(neutral_dir / "training/trajectory-1.json"):
@@ -221,6 +231,7 @@ def run(
         with torch.no_grad():
             probs = model.distribution(observations).probs
         tv = None if prev is None else float((probs - prev).abs().sum(dim=1).mean() / 2)
+        switches = None if prev is None else int((probs.argmax(1) != prev.argmax(1)).sum())
         prev = probs
         history.append(
             dict(
@@ -231,6 +242,9 @@ def run(
                     * 1e4
                 ),
                 mean_action_tv=tv,
+                argmax_switches=switches,
+                mean_action_probabilities=probs.mean(0).tolist(),
+                fixed_observations=len(observations),
                 trades=int(book.trades.loc[book.index > start].sum()),
                 ledger_error_yuan=error,
             )

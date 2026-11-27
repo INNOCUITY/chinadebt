@@ -1,0 +1,293 @@
+{
+  "status": "complete",
+  "source_commit": "a7ecc5dcac736d86408bafaf1c109c72ff299fa6",
+  "server_summary_sha256": "28a06184786dd4815e133ecc2f64f7aa0828aac0375065877d96dbfea0409215",
+  "labels_verified": 1044,
+  "original_path_labels_matched": 174,
+  "results": [
+    {
+      "fold": 0,
+      "band": 2,
+      "intervals": 29,
+      "no_common_best_dates": 2,
+      "mean_hindsight_gain_bp": 0.002064070331753469,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.0,
+        0.050003253972819274
+      ],
+      "distinct_state_occurrences": 137,
+      "distinct_face_occurrences": 115,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": -4.594026308793751e-17,
+      "timing_label_opportunity_bp": 1.6995874582071628,
+      "conflict_dates": [
+        {
+          "signal": "2019-06-24",
+          "gain_bp": 0.050003253972819274
+        },
+        {
+          "signal": "2019-07-15",
+          "gain_bp": 0.00985478564803133
+        }
+      ]
+    },
+    {
+      "fold": 0,
+      "band": 1,
+      "intervals": 29,
+      "no_common_best_dates": 9,
+      "mean_hindsight_gain_bp": 0.040605984103494766,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.19492870974115023,
+        0.26867056002709094
+      ],
+      "distinct_state_occurrences": 137,
+      "distinct_face_occurrences": 85,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": 4.594026308793751e-17,
+      "timing_label_opportunity_bp": 1.7204734019792207,
+      "conflict_dates": [
+        {
+          "signal": "2019-04-25",
+          "gain_bp": 0.22237567318668172
+        },
+        {
+          "signal": "2019-05-05",
+          "gain_bp": 0.18806696887976737
+        },
+        {
+          "signal": "2019-05-31",
+          "gain_bp": 0.2639095065759123
+        },
+        {
+          "signal": "2019-06-24",
+          "gain_bp": 0.035184523989052155
+        },
+        {
+          "signal": "2019-07-15",
+          "gain_bp": 0.026736898468091908
+        },
+        {
+          "signal": "2019-08-05",
+          "gain_bp": 0.16309124417620624
+        },
+        {
+          "signal": "2019-08-19",
+          "gain_bp": 0.2686705600270909
+        },
+        {
+          "signal": "2019-09-17",
+          "gain_bp": 0.0018108420573647202
+        },
+        {
+          "signal": "2019-09-24",
+          "gain_bp": 0.007727321641180729
+        }
+      ]
+    },
+    {
+      "fold": 10,
+      "band": 2,
+      "intervals": 29,
+      "no_common_best_dates": 6,
+      "mean_hindsight_gain_bp": 0.032267933870391244,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.04714592147564416,
+        0.7420347248443726
+      ],
+      "distinct_state_occurrences": 145,
+      "distinct_face_occurrences": 123,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": 0.0,
+      "timing_label_opportunity_bp": 0.852328875511204,
+      "conflict_dates": [
+        {
+          "signal": "2022-02-09",
+          "gain_bp": 0.7420347248443726
+        },
+        {
+          "signal": "2022-02-23",
+          "gain_bp": 0.04706440264413419
+        },
+        {
+          "signal": "2022-03-02",
+          "gain_bp": 0.06883060173633537
+        },
+        {
+          "signal": "2022-03-09",
+          "gain_bp": 0.04747199680168407
+        },
+        {
+          "signal": "2022-03-16",
+          "gain_bp": 0.022143912449035
+        },
+        {
+          "signal": "2022-04-07",
+          "gain_bp": 0.008224443765784644
+        }
+      ]
+    },
+    {
+      "fold": 10,
+      "band": 1,
+      "intervals": 29,
+      "no_common_best_dates": 13,
+      "mean_hindsight_gain_bp": 0.07926964844673004,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.19412576398897535,
+        0.9718475057305809
+      ],
+      "distinct_state_occurrences": 164,
+      "distinct_face_occurrences": 94,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": -7.656710514656252e-18,
+      "timing_label_opportunity_bp": 0.8451936397750287,
+      "conflict_dates": [
+        {
+          "signal": "2021-09-26",
+          "gain_bp": 0.0205035781987505
+        },
+        {
+          "signal": "2021-10-08",
+          "gain_bp": 0.04584934097367244
+        },
+        {
+          "signal": "2021-10-14",
+          "gain_bp": 0.13291712847070683
+        },
+        {
+          "signal": "2021-10-28",
+          "gain_bp": 0.1824174157512628
+        },
+        {
+          "signal": "2021-11-18",
+          "gain_bp": 0.13312559619652475
+        },
+        {
+          "signal": "2021-12-09",
+          "gain_bp": 0.0003256475098910165
+        },
+        {
+          "signal": "2021-12-23",
+          "gain_bp": 0.4144928737952882
+        },
+        {
+          "signal": "2021-12-30",
+          "gain_bp": 0.13705810486076864
+        },
+        {
+          "signal": "2022-01-07",
+          "gain_bp": 0.2409591569398255
+        },
+        {
+          "signal": "2022-01-21",
+          "gain_bp": 0.016324764617663995
+        },
+        {
+          "signal": "2022-02-09",
+          "gain_bp": 0.9718475057305809
+        },
+        {
+          "signal": "2022-03-16",
+          "gain_bp": 0.002371149507405468
+        },
+        {
+          "signal": "2022-04-07",
+          "gain_bp": 0.0006275424028293899
+        }
+      ]
+    },
+    {
+      "fold": 21,
+      "band": 2,
+      "intervals": 29,
+      "no_common_best_dates": 0,
+      "mean_hindsight_gain_bp": 0.0,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "distinct_state_occurrences": 137,
+      "distinct_face_occurrences": 108,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": -7.656710514656252e-18,
+      "timing_label_opportunity_bp": 2.114462353672516,
+      "conflict_dates": []
+    },
+    {
+      "fold": 21,
+      "band": 1,
+      "intervals": 29,
+      "no_common_best_dates": 11,
+      "mean_hindsight_gain_bp": 0.13120414503789124,
+      "quantiles_bp": [
+        0.0,
+        0.0,
+        0.41125367443274075,
+        1.1932137855391574
+      ],
+      "distinct_state_occurrences": 153,
+      "distinct_face_occurrences": 98,
+      "same_face_conflict_groups": 0,
+      "within_face_gain_bp": 7.273874988923439e-17,
+      "timing_label_opportunity_bp": 2.0034752404321057,
+      "conflict_dates": [
+        {
+          "signal": "2024-07-01",
+          "gain_bp": 0.400042257294988
+        },
+        {
+          "signal": "2024-07-08",
+          "gain_bp": 0.2441442425771213
+        },
+        {
+          "signal": "2024-08-05",
+          "gain_bp": 0.3498249051688158
+        },
+        {
+          "signal": "2024-08-19",
+          "gain_bp": 0.1887687430599001
+        },
+        {
+          "signal": "2024-09-02",
+          "gain_bp": 0.45609934298375077
+        },
+        {
+          "signal": "2024-09-24",
+          "gain_bp": 1.1932137855391574
+        },
+        {
+          "signal": "2024-09-30",
+          "gain_bp": 0.4832603728142675
+        },
+        {
+          "signal": "2024-10-12",
+          "gain_bp": 0.008472947858516188
+        },
+        {
+          "signal": "2024-11-01",
+          "gain_bp": 0.11136115454312834
+        },
+        {
+          "signal": "2024-11-22",
+          "gain_bp": 0.1815103706024921
+        },
+        {
+          "signal": "2025-01-06",
+          "gain_bp": 0.18822208365670878
+        }
+      ]
+    }
+  ],
+  "interpretation": "Ex-post gains on single-interval labels, equally weighted across distinct states within date and across dates. Not a continuous tradable return."
+}

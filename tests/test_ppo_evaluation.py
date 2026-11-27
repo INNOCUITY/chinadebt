@@ -536,6 +536,8 @@ def test_lambda_one_changes_only_target_and_preserves_first_rollout(ev, tmp_path
             str(tmp_path / "candidate"),
             *options,
             "--lambda-one",
+            "--paired-reference",
+            str(tmp_path / "control"),
             "--verify-resume",
         ]
     )
@@ -552,3 +554,36 @@ def test_lambda_one_changes_only_target_and_preserves_first_rollout(ev, tmp_path
         ev.load_policy(candidate, cli.training_spec(0, 20261111, **flags), 2, market, market.cfg)
     saved = torch.load(candidate, map_location="cpu", weights_only=False)
     assert saved["identity"]["spec"]["gae_lambda"] == 1.0
+    reference = tmp_path / "control"
+    original = (reference / "spec.json").read_text()
+    mismatched = json.loads(original)
+    mismatched["identity"]["data"] = "different-data"
+    (reference / "spec.json").write_text(json.dumps(mismatched))
+    with pytest.raises(ValueError, match="pre-update identity"):
+        cli.main(
+            [
+                "train",
+                "--output",
+                str(tmp_path / "bad-data"),
+                *options,
+                "--lambda-one",
+                "--paired-reference",
+                str(reference),
+            ]
+        )
+    assert not list((tmp_path / "bad-data").glob("update-*.pt"))
+    (reference / "spec.json").write_text(original)
+    (reference / "trajectory-1.json").write_text("{}")
+    with pytest.raises(ValueError, match="pre-update trajectory"):
+        cli.main(
+            [
+                "train",
+                "--output",
+                str(tmp_path / "bad-trace"),
+                *options,
+                "--lambda-one",
+                "--paired-reference",
+                str(reference),
+            ]
+        )
+    assert not list((tmp_path / "bad-trace").glob("update-*.pt"))

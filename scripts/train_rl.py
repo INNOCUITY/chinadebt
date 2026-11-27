@@ -231,6 +231,7 @@ def main(argv=None):
     parser.add_argument("--grid-active", action="store_true")
     parser.add_argument("--neutral-actor", action="store_true")
     parser.add_argument("--lambda-one", action="store_true")
+    parser.add_argument("--paired-reference", type=Path)
     parser.add_argument("--actor-step", action="store_true")
     parser.add_argument("--invested-start", action="store_true")
     parser.add_argument("--critic-budget", action="store_true")
@@ -335,6 +336,26 @@ def main(argv=None):
         scale=encoder.scale.tolist(),
         episode=[str(start), str(end)],
     )
+    if args.paired_reference is not None:
+        if not args.lambda_one or args.checkpoint:
+            raise ValueError("paired reference requires a fresh lambda-one run")
+        prior = json.loads((args.paired_reference / "spec.json").read_text())["identity"]
+        expected_spec = {k: v for k, v in spec.items() if k != "lambda_sha256"}
+        expected_spec["gae_lambda"] = 0.95
+        if prior["spec"] != expected_spec or any(
+            prior[k] != identity[k]
+            for k in (
+                "data",
+                "protocol",
+                "config_sha256",
+                "schema",
+                "mean",
+                "scale",
+                "episode",
+                "curve_tenors",
+            )
+        ):
+            raise ValueError("pre-update identity differs from paired reference")
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     dump(
         out / "spec.json",
@@ -380,6 +401,14 @@ def main(argv=None):
 
     for i in range(first + 1, limit + 1):
         episode = run_episode()
+        trace = asdict(episode)
+        for key in ("environment_seconds", "inference_seconds"):
+            trace.pop(key)
+        if i == 1 and args.paired_reference is not None:
+            actual = json.loads(json.dumps(trace, default=str))
+            expected = json.loads((args.paired_reference / "trajectory-1.json").read_text())
+            if actual != expected:
+                raise ValueError("pre-update trajectory differs from paired reference")
         started = perf_counter()
         model.train()
         metrics = {} if profile else update(model, optimizer, episode, spec)
@@ -398,9 +427,6 @@ def main(argv=None):
             tmp = path.with_suffix(".tmp")
             torch.save(state, tmp)
             tmp.replace(path)
-        trace = asdict(episode)
-        for key in ("environment_seconds", "inference_seconds"):
-            trace.pop(key)
         dump(out / f"trajectory-{i}.json", trace)
         io_seconds = perf_counter() - tick
         verified = False
