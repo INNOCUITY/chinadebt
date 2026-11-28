@@ -1,0 +1,57 @@
+{
+  "folds": [
+    0,
+    10,
+    21
+  ],
+  "bands": [
+    2,
+    1
+  ],
+  "ridge_alpha": 10.0,
+  "original_design_sha256": "dc144d990142a9652b724347261f9796d3f260c3f0afbd2cb53e6c15abf1f310",
+  "holdout_sha256": "269ac560184b93e9880adab61e3d2ec2fc63959a1bb5d5ab7b4053b6c166b608",
+  "fit_sha256": {
+    "0": "4756dca88ab683e6969992a31cf7eb605d5d784e39f04db3853b061d819b6cf7",
+    "10": "b6a9adbe1f9dc950668bed2cf4ea762b271123ae9d8070c410248e16c5890afc",
+    "21": "eff1e750550d161e38fe0ae64ac5449c68d06d2a8edd9a7a4f6ed9a275d81676"
+  },
+  "market_sha256": {
+    "0": "d764157ec31760cd0cb89f7f675ba5fe4da8eab3d267820c4eb162e617d65913",
+    "10": "c47b7f10bf0df8e404deb418d0e102a0f11ae19002fd8b30c39c61ed7d693455",
+    "21": "9141da23bf5f21bde41c49cd22bd483b74842bb77f6c92cb043d2fa190001c13"
+  },
+  "version": "fixed-execution-cost-labels-v1",
+  "actions": [
+    0.0,
+    null,
+    -1.0,
+    1.0
+  ],
+  "fit_band": 2,
+  "scope": "Structural diagnostic on previously viewed historical development windows. No PPO updates, new features, parameter grid, futures trading or forward access.",
+  "target": "Paired net NAV relative to zero tilt at the next decision, plus separate realized spread/fee/funding differences along the exact original execution paths. Cost-restored labels are accounting decompositions, NOT a zero-cost reoptimized environment.",
+  "split": "Original purged 29 fit intervals and original 16/16/15 later decisions. Fit two Ridge selectors on identical original nine market inputs: net target versus all-realized-cost-restored target. Fit only at 2 lot; freeze both selectors and fit-mean fixed controls for 1 lot.",
+  "clock": "Original prior-trading-day features and initial calibration. Cost outcomes are labels only. No future cost supplied to a decision.",
+  "diagnostics": [
+    "net",
+    "transaction_cost_restored",
+    "all_cost_restored"
+  ],
+  "fitted_targets": [
+    "net",
+    "all_cost_restored"
+  ],
+  "shards_per_fold": {
+    "0": 2,
+    "10": 4,
+    "21": 6
+  },
+  "tolerance_bp": 1e-08,
+  "ledger_tolerance_yuan": 1e-05,
+  "gate": {
+    "cost_restored_prediction": "At 2 lot, beat fit-mean forecast RMSE on restored nonzero-action values in at least 2 of 3 folds; positive median selected restored value vs zero and vs restored fit-mean fixed action. At 1 lot both medians nonnegative.",
+    "real_cost_economics": "The restored-target selector must also have positive three-fold median real-net gains vs zero, net-target selector and restored-target fit-mean fixed action at 2 lot; all three nonnegative at 1 lot.",
+    "routing": "Prediction pass and economics fail: justify at most one separately frozen execution comparison, not a wide frequency/corridor grid. Both pass: at most an old-development continuous ledger. Prediction fail: stop optimizing this feature/action family; no claim of universal signal absence. No outcome authorizes PPO expansion or use of reserved future data."
+  }
+}

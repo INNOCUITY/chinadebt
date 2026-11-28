@@ -56,7 +56,7 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 - `risk_penalty` — **deferred**: 显式风险惩罚及去惩罚对照 / Risk penalty and removal. Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training. [Evidence / 证据](../../src/ficc/rl/collector.py)
 
-- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Existing fixed-path and rule-policy cost studies are not a PPO no-cost-training control. A later control must separate training reward changes from evaluation costs. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
+- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
 
 - `actions_rewards` — **evidenced**: 动作与奖励消融 / Action and reward ablations. Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed. [Evidence / 证据](../../reports/ppo_factorial_validation.json)
 
@@ -78,4 +78,4 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 ## Next decision
 
-Stop iterating this feature block on the same three windows. First obtain point-in-time quote/depth or funding-demand data with documented coverage and execution meaning, then register one bounded incremental-prediction test. Do not expand PPO training. Resolve the original-plan SAC, risk-penalty, cost-removal, five-way and explainability/DSR scope explicitly before full acceptance. Preserve the new period; opening a forward test still requires the research gate and a complete independent calendar.
+Stop PPO and feature tuning on these three windows. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); costs alone do not explain the failure. A bounded diagnostic now separates net versus cost-restored action-label prediction on identical dates, features and execution paths. It is not zero-cost PPO training and cannot prove universal signal absence. Only predictive evidence can justify one separately frozen execution comparison. New quote/funding data or a futures task require their own availability and execution audit. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and the reserved future period remain unchanged.

@@ -70,9 +70,12 @@
       "title": "RL 去交易成本训练 / RL cost-removal training",
       "evidence": [
         "reports/cost_study_fixed_path.csv",
-        "reports/cost_study_decision_change.csv"
+        "reports/cost_study_decision_change.csv",
+        "reports/research_pivot_cost_audit.json",
+        "config/experiments/cost_signal_diagnostic.json",
+        "docs/10_research_pivot.md"
       ],
-      "remaining": "Existing fixed-path and rule-policy cost studies are not a PPO no-cost-training control. A later control must separate training reward changes from evaluation costs."
+      "remaining": "Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred."
     },
     {
       "id": "actions_rewards",

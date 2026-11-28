@@ -93,6 +93,10 @@
     }
   },
   "lambda_plateaus": 3,
+  "fixed_path_cost_restored_median_bp": {
+    "2": -0.6537504400244103,
+    "1": -9.288975974801527
+  },
   "lambda_expand": false,
   "archived_acceptance": [
     {

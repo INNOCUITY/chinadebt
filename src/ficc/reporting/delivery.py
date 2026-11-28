@@ -185,6 +185,7 @@ def collect(root):
     lam = read(root, "reports/ppo_lambda_review.json")
     future = read(root, "reports/futures_signal_probe.json")
     coverage = read(root, "reports/futures_data_coverage.json")
+    pivot = read(root, "reports/research_pivot_cost_audit.json")
     checks = []
     for name in [
         "acceptance_summary",
@@ -216,6 +217,9 @@ def collect(root):
             b: v["daily_seed_mean_inference"] for b, v in matrix["bands"].items()
         },
         lambda_plateaus=lam["summary"]["plateaus"],
+        fixed_path_cost_restored_median_bp={
+            b: r["restored_median_bp"] for b, r in pivot["bands"].items()
+        },
         lambda_expand=lam["summary"]["expand_validation"],
         archived_acceptance=checks,
         futures_coverage={
@@ -336,9 +340,9 @@ def render_report(f, plan, english=False):
             ),
             "## Next decision" if en else "## 下一步决策",
             (
-                "Stop iterating this feature block on the same three windows. First obtain point-in-time quote/depth or funding-demand data with documented coverage and execution meaning, then register one bounded incremental-prediction test. Do not expand PPO training. Resolve the original-plan SAC, risk-penalty, cost-removal, five-way and explainability/DSR scope explicitly before full acceptance. Preserve the new period; opening a forward test still requires the research gate and a complete independent calendar."
+                f"Stop PPO and feature tuning on these three windows. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); costs alone do not explain the failure. A bounded diagnostic now separates net versus cost-restored action-label prediction on identical dates, features and execution paths. It is not zero-cost PPO training and cannot prove universal signal absence. Only predictive evidence can justify one separately frozen execution comparison. New quote/funding data or a futures task require their own availability and execution audit. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and the reserved future period remain unchanged."
                 if en
-                else "停止围绕同三窗继续搜索这批特征。先取得有时点证据和执行含义的盘口/深度或资金供需数据，再登记一次有限的预测增量检验，不扩 PPO 训练。完整验收前应明确处理原计划 SAC、风险惩罚、去成本、五方及解释性/DSR 项目的范围。保留新时期，启动前瞻仍需研究门槛通过和独立交易日历完整覆盖。"
+                else f"停止同三窗 PPO 与特征调参。沿原成交路径加回相对零倾斜的已计成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，成本不是唯一解释。转向同日期、同特征、同执行路径上的净标签与成本加回标签预测诊断；它不是零成本 PPO 重训，失败也不能证明市场普遍无信号。有预测证据才考虑一个另外冻结的执行对照。新盘口/资金数据或期货任务另做时点与执行审计。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
             ),
         ]
     )

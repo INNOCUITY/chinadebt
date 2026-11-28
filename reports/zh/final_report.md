@@ -56,7 +56,7 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 - `risk_penalty` — **deferred**: 显式风险惩罚及去惩罚对照 / Risk penalty and removal. Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training. [Evidence / 证据](../../src/ficc/rl/collector.py)
 
-- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Existing fixed-path and rule-policy cost studies are not a PPO no-cost-training control. A later control must separate training reward changes from evaluation costs. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
+- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
 
 - `actions_rewards` — **evidenced**: 动作与奖励消融 / Action and reward ablations. Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed. [Evidence / 证据](../../reports/ppo_factorial_validation.json)
 
@@ -78,4 +78,4 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 ## 下一步决策
 
-停止围绕同三窗继续搜索这批特征。先取得有时点证据和执行含义的盘口/深度或资金供需数据，再登记一次有限的预测增量检验，不扩 PPO 训练。完整验收前应明确处理原计划 SAC、风险惩罚、去成本、五方及解释性/DSR 项目的范围。保留新时期，启动前瞻仍需研究门槛通过和独立交易日历完整覆盖。
+停止同三窗 PPO 与特征调参。沿原成交路径加回相对零倾斜的已计成本后，2／1 lot 中位超额仍为 -0.654／-9.289 bp，成本不是唯一解释。转向同日期、同特征、同执行路径上的净标签与成本加回标签预测诊断；它不是零成本 PPO 重训，失败也不能证明市场普遍无信号。有预测证据才考虑一个另外冻结的执行对照。新盘口/资金数据或期货任务另做时点与执行审计。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。

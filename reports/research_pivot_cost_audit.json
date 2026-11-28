@@ -1,0 +1,101 @@
+{
+  "test": [
+    "2020-05-29",
+    "2025-12-12"
+  ],
+  "bands": {
+    "2": {
+      "rows": [
+        {
+          "seed": 20261111,
+          "net_excess_bp": -0.27965966333322234,
+          "realized_cost_difference_bp": 0.1530917749750799,
+          "fixed_path_cost_restored_bp": -0.12656788835814245
+        },
+        {
+          "seed": 20261112,
+          "net_excess_bp": -3.9260686868240904,
+          "realized_cost_difference_bp": 3.27231824679968,
+          "fixed_path_cost_restored_bp": -0.6537504400244103
+        },
+        {
+          "seed": 20261113,
+          "net_excess_bp": 7.004048648388375,
+          "realized_cost_difference_bp": 0.30541195006540484,
+          "fixed_path_cost_restored_bp": 7.3094605984537795
+        },
+        {
+          "seed": 20261114,
+          "net_excess_bp": -26.34915682415953,
+          "realized_cost_difference_bp": 2.5523118433113203,
+          "fixed_path_cost_restored_bp": -23.79684498084821
+        },
+        {
+          "seed": 20261115,
+          "net_excess_bp": -30.43007220328722,
+          "realized_cost_difference_bp": 3.380037994988328,
+          "fixed_path_cost_restored_bp": -27.050034208298893
+        }
+      ],
+      "net_median_bp": -3.9260686868240904,
+      "restored_median_bp": -0.6537504400244103,
+      "positive_restored_seeds": 1,
+      "turnover_range": [
+        3.4032246941891415,
+        3.7459726089514866
+      ],
+      "cost_delta_range_bp": [
+        0.1530917749750799,
+        3.380037994988328
+      ]
+    },
+    "1": {
+      "rows": [
+        {
+          "seed": 20261111,
+          "net_excess_bp": -8.000353448375472,
+          "realized_cost_difference_bp": 21.633286243823154,
+          "fixed_path_cost_restored_bp": 13.632932795447681
+        },
+        {
+          "seed": 20261112,
+          "net_excess_bp": -33.31072447807455,
+          "realized_cost_difference_bp": 24.02174850327302,
+          "fixed_path_cost_restored_bp": -9.288975974801527
+        },
+        {
+          "seed": 20261113,
+          "net_excess_bp": -12.172445160887657,
+          "realized_cost_difference_bp": 23.325127949645545,
+          "fixed_path_cost_restored_bp": 11.152682788757888
+        },
+        {
+          "seed": 20261114,
+          "net_excess_bp": -39.43701889219464,
+          "realized_cost_difference_bp": 17.18394763944406,
+          "fixed_path_cost_restored_bp": -22.253071252750576
+        },
+        {
+          "seed": 20261115,
+          "net_excess_bp": -60.00476709473839,
+          "realized_cost_difference_bp": 24.01309593327882,
+          "fixed_path_cost_restored_bp": -35.99167116145957
+        }
+      ],
+      "net_median_bp": -33.31072447807455,
+      "restored_median_bp": -9.288975974801527,
+      "positive_restored_seeds": 2,
+      "turnover_range": [
+        5.254835599822403,
+        5.601702897224921
+      ],
+      "cost_delta_range_bp": [
+        17.18394763944406,
+        24.02174850327302
+      ]
+    }
+  },
+  "conclusion": "The fixed-path accounting result rejects a costs-only explanation for these PPO policies; it does not prove signal absence or zero-cost training failure.",
+  "scope": "Restore realized incremental spread, fees (including terminal accrual) and funding to matched net excess. Original decisions, holdings and funding events stay fixed; no reoptimized or zero-cost-trained strategy is simulated.",
+  "source_sha256": "21716c7495de7f66bff1ebd2fd680faed64e571c35251884abc1ff725f53bc0b"
+}

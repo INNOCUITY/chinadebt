@@ -5,19 +5,170 @@
   "forward_policy": "Reserved period beginning December 2026 remains excluded from selection. First eligible decision is 2026-12-07; full 12-interval calendar coverage remains required.",
   "budget_policy": "No added PPO updates, model capacity, folds or seeds. SAC and new reward training remain deferred.",
   "items": [
-    {"id":"ledger", "plan":"Phase 2-4", "status":"evidenced", "title":"定价、账本与风险 / Pricing, ledger and risk", "evidence":["reports/acceptance_summary.csv","reports/acceptance_summary_rolling.csv","reports/acceptance_summary_rolling_extended.csv","reports/var_es.csv","reports/stress_test.csv"], "remaining":"Archived acceptance evidence, not a fresh full integration rerun."},
-    {"id":"ppo", "plan":"5.1/5.3", "status":"evidenced", "title":"PPO rollout、训练、恢复及五 seed / PPO lifecycle and five seeds", "evidence":["src/ficc/rl/ppo.py","reports/ppo_matrix_review.json","reports/ppo_lambda_review.json"], "remaining":"Negative research result. Do not equate running correctly with profitable strategy."},
-    {"id":"split", "plan":"5.3", "status":"partial", "title":"原年代切分与滚动协议 / Original split versus rolling protocol", "evidence":["config/experiments/ppo_evaluation.json","docs/06_ppo_matrix_review.md"], "remaining":"Executed 22 rolling folds instead of original 2019-22/2023/2024-25 split. Later reuse makes these development periods; record protocol revision explicitly."},
-    {"id":"sac", "plan":"5.3", "status":"deferred", "title":"SAC 对照 / SAC comparison", "evidence":["docs/01_project_plan.md"], "remaining":"No SAC implementation or run found. Original plan requires it; later notes call it optional, but no completed comparison or formal acceptance waiver. Budget freeze retained."},
-    {"id":"risk_penalty", "plan":"5.2/5.4.1", "status":"deferred", "title":"显式风险惩罚及去惩罚对照 / Risk penalty and removal", "evidence":["src/ficc/rl/collector.py","src/ficc/portfolio/constraints.py"], "remaining":"Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training."},
-    {"id":"rl_no_cost", "plan":"5.4.2", "status":"deferred", "title":"RL 去交易成本训练 / RL cost-removal training", "evidence":["reports/cost_study_fixed_path.csv","reports/cost_study_decision_change.csv"], "remaining":"Existing fixed-path and rule-policy cost studies are not a PPO no-cost-training control. A later control must separate training reward changes from evaluation costs."},
-    {"id":"actions_rewards", "plan":"5.4.3/5.4.4", "status":"evidenced", "title":"动作与奖励消融 / Action and reward ablations", "evidence":["reports/ppo_factorial_validation.json","reports/ppo_grid_review.json","reports/ppo_critic_review.json","reports/ppo_lambda_review.json"], "remaining":"Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed."},
-    {"id":"five_way", "plan":"5.4.5", "status":"partial", "title":"随机/持有/规则/ML/RL 五方 / Five-way comparison", "evidence":["reports/ppo_matrix_review.json","reports/long_sample_summary.csv"], "remaining":"Matched rolling evidence covers zero/train-mean/Ridge/Tree/PPO. Random, buy-and-hold and rule strategies are not all evaluated on that same cohort; zero tilt is not relabeled buy-and-hold."},
-    {"id":"explain", "plan":"5.5", "status":"partial", "title":"动作解释 / Policy explanation", "evidence":["reports/ppo_lambda_review.json","reports/ppo_lambda_probabilities.png","reports/inventory_coverage_review.json"], "remaining":"Holdings, execution and four-action probabilities audited. Original factor-regression and state-action heatmap deliverables not complete."},
-    {"id":"honest_eval", "plan":"5.6", "status":"partial", "title":"多 seed、区间与 DSR / Multi-seed inference and DSR", "evidence":["reports/ppo_matrix_review.json","reports/inventory_value_review.json"], "remaining":"HAC and block-bootstrap intervals exist. No complete DSR accounting for adaptive experiment selection or independent forward result; do not treat HAC as DSR."},
-    {"id":"bilingual", "plan":"6/report", "status":"evidenced", "title":"双语研究报告 / Bilingual reports", "evidence":["reports/zh/final_report.md","reports/en/final_report.md","reports/delivery_facts.json"], "remaining":"Current evidence review, explicitly not full original-plan sign-off."},
-    {"id":"dashboard", "plan":"6/dashboard", "status":"partial", "title":"四页只读展示 / Four-page read-only dashboard", "evidence":["apps/dashboard/app.py","docs/05_defense_qa.md"], "remaining":"Four pages and archived-date display delivered. Arbitrary-date ledger reconstruction requires private inputs and offline replay; no interactive recomputation."},
-    {"id":"ci", "plan":"6/CI", "status":"evidenced", "title":"公开产物 CI / Public-artifact CI", "evidence":[".github/workflows/ci.yml","config/acceptance/public_tests.txt"], "remaining":"Public contracts, lint and report drift checks only. Raw-data integration is a separate local/server check; CI is not full financial revalidation."},
-    {"id":"reproduction", "plan":"6/reproduce", "status":"partial", "title":"复现入口 / Reproduction entry points", "evidence":["Makefile","docs/09_reproduction.md","scripts/build_report.py"], "remaining":"Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes."}
+    {
+      "id": "ledger",
+      "plan": "Phase 2-4",
+      "status": "evidenced",
+      "title": "定价、账本与风险 / Pricing, ledger and risk",
+      "evidence": [
+        "reports/acceptance_summary.csv",
+        "reports/acceptance_summary_rolling.csv",
+        "reports/acceptance_summary_rolling_extended.csv",
+        "reports/var_es.csv",
+        "reports/stress_test.csv"
+      ],
+      "remaining": "Archived acceptance evidence, not a fresh full integration rerun."
+    },
+    {
+      "id": "ppo",
+      "plan": "5.1/5.3",
+      "status": "evidenced",
+      "title": "PPO rollout、训练、恢复及五 seed / PPO lifecycle and five seeds",
+      "evidence": [
+        "src/ficc/rl/ppo.py",
+        "reports/ppo_matrix_review.json",
+        "reports/ppo_lambda_review.json"
+      ],
+      "remaining": "Negative research result. Do not equate running correctly with profitable strategy."
+    },
+    {
+      "id": "split",
+      "plan": "5.3",
+      "status": "partial",
+      "title": "原年代切分与滚动协议 / Original split versus rolling protocol",
+      "evidence": [
+        "config/experiments/ppo_evaluation.json",
+        "docs/06_ppo_matrix_review.md"
+      ],
+      "remaining": "Executed 22 rolling folds instead of original 2019-22/2023/2024-25 split. Later reuse makes these development periods; record protocol revision explicitly."
+    },
+    {
+      "id": "sac",
+      "plan": "5.3",
+      "status": "deferred",
+      "title": "SAC 对照 / SAC comparison",
+      "evidence": [
+        "docs/01_project_plan.md"
+      ],
+      "remaining": "No SAC implementation or run found. Original plan requires it; later notes call it optional, but no completed comparison or formal acceptance waiver. Budget freeze retained."
+    },
+    {
+      "id": "risk_penalty",
+      "plan": "5.2/5.4.1",
+      "status": "deferred",
+      "title": "显式风险惩罚及去惩罚对照 / Risk penalty and removal",
+      "evidence": [
+        "src/ficc/rl/collector.py",
+        "src/ficc/portfolio/constraints.py"
+      ],
+      "remaining": "Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training."
+    },
+    {
+      "id": "rl_no_cost",
+      "plan": "5.4.2",
+      "status": "deferred",
+      "title": "RL 去交易成本训练 / RL cost-removal training",
+      "evidence": [
+        "reports/cost_study_fixed_path.csv",
+        "reports/cost_study_decision_change.csv",
+        "reports/research_pivot_cost_audit.json",
+        "config/experiments/cost_signal_diagnostic.json",
+        "docs/10_research_pivot.md"
+      ],
+      "remaining": "Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred."
+    },
+    {
+      "id": "actions_rewards",
+      "plan": "5.4.3/5.4.4",
+      "status": "evidenced",
+      "title": "动作与奖励消融 / Action and reward ablations",
+      "evidence": [
+        "reports/ppo_factorial_validation.json",
+        "reports/ppo_grid_review.json",
+        "reports/ppo_critic_review.json",
+        "reports/ppo_lambda_review.json"
+      ],
+      "remaining": "Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed."
+    },
+    {
+      "id": "five_way",
+      "plan": "5.4.5",
+      "status": "partial",
+      "title": "随机/持有/规则/ML/RL 五方 / Five-way comparison",
+      "evidence": [
+        "reports/ppo_matrix_review.json",
+        "reports/long_sample_summary.csv"
+      ],
+      "remaining": "Matched rolling evidence covers zero/train-mean/Ridge/Tree/PPO. Random, buy-and-hold and rule strategies are not all evaluated on that same cohort; zero tilt is not relabeled buy-and-hold."
+    },
+    {
+      "id": "explain",
+      "plan": "5.5",
+      "status": "partial",
+      "title": "动作解释 / Policy explanation",
+      "evidence": [
+        "reports/ppo_lambda_review.json",
+        "reports/ppo_lambda_probabilities.png",
+        "reports/inventory_coverage_review.json"
+      ],
+      "remaining": "Holdings, execution and four-action probabilities audited. Original factor-regression and state-action heatmap deliverables not complete."
+    },
+    {
+      "id": "honest_eval",
+      "plan": "5.6",
+      "status": "partial",
+      "title": "多 seed、区间与 DSR / Multi-seed inference and DSR",
+      "evidence": [
+        "reports/ppo_matrix_review.json",
+        "reports/inventory_value_review.json"
+      ],
+      "remaining": "HAC and block-bootstrap intervals exist. No complete DSR accounting for adaptive experiment selection or independent forward result; do not treat HAC as DSR."
+    },
+    {
+      "id": "bilingual",
+      "plan": "6/report",
+      "status": "evidenced",
+      "title": "双语研究报告 / Bilingual reports",
+      "evidence": [
+        "reports/zh/final_report.md",
+        "reports/en/final_report.md",
+        "reports/delivery_facts.json"
+      ],
+      "remaining": "Current evidence review, explicitly not full original-plan sign-off."
+    },
+    {
+      "id": "dashboard",
+      "plan": "6/dashboard",
+      "status": "partial",
+      "title": "四页只读展示 / Four-page read-only dashboard",
+      "evidence": [
+        "apps/dashboard/app.py",
+        "docs/05_defense_qa.md"
+      ],
+      "remaining": "Four pages and archived-date display delivered. Arbitrary-date ledger reconstruction requires private inputs and offline replay; no interactive recomputation."
+    },
+    {
+      "id": "ci",
+      "plan": "6/CI",
+      "status": "evidenced",
+      "title": "公开产物 CI / Public-artifact CI",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "config/acceptance/public_tests.txt"
+      ],
+      "remaining": "Public contracts, lint and report drift checks only. Raw-data integration is a separate local/server check; CI is not full financial revalidation."
+    },
+    {
+      "id": "reproduction",
+      "plan": "6/reproduce",
+      "status": "partial",
+      "title": "复现入口 / Reproduction entry points",
+      "evidence": [
+        "Makefile",
+        "docs/09_reproduction.md",
+        "scripts/build_report.py"
+      ],
+      "remaining": "Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes."
+    }
   ]
 }
