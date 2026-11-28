@@ -1,0 +1,19 @@
+cohort,start,end,band_lot,reference,metric,evidence,model,seed,excess_bp,trades,turnover,cost_delta_bp,te_bp
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,zero,,0,23,3.2865745148,,
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,train_mean,,0.402551038279,25,3.32052300387,,
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ridge,,4.05549551341,25,3.33703074245,,
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,tree,,7.12541672338,27,3.35268429135,,
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261111,-0.279659663333,28,3.40322469419,0.153091774975,0.619051040365
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261112,-3.92606868682,35,3.540149475,3.2723182468,5.02454901224
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261113,7.00404864839,34,3.4779033493,0.305411950065,1.86472633722
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261114,-26.3491568242,38,3.57589528666,2.55231184331,3.84374886641
+rolling22_matched_test,2020-05-29,2025-12-12,2,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261115,-30.4300722033,47,3.74597260895,3.38003799499,5.92480911421
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,zero,,0,79,3.76507363552,,
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,train_mean,,1.45093038464,119,4.17956003011,,
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ridge,,-12.2646718517,170,4.64468154482,,
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,tree,,-8.15698014775,185,4.78738341986,,
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261111,-8.00035344838,253,5.42218964009,21.6332862438,3.94923168223
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261112,-33.3107244781,264,5.55628884857,24.0217485033,5.88855569047
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261113,-12.1724451609,274,5.60170289722,23.3251279496,4.68851994066
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261114,-39.4370188922,234,5.25483559982,17.1839476394,4.94112397488
+rolling22_matched_test,2020-05-29,2025-12-12,1,same-band zero tilt,"cumulative net excess, bp (not annualized)",reports/ppo_matrix_review.json,ppo,20261115,-60.0047670947,248,5.44416112767,24.0130959333,7.41341316362

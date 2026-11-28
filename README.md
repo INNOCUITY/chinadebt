@@ -38,7 +38,11 @@
 | [docs/04_server_guide.md](docs/04_server_guide.md) | **服务器操作手册**：SSH/Git、无conda环境、数据传输、隔离一键运行、日志/失败恢复、结果下载与八卡规划 |
 | [docs/code.md](docs/code.md) | **代码变更日志 + Code Review 区**（每次改动必记录） |
 
-**服务器部署（2026-11-26）**：公开仓库已在服务器fetch验证；代码、独立环境、数据及结果均在 `/srv/ficc`。保留`ssh research-server`，也可使用用户提供的直接SSH入口，不改全局Git/SSH认证。服务器已完成官方数据抓取、全样本比对、冻结、离线重建和跨入口smoke；补齐依赖后服务器检查 **724 passed / 1 skipped / 1 deselected**，三套验收 **71/71、92/92、92/92**；模型双执行带结果与Mac在浮点精度内一致。完整验证结果见[本次实跑记录](docs/05_server_execution_20261126.md)。Mac只接收小型结果。硬件为8×A800 80GB、64物理核/128线程、约1TiB内存；本轮CPU运行已有模型/验收，**RL训练器仍待实现，未运行GPU训练**。
+**当前进展（2026-11-28）**：PPO 训练/恢复与 22 折、5 seed 已完成；同口径累计净超额中位数为 2 lot −3.93 bp、1 lot −33.31 bp，尚无稳健策略价值证据。奖励、执行、价值估计等后续实验未通过扩折门槛，当前冻结容量和训练预算、保留前瞻期。官方期货成交量/OI/跨月结算价差已完成覆盖与时点审计，限定特征增量检验未通过。
+
+**交付入口**：[中文报告](reports/zh/final_report.md) · [English report](reports/en/final_report.md) · [统一基线](reports/unified_baselines.csv) · [RL 消融](reports/rl_ablation.csv) · [验收差距](reports/acceptance_status.json) · [复现指南](docs/09_reproduction.md) · [演示与问答](docs/05_defense_qa.md)。`make reproduce` 重建公开证据报告与 Python 图；`make serve` 启动四页只读 Dashboard。GitHub CI 运行公开契约测试及漂移检查，不代替有许可原始数据的完整集成验收。
+
+已归档三套账本验收 71/71、92/92、92/92 通过。SAC、显式风险惩罚、RL 去成本、完整同口径五方对照及部分统计/解释性要求仍未完成，**当前不是原计划全项验收通过**。
 
 ## 快速开始
 
@@ -67,8 +71,8 @@ src/ficc/
   backtest/      回测引擎、成交与成本、绩效、归因
   risk/          敞口、VaR/ES、压力测试、限额
   ml/            机器学习：标签/特征/模型/Purged Walk-Forward/可解释性
-  rl/            强化学习环境/轨迹契约；PPO/SAC训练与消融待实现
-  report/        图表与报告导出
+  rl/            强化学习环境、PPO 训练/恢复/评估；SAC 尚未实现
+  reporting/     公开证据汇总、双语报告与验收状态
 apps/dashboard/  Streamlit 演示（曲线 / 策略 / 风险 / 回测）
 tests/           单元测试（重点：定价口径、无未来信息泄漏）
 reports/         最终研究报告（zh/ 与 en/）与图表
@@ -87,13 +91,14 @@ docs/code.md     代码变更日志 + Code Review
 
 ```bash
 make setup    # 创建项目本地 .venv 并安装全部依赖（推荐）
-make check    # = ruff check + ruff format --check + pytest（当前 712 项离线）
+make test-public  # 无许可原始数据的公开契约测试（需 Torch）
+make check    # 完整本地检查；需要原始数据与研究依赖
 ```
 
 - 所有命令优先使用 `.venv/bin/python`，但当前 .venv 仍继承 Anaconda 的 system-site-packages，完整隔离环境尚待重建。
 - 2026-11-07 复核后修复：默认 `make check` 现为 **exit 0（673 passed / 1 deselected）**。修复方式是在 `pyproject.toml` 的 addopts 中同时禁用 `debugging` 与 `capture` 插件（本环境 pytest capture 会触发段错误）；**根因尚未定位**，只报告"命令稳定通过"，不把它当作环境问题已解决的证明。
 - Python 环境、lint 规则与排除范围（`scripts/spike` 保持 Phase 0 原貌；`PD` 规则需 preview 暂未启用）见 [docs/code.md](docs/code.md)。
-- 仓库已于2026-11-26确认为**公开**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make data` 自行重建。
+- 仓库已于2026-11-26确认为**公开**状态；`data/` 全部不入库（中债数据不可再分发），克隆后 `make fetch` 自行取得数据，再按冻结配置核验。
 
 ## 开发规范
 

@@ -87,7 +87,7 @@ risk:  ## 生成风险报告（敞口/VaR/压力测试）
 sensitivity:  ## 参数敏感性网格
 	$(PY) scripts/run_sensitivity.py --config config/config.yaml
 
-report:  ## 生成研究报告与图表
+report:  ## 从归档证据生成双语报告与图表（不训练）
 	$(PY) scripts/build_report.py
 
 serve:  ## 启动 Streamlit 演示
@@ -104,8 +104,8 @@ cov:  ## 覆盖率报告
 	$(PY) -m pytest tests/ -q --cov=src/ficc --cov-report=term-missing
 
 lint:  ## 代码检查
-	$(RUFF) check src tests scripts
-	$(RUFF) format --check src tests scripts
+	$(RUFF) check src tests scripts apps
+	$(RUFF) format --check src tests scripts apps
 
 fmt:  ## 自动格式化
 	$(RUFF) format src tests scripts
@@ -113,9 +113,21 @@ fmt:  ## 自动格式化
 
 check: lint test  ## 提交前的完整检查
 
-repro:  ## 一键全流程复现（数据 → 报告）
+repro:  ## 原曲线流水线（不是完整 ML/RL 研究复现）
 	$(PY) scripts/run_pipeline.py --all
 
 clean:  ## 清理缓存与中间产物
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache .ruff_cache .mypy_cache build dist *.egg-info
+
+.PHONY: reproduce delivery-check test-public futures-data
+reproduce: report  ## 公开证据复现：双语报告、汇总和 Python 图；不跑训练
+
+delivery-check:  ## 检查交付源散列与汇总一致性
+	$(PY) scripts/build_report.py --check
+
+test-public:  ## 无许可原始数据的公开契约测试（需 Torch）
+	$(PY) scripts/run_public_tests.py
+
+futures-data:  ## 下载并核验冻结日期范围内官方期货日频数据
+	$(PY) scripts/fetch_futures_daily.py

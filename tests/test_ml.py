@@ -429,7 +429,14 @@ def test_ml_package_surface_is_stable() -> None:
 
     package_dir = Path(ml.__file__).resolve().parent
     files = {path.name for path in package_dir.glob("*.py")}
-    assert files == {"__init__.py", "asof.py", "dataset.py", "labels.py", "walkforward.py"}
+    assert files == {
+        "__init__.py",
+        "asof.py",
+        "dataset.py",
+        "labels.py",
+        "market_features.py",
+        "walkforward.py",
+    }
 
 
 # ===========================================================================

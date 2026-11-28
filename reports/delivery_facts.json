@@ -1,0 +1,156 @@
+{
+  "as_of": "2026-11-28",
+  "full_original_plan_accepted": false,
+  "strategy_claim": "No robust post-cost alpha established; no production trading approval.",
+  "budget_policy": "No added PPO updates, model capacity, folds or seeds. SAC and new reward training remain deferred.",
+  "forward_policy": "Reserved period beginning December 2026 remains excluded from selection. First eligible decision is 2026-12-07; full 12-interval calendar coverage remains required.",
+  "test_window": [
+    "2020-05-29",
+    "2025-12-12"
+  ],
+  "matched_ppo_median_net_bp": {
+    "2": -3.9260686868240904,
+    "1": -33.31072447807455
+  },
+  "matched_baselines": {
+    "2": {
+      "zero": {
+        "excess_bp": 0.0,
+        "trades": 23,
+        "turnover": 3.2865745148031533
+      },
+      "train_mean": {
+        "excess_bp": 0.4025510382787978,
+        "trades": 25,
+        "turnover": 3.320523003867545
+      },
+      "ridge": {
+        "excess_bp": 4.05549551341311,
+        "trades": 25,
+        "turnover": 3.3370307424541057
+      },
+      "tree": {
+        "excess_bp": 7.125416723383626,
+        "trades": 27,
+        "turnover": 3.352684291346134
+      }
+    },
+    "1": {
+      "zero": {
+        "excess_bp": 0.0,
+        "trades": 79,
+        "turnover": 3.7650736355220813
+      },
+      "train_mean": {
+        "excess_bp": 1.4509303846388377,
+        "trades": 119,
+        "turnover": 4.179560030108014
+      },
+      "ridge": {
+        "excess_bp": -12.264671851729414,
+        "trades": 170,
+        "turnover": 4.644681544821262
+      },
+      "tree": {
+        "excess_bp": -8.156980147746573,
+        "trades": 185,
+        "turnover": 4.787383419857744
+      }
+    }
+  },
+  "seed_mean_daily_inference": {
+    "2": {
+      "n_obs": 1386,
+      "mean_ann_bp": -1.6122653781712595,
+      "hac_lag": 5,
+      "hac_se_ann_bp": 0.7442492012227766,
+      "hac_t": -2.1662977609144374,
+      "hac_ci_low_bp": -3.070967008090605,
+      "hac_ci_high_bp": -0.15356374825191385,
+      "boot_block": 20,
+      "boot_reps": 2000,
+      "boot_seed": 20261108,
+      "boot_mean_ann_bp": -1.678216040754106,
+      "boot_ci_low_bp": -3.1933058009955935,
+      "boot_ci_high_bp": -0.14043008750170496,
+      "boot_p_value": 0.03498250874562719
+    },
+    "1": {
+      "n_obs": 1386,
+      "mean_ann_bp": -4.564792032371618,
+      "hac_lag": 5,
+      "hac_se_ann_bp": 0.7778539292958657,
+      "hac_t": -5.868443753319843,
+      "hac_ci_low_bp": -6.0893577190244805,
+      "hac_ci_high_bp": -3.040226345718756,
+      "boot_block": 20,
+      "boot_reps": 2000,
+      "boot_seed": 20261108,
+      "boot_mean_ann_bp": -4.66082302691918,
+      "boot_ci_low_bp": -6.282378814231306,
+      "boot_ci_high_bp": -3.1938385618639162,
+      "boot_p_value": 0.0009995002498750624
+    }
+  },
+  "lambda_plateaus": 3,
+  "lambda_expand": false,
+  "archived_acceptance": [
+    {
+      "evidence": "reports/acceptance_summary.csv",
+      "checks": 71,
+      "passed": 71
+    },
+    {
+      "evidence": "reports/acceptance_summary_rolling.csv",
+      "checks": 92,
+      "passed": 92
+    },
+    {
+      "evidence": "reports/acceptance_summary_rolling_extended.csv",
+      "checks": 92,
+      "passed": 92
+    }
+  ],
+  "futures_coverage": {
+    "rows": 15684,
+    "dates": 1573,
+    "first": "2018-12-03",
+    "last": "2025-05-30",
+    "variety_dates": {
+      "T": 1573,
+      "TF": 1573,
+      "TL": 509,
+      "TS": 1573
+    }
+  },
+  "futures_prediction_wins": 0,
+  "futures_primary_median_bp": {
+    "2": {
+      "mean_selected_net_bp": -0.7756761966393696,
+      "gain_vs_original_bp": -0.289906407405826,
+      "gain_vs_label_fixed_bp": -0.7756761966393696,
+      "gain_vs_continuous_fixed_bp": -0.5219085671282279
+    },
+    "1": {
+      "mean_selected_net_bp": -0.7821625680106066,
+      "gain_vs_original_bp": -0.289839958198705,
+      "gain_vs_label_fixed_bp": -0.7821625680106066,
+      "gain_vs_continuous_fixed_bp": -0.5321207878698851
+    }
+  },
+  "futures_delay_median_bp": {
+    "2": {
+      "mean_selected_net_bp": 0.03189265161965024,
+      "gain_vs_original_bp": -0.026973568751278966,
+      "gain_vs_label_fixed_bp": 0.03189265161965024,
+      "gain_vs_continuous_fixed_bp": -0.2589757284736809
+    },
+    "1": {
+      "mean_selected_net_bp": 0.040237012195951743,
+      "gain_vs_original_bp": -0.024841780904489644,
+      "gain_vs_label_fixed_bp": 0.032160902370364036,
+      "gain_vs_continuous_fixed_bp": -0.2671226105756695
+    }
+  },
+  "futures_continue": false
+}

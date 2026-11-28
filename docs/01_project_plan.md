@@ -2174,3 +2174,9 @@ profile、collector、小PPO及可恢复checkpoint的真实实现和测试，然
 | `tests/**`、`apps/dashboard/**`、`notebooks/**` | ⬜ | 目录已建，待实现 |
 
 **下一步的入口**：`make fetch` → `make fit` → 出第一张 2002–2026 国债曲线热力图。
+
+### 12.48 交付候选与原计划差距核对（2026-11-28）
+
+本节是当前状态索引，既有章节保留历史决策，不能把早期“训练器未实现”当作当前状态。PPO 22 折五 seed 和后续限定消融已经完成，工程链路成立但无稳健超额证据。新增官方期货活动度四特征诊断亦未通过预测增量门槛，继续冻结训练容量/轮数和前瞻时期。[当前报告](../reports/zh/final_report.md) · [数据核验](08_data_and_acceptance.md)
+
+Phase 6 所缺双语报告、四页只读 Dashboard、`rl_ablation.csv`、CI 和演示/复现入口已补齐。`config/acceptance/delivery.json` 逐项映射原 §7.2；完整验收状态仍为 false。SAC 在原 §5.3 为必做，后续记录曾列为可选，但没有实跑对照或正式收口；显式风险惩罚、RL 去成本和完整五方仍未完成。实际滚动协议与原年代切分不同，部分解释性、DSR、任意日期复现要求仍为部分完成。此次不以文档替代缺失研究，也不自行批准豁免。[复现边界](09_reproduction.md)

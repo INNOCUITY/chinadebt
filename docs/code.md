@@ -3656,3 +3656,12 @@ seed/fold 并行；工程放行不依赖超额收益为正。研究结论必须�
   运行入口与恢复方法见服务器指南 §18。
 - 用 `python -m pytest tests/test_ppo_evaluation.py tests/test_ppo.py tests/test_rl_clock.py tests/test_server_tools.py`
   检查折边界、选择、公共网格、费用、对账、恢复及任务入口。工程预算每折两次更新。
+
+### C-182 [data/report] 官方期货信息增量与可审计交付候选
+
+- 日期：2026-11-28。下载官方合约日频包，独立冻结日期检查整日缺失，记录来源/散列、次日可用时点假设和额外延迟敏感性。新增数据不进入旧现券数据树或 Git。
+- 冻结四特征与旧标签/市场血缘后运行预测检验，未过门；不改变 PPO 奖励、容量、更新轮数或前瞻规则。新增特征未来扰动、缺日、迟延、坏标签身份测试通过。
+- 新增公开交付生成器、统一同期间基线、完整三因素八组合及后续消融汇总、双语报告、Python 图、四页只读 Streamlit、验收差距清单、演示稿、复现入口与 CI。原计划缺项仍为未完成。
+- 扩大公开契约验证时发现旧 `test_ml_package_surface_is_stable` 未登记此前已存在的 `market_features.py`，补齐文件清单断言，未改变 ML 逻辑。
+- 验证入口：`make reproduce`、`make delivery-check`、`make test-public`、`make lint`。公开检查无需许可原始数据；完整历史金融实验未重跑。CI 真实执行结果另在交付记录披露，不将本地成功冒充远端成功。
+- 隐私：私有连接配置、凭据、原始行情、标签缓存与 checkpoint 保留忽略状态；提交前扫描 staged diff。
