@@ -1,0 +1,28 @@
+{
+  "source_commit": "125a3f7b41deb845e92d646f54b145320ba4ad1b",
+  "run_id": "cost-signal-125a3f7",
+  "verified_at": "2026-11-28T15:35:47+08:00",
+  "status": "running",
+  "compute": "CPU only; up to 24 processes, one BLAS/OpenMP thread per process; no GPU training",
+  "local_public_tests_passed": 185,
+  "server_specialized_tests_passed": 8,
+  "source_ci_url": "https://github.com/INNOCUITY/chinadebt/actions/runs/46121366891",
+  "source_ci_conclusion": "success",
+  "plan_sha256": "4acd5811ef6885760f203af7cee6d0ba883248f7af0cbe88f884ea89d5088f88",
+  "runtime_sha256": "21ff9079f50fdfbb0385c1affd52e569426d149f0163c07af9448d13920565ab",
+  "local_server_runtime_match": true,
+  "data_tree_matches_original_server_baseline": true,
+  "expected_label_records": 181,
+  "label_records_at_verification": {
+    "0/2": 42,
+    "0/1": 16,
+    "10/2": 12,
+    "10/1": 8,
+    "21/2": 6,
+    "21/1": 6
+  },
+  "max_ledger_error_yuan_seen": 1.4901161193847656e-08,
+  "tracebacks_seen": 0,
+  "scope": "Launch and partial artifact verification only. Full label coverage, fitted predictors and gates pending. No result is inferred from process liveness.",
+  "all_six_fold_band_groups_wrote_labels": true
+}
