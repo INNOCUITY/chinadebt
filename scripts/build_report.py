@@ -21,6 +21,7 @@ FIGURES = [
     "reports/delivery_baselines.png",
     "reports/delivery_futures.png",
     "reports/delivery_cost_signal.png",
+    "reports/delivery_funding.png",
 ]
 
 
@@ -117,6 +118,32 @@ def plots(root, out, frame):
     fig.tight_layout(rect=(0, 0.045, 1, 0.96))
     fig.savefig(out / FIGURES[2], dpi=160, metadata={"Software": "ficc"})
     plt.close(fig)
+    funding = read(root, "reports/funding_signal_probe.json")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.3), sharey=True)
+    for ax, arm in zip(axes, ("primary", "delay_sensitivity"), strict=True):
+        rows = funding[arm]["years"]
+        x = np.arange(len(rows))
+        for offset, name, label, color in [
+            (-0.27, "original_ridge", "Original Ridge", "#3b82f6"),
+            (-0.09, "funding_ridge", "+ OMO features", "#e8793a"),
+            (0.09, "fit_mean", "Fit mean", "#64748b"),
+            (0.27, "zero_change", "Zero change", "#9ca3af"),
+        ]:
+            ax.bar(
+                x + offset,
+                [r["metrics"][name]["rmse_bp"] for r in rows],
+                width=0.18,
+                label=label,
+                color=color,
+            )
+        ax.set_xticks(x, [str(r["year"]) + ("*" if r["year"] == 2025 else "") for r in rows])
+        ax.set_title("Next-session availability" if arm == "primary" else "One extra session delay")
+        ax.set_ylabel("5-session 10Y yield-change RMSE (bp)")
+    axes[1].legend(frameon=False, fontsize=8)
+    fig.suptitle("Funding announcement probe: prediction gate fails; *2025 through May only")
+    fig.tight_layout()
+    fig.savefig(out / FIGURES[3], dpi=160, metadata={"Software": "ficc"})
+    plt.close(fig)
 
 
 def build(root, out, make_plots=True):
@@ -144,6 +171,15 @@ def build(root, out, make_plots=True):
         "reports/futures_signal_probe.json",
         "reports/futures_data_coverage.json",
         "reports/cost_signal_review.json",
+        "reports/funding_data_coverage.json",
+        "reports/funding_signal_probe.json",
+        "config/baselines/funding_sessions.json",
+        "config/experiments/funding_signal_probe.json",
+        "scripts/audit_funding_announcements.py",
+        "scripts/fetch_funding_announcements.py",
+        "scripts/probe_funding_signal.py",
+        "src/ficc/data/funding_announcements.py",
+        "docs/11_funding_data_feasibility.md",
         "scripts/review_cost_signal.py",
         "scripts/build_report.py",
         "src/ficc/reporting/delivery.py",

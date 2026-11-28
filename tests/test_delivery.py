@@ -144,3 +144,21 @@ def test_dashboard_all_pages_are_read_only(monkeypatch):
             for figure in app.selectbox[0].options:
                 app.selectbox[0].set_value(figure).run()
                 assert not app.exception
+
+
+def test_funding_coverage_does_not_turn_holidays_into_zero_or_prediction_into_profit():
+    from probe_funding_signal import assess_gate
+
+    coverage = json.loads((ROOT / "reports/funding_data_coverage.json").read_text())
+    probe = json.loads((ROOT / "reports/funding_signal_probe.json").read_text())
+    plan = json.loads((ROOT / "config/experiments/funding_signal_probe.json").read_text())
+    assert coverage["passed_gross_announcements"] and not coverage["passed_net_injection"]
+    assert (
+        coverage["coverage_status"]["positive_operation"]
+        + coverage["coverage_status"]["explicit_zero"]
+        == 1619
+    )
+    assert all(r["amount"] is None for r in coverage["special_cash_sessions"])
+    assert probe["gate"] == assess_gate(probe["primary"], probe["delay_sensitivity"], plan)
+    assert not probe["gate"]["passed"] and not probe["gate"]["economic_value_tested"]
+    assert sum(r["heldout_rows"] for r in probe["primary"]["years"]) == 215

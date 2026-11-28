@@ -24,6 +24,7 @@ dependencies = [
     "plotly>=5.18,<6",
     "matplotlib>=3.8,<4",
     "requests>=2.31",
+    "beautifulsoup4>=4.12,<5",
     "openpyxl>=3.1",
     "tabulate>=0.9",  # pandas.to_markdown：研究结论报告的运行依赖
 ]

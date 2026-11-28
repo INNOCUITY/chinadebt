@@ -1,0 +1,164 @@
+{
+  "version": "funding-announcement-audit-v1",
+  "scope": [
+    "2018-12-01",
+    "2025-05-30"
+  ],
+  "passed_gross_announcements": true,
+  "passed_net_injection": false,
+  "cfets_articles": 1658,
+  "primary_daily_notices": 1670,
+  "primary_supplements": 49,
+  "total_archived_articles": 1707,
+  "parsed_status": {
+    "positive_operation": 1331,
+    "other_operation_only": 2,
+    "explicit_zero": 288,
+    "offshore_bill_notice": 49
+  },
+  "excluded_non_daily": 37,
+  "coverage_status": {
+    "explicit_zero": 288,
+    "positive_operation": 1331,
+    "special_cash_session_no_scheduled_notice": 4
+  },
+  "expected_bank_sessions": 1623,
+  "missing_dates": [],
+  "special_cash_sessions": [
+    {
+      "date": "2018-12-30",
+      "status": "special_cash_session_no_scheduled_notice",
+      "amount": null,
+      "url": null
+    },
+    {
+      "date": "2018-12-31",
+      "status": "special_cash_session_no_scheduled_notice",
+      "amount": null,
+      "url": null
+    },
+    {
+      "date": "2022-12-31",
+      "status": "special_cash_session_no_scheduled_notice",
+      "amount": null,
+      "url": null
+    },
+    {
+      "date": "2023-12-31",
+      "status": "special_cash_session_no_scheduled_notice",
+      "amount": null,
+      "url": null
+    }
+  ],
+  "reverse_repo_rows": 1424,
+  "tenor_counts": {
+    "7天": 1268,
+    "14天": 148,
+    "28天": 8
+  },
+  "maturity_dates_verified": 0,
+  "value_dates_verified": 0,
+  "publication_business_date_differences": 0,
+  "multiline_notices": 93,
+  "mixed_tool_zero_notices": 23,
+  "by_year": {
+    "2018": {
+      "explicit_zero": 10,
+      "positive_operation": 11,
+      "special_cash_session_no_scheduled_notice": 2
+    },
+    "2019": {
+      "positive_operation": 87,
+      "explicit_zero": 163
+    },
+    "2020": {
+      "explicit_zero": 114,
+      "positive_operation": 135
+    },
+    "2021": {
+      "positive_operation": 250
+    },
+    "2022": {
+      "positive_operation": 249,
+      "special_cash_session_no_scheduled_notice": 1
+    },
+    "2023": {
+      "positive_operation": 249,
+      "special_cash_session_no_scheduled_notice": 1
+    },
+    "2024": {
+      "positive_operation": 250,
+      "explicit_zero": 1
+    },
+    "2025": {
+      "positive_operation": 100
+    }
+  },
+  "raw_manifest_sha256": "eeff10e55b23e52163f326aa85535a39b16416b4ba118ca643db06273f68ee71",
+  "calendar_sha256": "23588687cb1834b7f823a7bf826813484e1bc86105d5ae15a5bd22a9f0bb3cd4",
+  "sources": [
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20171227/1050035.html",
+      "sha256": "ff882aa4f826f73ffcf00ce35ac07ac04c4beba64818eea4e4d46423d2825c19"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20181225/1225132.html",
+      "sha256": "1555b943466dc779ab0e1d099dd95fd7723e8baa5d3ca74435c81f944f9841f1"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/bbjjr/20191216/1482488.html",
+      "sha256": "58026c1f5dc3cc8d796c61e7d94bcd47b500d3f71ae3965b315aab8518cefbde"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20201217/1857697.html",
+      "sha256": "22d485ceb973325e892cf9c59814d14f59677e3abab627b3c8b52cb943ef820d"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20211124/2109914.html",
+      "sha256": "7d50241f0fed884e6c94bf555e8dc1ae2eaac1c5ab58b9b623b6108ad7c97fe4"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20221222/2521677.html",
+      "sha256": "95422c4ed7d8abc27e6bdadd27cf549f837c69de1b581f598c871fea9c0fedcf"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20231225/2757785.html",
+      "sha256": "2a3a49f606323b2b7d0aa24e31a8185d615c4f1707fd791b66b9106b609749dd"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20241212/3017037.html",
+      "sha256": "034f240a75ff83d9f11b03b8e1da10c7a8ebed6fe8676ab3189f4760de22174e"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20190404/1277467.html",
+      "sha256": "4e1ecb8dc49e5062390a893b01474db390e2a16d74348b9da559f5d3be45f1ea"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20200128/1521870.html",
+      "sha256": "070ad58251c1a943ee8abcba2edb5c27ad75fbb13feeb2c46335856b04d771a9"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20181225/1225134.html",
+      "sha256": "2b0f09b166cde2fe3468ce2af51d343a58efd5b3894315fc6c1535c80e1f05ca"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20221226/2523946.html",
+      "sha256": "8ea7646712f67806900d48f9c2b0fda8d542b584c0c9433e053d032b1e2cf18f"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20231227/2779127.html",
+      "sha256": "389939c0154cfa41e40b4c39cacb2c3750cc603b32ecbf6bb92063a22616c485"
+    },
+    {
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/3018927/index.html",
+      "sha256": "c10cc40899f3acc7dbd3bc1c29774ec3bb0178751a259da5be8a748ee1e060b1"
+    },
+    {
+      "url": "https://www.chinamoney.com.cn/chinese/rdgz/20231227/2779320.html",
+      "sha256": "2df7a5bfe7b21a4eab11c4ebaf24c30f9baa4e3b08a313d8cfc9cf441df1f5c4"
+    }
+  ],
+  "availability": "Next independent interbank session after displayed publication date; additional one-session lag sensitivity. Current page snapshot is not immutable vintage proof.",
+  "special_days": "Statutory holidays with special cash-market opening, not scheduled ordinary OMO working days. No announcement found in either source; amounts remain null, not asserted zero.",
+  "maturity_limit": "Tenor is known; value/maturity dates not explicitly verified. No net injection, maturity schedule or outstanding stock may be inferred."
+}

@@ -1,0 +1,323 @@
+{
+  "version": "funding-prediction-v1",
+  "plan_sha256": "27e9bd18b1a1b832ed6f5361c78a2c11ca8b7976be87e971a7f6cb06740eb741",
+  "audit_sha256": "0e9a24eb091bbb1f0c9d46323774a41ea19daf2b733ebf868a4a920eced67f7d",
+  "calendar_sha256": "23588687cb1834b7f823a7bf826813484e1bc86105d5ae15a5bd22a9f0bb3cd4",
+  "market": {
+    "market_sha256": "903823ac0ed6379b45d81e712abfb84d15b7218738b63f54f6db4be93a001e39",
+    "sessions": 1582,
+    "funding_carried_sessions": 2,
+    "funding_max_age_calendar_days": 2
+  },
+  "target": "10Y yield change from decision close to close five independent interbank sessions later, bp; features through previous session",
+  "scope": "development screening, not untouched confirmation or tradable alpha",
+  "primary": {
+    "extra_lag": 0,
+    "years": [
+      {
+        "year": 2021,
+        "fit_rows": 82,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2020-12-31",
+        "heldout_first_cutoff": "2021-01-07",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 4.351988483297019,
+            "mae_bp": 3.4630970231512306
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.949237840904901,
+            "mae_bp": 3.787355279374563
+          },
+          "fit_mean": {
+            "rmse_bp": 4.351978982736228,
+            "mae_bp": 3.441010452961675
+          },
+          "zero_change": {
+            "rmse_bp": 4.3898193910130665,
+            "mae_bp": 3.4897959183673493
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.5972493576078826,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2022,
+        "fit_rows": 131,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2021-12-31",
+        "heldout_first_cutoff": "2022-01-07",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 4.566347656040531,
+            "mae_bp": 3.196817676754671
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.566965966657441,
+            "mae_bp": 3.288709824060121
+          },
+          "fit_mean": {
+            "rmse_bp": 4.588010921411539,
+            "mae_bp": 3.4692241782209123
+          },
+          "zero_change": {
+            "rmse_bp": 4.5600396077764325,
+            "mae_bp": 3.415306122448985
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.0006183106169102004,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2023,
+        "fit_rows": 180,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2022-12-31",
+        "heldout_first_cutoff": "2023-01-06",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 3.5990150228843243,
+            "mae_bp": 2.9071036403147206
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.537472884831434,
+            "mae_bp": 3.7303955458922315
+          },
+          "fit_mean": {
+            "rmse_bp": 2.8828149556629743,
+            "mae_bp": 2.284459183673473
+          },
+          "zero_change": {
+            "rmse_bp": 2.9288888329737577,
+            "mae_bp": 2.3720408163265336
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.9384578619471098,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2024,
+        "fit_rows": 229,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2023-12-31",
+        "heldout_first_cutoff": "2024-01-05",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 6.970476618824464,
+            "mae_bp": 5.447276065173089
+          },
+          "funding_ridge": {
+            "rmse_bp": 6.9976751806545705,
+            "mae_bp": 5.461680017454289
+          },
+          "fit_mean": {
+            "rmse_bp": 5.270674507098007,
+            "mae_bp": 3.7766776579627486
+          },
+          "zero_change": {
+            "rmse_bp": 5.371296350956251,
+            "mae_bp": 3.868163265306124
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.02719856183010627,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2025,
+        "fit_rows": 278,
+        "heldout_rows": 19,
+        "fit_last_horizon": "2024-12-30",
+        "heldout_first_cutoff": "2025-01-06",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 5.963379029491276,
+            "mae_bp": 4.565030721661972
+          },
+          "funding_ridge": {
+            "rmse_bp": 5.976422116054313,
+            "mae_bp": 4.6226168914986685
+          },
+          "fit_mean": {
+            "rmse_bp": 5.972652205233525,
+            "mae_bp": 4.42825823551685
+          },
+          "zero_change": {
+            "rmse_bp": 5.9019443718507745,
+            "mae_bp": 4.4147368421052615
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.01304308656303732,
+        "beats_all_controls": false
+      }
+    ],
+    "pooled_mse_bp2": {
+      "original_ridge": 26.236900077163547,
+      "funding_ridge": 29.344833146344687,
+      "fit_mean": 20.491667773470777,
+      "zero_change": 20.739613023255842
+    },
+    "median_rmse_gain_bp": -0.02719856183010627,
+    "wins": 0
+  },
+  "delay_sensitivity": {
+    "extra_lag": 1,
+    "years": [
+      {
+        "year": 2021,
+        "fit_rows": 82,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2020-12-31",
+        "heldout_first_cutoff": "2021-01-07",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 4.351988483297019,
+            "mae_bp": 3.4630970231512306
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.820488137066752,
+            "mae_bp": 3.705026204453857
+          },
+          "fit_mean": {
+            "rmse_bp": 4.351978982736228,
+            "mae_bp": 3.441010452961675
+          },
+          "zero_change": {
+            "rmse_bp": 4.3898193910130665,
+            "mae_bp": 3.4897959183673493
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.468499653769733,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2022,
+        "fit_rows": 131,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2021-12-31",
+        "heldout_first_cutoff": "2022-01-07",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 4.566347656040531,
+            "mae_bp": 3.196817676754671
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.543965307196111,
+            "mae_bp": 3.2757028370887498
+          },
+          "fit_mean": {
+            "rmse_bp": 4.588010921411539,
+            "mae_bp": 3.4692241782209123
+          },
+          "zero_change": {
+            "rmse_bp": 4.5600396077764325,
+            "mae_bp": 3.415306122448985
+          }
+        },
+        "rmse_gain_vs_original_bp": 0.022382348844419475,
+        "beats_all_controls": true
+      },
+      {
+        "year": 2023,
+        "fit_rows": 180,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2022-12-31",
+        "heldout_first_cutoff": "2023-01-06",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 3.5990150228843243,
+            "mae_bp": 2.9071036403147206
+          },
+          "funding_ridge": {
+            "rmse_bp": 4.654663978337939,
+            "mae_bp": 3.835143524740706
+          },
+          "fit_mean": {
+            "rmse_bp": 2.8828149556629743,
+            "mae_bp": 2.284459183673473
+          },
+          "zero_change": {
+            "rmse_bp": 2.9288888329737577,
+            "mae_bp": 2.3720408163265336
+          }
+        },
+        "rmse_gain_vs_original_bp": -1.0556489554536146,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2024,
+        "fit_rows": 229,
+        "heldout_rows": 49,
+        "fit_last_horizon": "2023-12-31",
+        "heldout_first_cutoff": "2024-01-05",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 6.970476618824464,
+            "mae_bp": 5.447276065173089
+          },
+          "funding_ridge": {
+            "rmse_bp": 7.081096334168668,
+            "mae_bp": 5.56923340227515
+          },
+          "fit_mean": {
+            "rmse_bp": 5.270674507098007,
+            "mae_bp": 3.7766776579627486
+          },
+          "zero_change": {
+            "rmse_bp": 5.371296350956251,
+            "mae_bp": 3.868163265306124
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.11061971534420412,
+        "beats_all_controls": false
+      },
+      {
+        "year": 2025,
+        "fit_rows": 278,
+        "heldout_rows": 19,
+        "fit_last_horizon": "2024-12-30",
+        "heldout_first_cutoff": "2025-01-06",
+        "metrics": {
+          "original_ridge": {
+            "rmse_bp": 5.963379029491276,
+            "mae_bp": 4.565030721661972
+          },
+          "funding_ridge": {
+            "rmse_bp": 5.988651156976582,
+            "mae_bp": 4.63731713062338
+          },
+          "fit_mean": {
+            "rmse_bp": 5.972652205233525,
+            "mae_bp": 4.42825823551685
+          },
+          "zero_change": {
+            "rmse_bp": 5.9019443718507745,
+            "mae_bp": 4.4147368421052615
+          }
+        },
+        "rmse_gain_vs_original_bp": -0.02527212748530605,
+        "beats_all_controls": false
+      }
+    ],
+    "pooled_mse_bp2": {
+      "original_ridge": 26.236900077163547,
+      "funding_ridge": 29.536510670522834,
+      "fit_mean": 20.491667773470777,
+      "zero_change": 20.739613023255842
+    },
+    "median_rmse_gain_bp": -0.11061971534420412,
+    "wins": 1
+  },
+  "gate": {
+    "checks": {
+      "primary_wins": false,
+      "primary_median": false,
+      "pooled_improvement": false,
+      "delay_median": false
+    },
+    "passed": false,
+    "next_step": "stop_this_funding_feature_target_specification",
+    "economic_value_tested": false,
+    "ppo_authorized": false
+  },
+  "economic_limit": "Yield forecast RMSE only; no cost or cumulative portfolio excess claimed. Forward period untouched."
+}

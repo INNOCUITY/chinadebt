@@ -15,3 +15,5 @@ tests/test_market_signal_probe.py
 tests/test_delivery.py
 
 tests/test_cost_signal_diagnostic.py
+tests/test_funding_announcements.py
+tests/test_funding_signal_probe.py

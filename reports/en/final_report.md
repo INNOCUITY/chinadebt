@@ -50,6 +50,14 @@ The restored-target choices change holdings versus zero tilt in 44/47 intervals 
 
 ![Cost and prediction diagnostic](../delivery_cost_signal.png)
 
+## Funding-announcement audit and prediction
+
+Archived 1,707 official articles for 2018-12–2025-05. Ordinary reverse repo covers 1,331 positive and 288 explicit-zero working days. Four special year-end cash sessions remain null, not zero; value/maturity dates are unverified, so no net-injection or stock features are admitted. Displayed timestamps are current snapshots, not immutable vintage proof. [Coverage evidence](../funding_data_coverage.json).
+
+A fixed-alpha Ridge adds three announcement features to the original nine inputs and predicts five-session 10Y yield changes. Across five annual development windows (215 held-out intervals), 0/5 beat all controls. Median RMSE reduction versus original Ridge is -0.0272 bp; with one extra announcement-session delay it is -0.1106 bp. The gate fails; stop this feature/target specification. No portfolio profit or post-cost gain was measured.
+
+![Funding prediction RMSE](../delivery_funding.png)
+
 ## Acceptance and reproduction
 
 Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred.
@@ -82,8 +90,8 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 - `reproduction` — **partial**: 复现入口 / Reproduction entry points. Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes. [Evidence / 证据](../../Makefile)
 
-`make reproduce` rebuilds both reports, summary tables and three Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json).
+`make reproduce` rebuilds both reports, summary tables and four Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json).
 
 ## Next decision
 
-Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. Next audit historical funding-operation announcements, publication versions and full coverage before freezing any new predictive task. Four official sample announcements have been inspected; no complete series or new model is claimed. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged.
+Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. Next establish value/maturity rules or an independently motivated liquidity/risk-control task before considering a new preregistration. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged.

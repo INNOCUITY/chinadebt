@@ -35,6 +35,10 @@ def main():
             "近月–次近月结算价差不是买卖价差；没有历史盘口、CTD 基差或逐日保证金的完整时点证据。"
         )
         st.image(str(REPORTS / "delivery_futures.png"))
+        st.subheader("资金操作公告：数据通过，预测增量未过门")
+        st.json(facts["funding_audit"])
+        st.caption("特殊现金开市日为 null；未核实起息/到期日，不构造净投放。2026 年前瞻期未使用。")
+        st.image(str(REPORTS / "delivery_funding.png"))
     elif page.startswith("基线"):
         st.subheader("同期间、同执行带、同账本")
         df = pd.read_csv(REPORTS / "unified_baselines.csv")

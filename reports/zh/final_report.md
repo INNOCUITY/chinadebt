@@ -50,6 +50,14 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 ![Cost and prediction diagnostic](../delivery_cost_signal.png)
 
+## 资金公告审计与预测增量
+
+已归档 2018-12 至 2025-05 的 1,707 份官方公告。普通逆回购覆盖 1,331 个有操作日和 288 个明确零操作日；四个年末特殊现金开市日保留 null，不填零。起息/到期日尚未核实，禁止生成净投放和存量特征；当前网页时间不等于不可变历史版本。[覆盖证据](../funding_data_coverage.json)。
+
+固定 alpha 的 Ridge 只增加三项公告特征，预测五个交易日的十年期收益率变化。五个跨年开发窗口、215 个留出区间中，0/5 同时胜过全部对照；相对原 Ridge 的年度 RMSE 中位降低量为 -0.0272 bp，额外延迟后为 -0.1106 bp。门槛失败，停止这套特征/目标组合；没有运行或宣称成本后组合收益。
+
+![Funding prediction RMSE](../delivery_funding.png)
+
 ## 验收与复现
 
 已归档账本验收为 71/71、92/92、92/92，这是保留的既有结果，不是本轮重新执行。报告和界面正确不能替代未完成研究。以下逐项保留原计划差距，不推断任何豁免。
@@ -82,8 +90,8 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 - `reproduction` — **partial**: 复现入口 / Reproduction entry points. Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes. [Evidence / 证据](../../Makefile)
 
-`make reproduce` 从已提交证据重建双语报告、汇总表和三张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。
+`make reproduce` 从已提交证据重建双语报告、汇总表和四张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。
 
 ## 下一步决策
 
-按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 -0.654／-9.289 bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。下一步先核验资金操作公告的历史发布版本和完整覆盖，再冻结新的预测任务。目前只核查了四份官方样例，尚未取得完整序列或训练新模型。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。
+按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 -0.654／-9.289 bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。资金公告的新操作信息审计已完成，但冻结的五日收益率预测增量亦未过门。不继续在这些窗口搜索超参数或期限；下一步先补起息/到期证据，或论证独立的资金压力/风险控制任务，再决定是否登记新实验。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。

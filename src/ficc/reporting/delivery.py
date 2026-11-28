@@ -187,6 +187,8 @@ def collect(root):
     coverage = read(root, "reports/futures_data_coverage.json")
     pivot = read(root, "reports/research_pivot_cost_audit.json")
     cost = read(root, "reports/cost_signal_review.json")
+    funding_audit = read(root, "reports/funding_data_coverage.json")
+    funding_probe = read(root, "reports/funding_signal_probe.json")
     checks = []
     for name in [
         "acceptance_summary",
@@ -243,6 +245,20 @@ def collect(root):
             )
         },
     )
+    summary["funding_audit"] = {
+        k: funding_audit[k]
+        for k in (
+            "scope",
+            "total_archived_articles",
+            "coverage_status",
+            "passed_gross_announcements",
+            "passed_net_injection",
+            "missing_dates",
+        )
+    }
+    summary["funding_probe"] = {
+        k: funding_probe[k] for k in ("primary", "delay_sensitivity", "gate")
+    }
     return summary, plan, baselines(matrix), ablations(root)
 
 
@@ -252,6 +268,7 @@ def render_report(f, plan, english=False):
     b = f["matched_baselines"]
     v = f["futures_primary_median_bp"]
     cost = f["cost_signal"]
+    funding = f["funding_probe"]
     lines = [
         "# China government bond research — delivery candidate"
         if en
@@ -344,6 +361,18 @@ def render_report(f, plan, english=False):
                 else "所选动作在 2 lot 的 44/47、1 lot 的 47/47 个区间改变了相对零倾斜的持仓，失败不能简单归于订单被挡住。三折固定对照均为加久期，由拟合段单次标签均值选出，并非连续固定账本的最优策略。上述数值为重置持仓后的单区间标签均值，不能累加为连续组合收益；已计成本加回也不等于零成本重优化环境。[完整复核](../cost_signal_review.json)。"
             ),
             "![Cost and prediction diagnostic](../delivery_cost_signal.png)",
+            "## Funding-announcement audit and prediction" if en else "## 资金公告审计与预测增量",
+            (
+                "Archived 1,707 official articles for 2018-12–2025-05. Ordinary reverse repo covers 1,331 positive and 288 explicit-zero working days. Four special year-end cash sessions remain null, not zero; value/maturity dates are unverified, so no net-injection or stock features are admitted. Displayed timestamps are current snapshots, not immutable vintage proof. [Coverage evidence](../funding_data_coverage.json)."
+                if en
+                else "已归档 2018-12 至 2025-05 的 1,707 份官方公告。普通逆回购覆盖 1,331 个有操作日和 288 个明确零操作日；四个年末特殊现金开市日保留 null，不填零。起息/到期日尚未核实，禁止生成净投放和存量特征；当前网页时间不等于不可变历史版本。[覆盖证据](../funding_data_coverage.json)。"
+            ),
+            (
+                f"A fixed-alpha Ridge adds three announcement features to the original nine inputs and predicts five-session 10Y yield changes. Across five annual development windows (215 held-out intervals), {funding['primary']['wins']}/5 beat all controls. Median RMSE reduction versus original Ridge is {funding['primary']['median_rmse_gain_bp']:+.4f} bp; with one extra announcement-session delay it is {funding['delay_sensitivity']['median_rmse_gain_bp']:+.4f} bp. The gate fails; stop this feature/target specification. No portfolio profit or post-cost gain was measured."
+                if en
+                else f"固定 alpha 的 Ridge 只增加三项公告特征，预测五个交易日的十年期收益率变化。五个跨年开发窗口、215 个留出区间中，{funding['primary']['wins']}/5 同时胜过全部对照；相对原 Ridge 的年度 RMSE 中位降低量为 {funding['primary']['median_rmse_gain_bp']:+.4f} bp，额外延迟后为 {funding['delay_sensitivity']['median_rmse_gain_bp']:+.4f} bp。门槛失败，停止这套特征/目标组合；没有运行或宣称成本后组合收益。"
+            ),
+            "![Funding prediction RMSE](../delivery_funding.png)",
             "## Acceptance and reproduction" if en else "## 验收与复现",
             (
                 "Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred."
@@ -360,15 +389,15 @@ def render_report(f, plan, english=False):
     lines.extend(
         [
             (
-                "`make reproduce` rebuilds both reports, summary tables and three Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json)."
+                "`make reproduce` rebuilds both reports, summary tables and four Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json)."
                 if en
-                else "`make reproduce` 从已提交证据重建双语报告、汇总表和三张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。"
+                else "`make reproduce` 从已提交证据重建双语报告、汇总表和四张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。"
             ),
             "## Next decision" if en else "## 下一步决策",
             (
-                f"Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. Next audit historical funding-operation announcements, publication versions and full coverage before freezing any new predictive task. Four official sample announcements have been inspected; no complete series or new model is claimed. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged."
+                f"Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. Next establish value/maturity rules or an independently motivated liquidity/risk-control task before considering a new preregistration. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged."
                 if en
-                else f"按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。下一步先核验资金操作公告的历史发布版本和完整覆盖，再冻结新的预测任务。目前只核查了四份官方样例，尚未取得完整序列或训练新模型。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
+                else f"按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。资金公告的新操作信息审计已完成，但冻结的五日收益率预测增量亦未过门。不继续在这些窗口搜索超参数或期限；下一步先补起息/到期证据，或论证独立的资金压力/风险控制任务，再决定是否登记新实验。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
             ),
         ]
     )

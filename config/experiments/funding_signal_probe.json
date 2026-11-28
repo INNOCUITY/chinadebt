@@ -1,0 +1,53 @@
+{
+  "version": "funding-prediction-v1",
+  "frozen_at_utc": "2026-11-28T08:38:19.316838+00:00",
+  "scope": "development screening, not untouched confirmation or tradable alpha",
+  "audit_report_sha256": "0e9a24eb091bbb1f0c9d46323774a41ea19daf2b733ebf868a4a920eced67f7d",
+  "raw_manifest_sha256": "eeff10e55b23e52163f326aa85535a39b16416b4ba118ca643db06273f68ee71",
+  "calendar_sha256": "23588687cb1834b7f823a7bf826813484e1bc86105d5ae15a5bd22a9f0bb3cd4",
+  "history": [
+    "2018-12-01",
+    "2025-05-30"
+  ],
+  "decisions_start": "2019-05-06",
+  "evaluation_years": [
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "target": "10Y yield change from decision close to close five independent interbank sessions later, bp; features through previous session",
+  "horizon_sessions": 5,
+  "decision_step_sessions": 5,
+  "ridge_alpha": 10.0,
+  "baseline_features": "existing nine curve/funding features",
+  "added_features": [
+    "log_gross_last5_notices",
+    "last_7d_rate_pct",
+    "longer_tenor_amount_share_last5"
+  ],
+  "publication_extra_lags": [
+    0,
+    1
+  ],
+  "funding_ffill_max_calendar_days": 7,
+  "fit": "expanding, labels end strictly before heldout first feature cutoff; fit-only standardization, no hyperparameter tuning",
+  "gate": {
+    "primary_wins_required": 3,
+    "comparators": [
+      "original_ridge",
+      "fit_mean",
+      "zero_change"
+    ],
+    "primary_median_rmse_gain_positive": true,
+    "primary_pooled_mse_gain_positive": true,
+    "delay_median_rmse_gain_nonnegative": true
+  },
+  "after_gate": "Only if predictive gate passes, freeze same-ledger 2/1 lot cost assessment against original signal, zero tilt and continuous fixed duration strategies before any PPO. This run does not claim economic gain.",
+  "no_ppo": true,
+  "forward_reserved": true,
+  "market_history_start": "2019-01-28",
+  "preflight_note": "Before any prediction: 2Y curve unavailable before 2019-01-28; market warmup starts there, first decision moved beyond 60-session feature warmup. Announcement history unchanged.",
+  "market_sha256": "903823ac0ed6379b45d81e712abfb84d15b7218738b63f54f6db4be93a001e39"
+}
