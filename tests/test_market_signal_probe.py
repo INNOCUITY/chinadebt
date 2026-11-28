@@ -1,6 +1,7 @@
 """Causality, training-only imputation, and label purge for the bounded signal probe."""
 
 import importlib
+import json
 from pathlib import Path
 
 import numpy as np
@@ -44,3 +45,28 @@ def test_imputation_and_purge_do_not_use_holdout(probe):
         probe.require_purged([{**valid[0], "cutoff": "2020-01-02"}], [dict(signal="2020-01-09")])
     with pytest.raises(ValueError, match="calibration"):
         probe.augment(np.zeros((1, 2)), held, np.array([np.nan, 0.0]))
+
+
+def test_mixed_archive_is_rejected_before_fitting(probe, tmp_path, monkeypatch):
+    design, holdout, plan = (tmp_path / name for name in ("design.json", "held.json", "plan.json"))
+    design.write_text("{}")
+    holdout.write_text("{}")
+    fit = tmp_path / "fold-0/fit_labels.json"
+    fit.parent.mkdir()
+    fit.write_text("[]")
+    frozen = dict(
+        original_design_sha256=probe.sha(design),
+        holdout_sha256=probe.sha(holdout),
+        folds=[0],
+        fit_sha256={"0": "wrong-fit-archive"},
+    )
+    plan.write_text(json.dumps(frozen))
+    monkeypatch.setattr(probe, "PLAN", plan)
+    monkeypatch.setattr(probe, "DESIGN", design)
+    with pytest.raises(ValueError, match="fit labels differ"):
+        probe.run(tmp_path, holdout)
+    frozen["fit_sha256"]["0"] = probe.sha(fit)
+    plan.write_text(json.dumps(frozen))
+    holdout.write_text('{"changed": true}')
+    with pytest.raises(ValueError, match="label provenance differs"):
+        probe.run(tmp_path, holdout)
