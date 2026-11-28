@@ -17,7 +17,11 @@ TEXT_OUTPUTS = [
     "reports/en/final_report.md",
     "reports/delivery_manifest.json",
 ]
-FIGURES = ["reports/delivery_baselines.png", "reports/delivery_futures.png"]
+FIGURES = [
+    "reports/delivery_baselines.png",
+    "reports/delivery_futures.png",
+    "reports/delivery_cost_signal.png",
+]
 
 
 def plots(root, out, frame):
@@ -77,6 +81,42 @@ def plots(root, out, frame):
     fig.tight_layout()
     fig.savefig(out / FIGURES[1], dpi=160, metadata={"Software": "ficc"})
     plt.close(fig)
+    diagnostic = read(root, "reports/cost_signal_review.json")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True, sharey="row")
+    for column, band in enumerate((2, 1)):
+        rows = [r for r in diagnostic["results"] if r["band"] == band]
+        x = np.arange(len(rows))
+        ax = axes[0, column]
+        for offset, field, label, color in [
+            (-0.18, "restored_rmse_bp", "Cost-restored Ridge", "#e8793a"),
+            (0.18, "restored_fit_mean_rmse_bp", "Fit-mean forecast", "#64748b"),
+        ]:
+            ax.bar(x + offset, [r[field] for r in rows], width=0.35, label=label, color=color)
+        ax.set_title(f"{band} lot | cost-restored target: lower RMSE is better")
+        ax.set_ylabel("Held-out prediction RMSE (bp)")
+        ax.legend(frameon=False, fontsize=8)
+        ax = axes[1, column]
+        for offset, field, label, color in [
+            (-0.24, "actual_selected_net_bp", "vs zero tilt", "#3b82f6"),
+            (0, "actual_vs_net_selector_bp", "vs original net Ridge", "#14b8a6"),
+            (0.24, "actual_vs_restored_fixed_bp", "vs fit-selected fixed action", "#e8793a"),
+        ]:
+            ax.bar(x + offset, [r[field] for r in rows], width=0.24, label=label, color=color)
+        ax.axhline(0, color="#374151", lw=0.8)
+        ax.set_ylabel("Mean paired net-value gain per interval (bp)")
+        ax.set_xticks(x, [f"Fold {r['fold']}" for r in rows])
+        ax.legend(frameon=False, fontsize=8)
+    fig.suptitle("Cost-restored targets: prediction and real-cost gates both fail", fontsize=13)
+    fig.text(
+        0.5,
+        0.02,
+        "Reset-state labels, not cumulative portfolio returns. Fixed action chosen by fitting-label mean.",
+        ha="center",
+        fontsize=10,
+    )
+    fig.tight_layout(rect=(0, 0.045, 1, 0.96))
+    fig.savefig(out / FIGURES[2], dpi=160, metadata={"Software": "ficc"})
+    plt.close(fig)
 
 
 def build(root, out, make_plots=True):
@@ -103,6 +143,8 @@ def build(root, out, make_plots=True):
         "config/acceptance/delivery.json",
         "reports/futures_signal_probe.json",
         "reports/futures_data_coverage.json",
+        "reports/cost_signal_review.json",
+        "scripts/review_cost_signal.py",
         "scripts/build_report.py",
         "src/ficc/reporting/delivery.py",
         "docs/09_reproduction.md",

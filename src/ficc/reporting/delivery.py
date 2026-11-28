@@ -186,6 +186,7 @@ def collect(root):
     future = read(root, "reports/futures_signal_probe.json")
     coverage = read(root, "reports/futures_data_coverage.json")
     pivot = read(root, "reports/research_pivot_cost_audit.json")
+    cost = read(root, "reports/cost_signal_review.json")
     checks = []
     for name in [
         "acceptance_summary",
@@ -229,6 +230,18 @@ def collect(root):
         futures_primary_median_bp=future["primary"]["median_bp"],
         futures_delay_median_bp=future["delay_sensitivity"]["median_bp"],
         futures_continue=future["consider_continuous_replay"],
+        cost_signal={
+            k: cost[k]
+            for k in (
+                "restored_prediction_wins",
+                "restored_prediction_gate",
+                "actual_cost_economics_gate",
+                "route",
+                "median_bp",
+                "metric",
+                "fixed_control",
+            )
+        },
     )
     return summary, plan, baselines(matrix), ablations(root)
 
@@ -238,6 +251,7 @@ def render_report(f, plan, english=False):
     ppo = f["matched_ppo_median_net_bp"]
     b = f["matched_baselines"]
     v = f["futures_primary_median_bp"]
+    cost = f["cost_signal"]
     lines = [
         "# China government bond research — delivery candidate"
         if en
@@ -318,6 +332,18 @@ def render_report(f, plan, english=False):
                 else "额外延迟一日后，相对原 Ridge 的中位标签增量为 "
             )
             + f"{f['futures_delay_median_bp']['2']['gain_vs_original_bp']:+.3f}/{f['futures_delay_median_bp']['1']['gain_vs_original_bp']:+.3f} bp (2/1 lot).",
+            "## Cost versus prediction diagnostic" if en else "## 成本与预测拆分终局",
+            (
+                f"All 181 interval records (724 action values) completed and reproduced locally; an independent augmented least-squares fit verified both target models. Cost-restored prediction beats the fitting-mean forecast in {cost['restored_prediction_wins']}/3 folds at 2 lot, below the required 2/3. Both registered gates fail. Median actual net gain versus original net-target Ridge is {cost['median_bp']['2']['actual_vs_net_selector_bp']:+.3f}/{cost['median_bp']['1']['actual_vs_net_selector_bp']:+.3f} bp; versus the restored-target fit-selected fixed action it is {cost['median_bp']['2']['actual_vs_restored_fixed_bp']:+.3f}/{cost['median_bp']['1']['actual_vs_restored_fixed_bp']:+.3f} bp (2/1 lot)."
+                if en
+                else f"181 个区间记录、724 个动作价值全部完成，本地复算及独立增广最小二乘核验通过。2 lot 的成本加回预测仅 {cost['restored_prediction_wins']}/3 折优于拟合均值预测，低于至少 2/3 的门槛；预测与真实成本经济门槛均失败。实际净价值相对原净目标 Ridge 的三折中位增量为 {cost['median_bp']['2']['actual_vs_net_selector_bp']:+.3f}／{cost['median_bp']['1']['actual_vs_net_selector_bp']:+.3f} bp，相对成本加回目标的拟合段固定动作则为 {cost['median_bp']['2']['actual_vs_restored_fixed_bp']:+.3f}／{cost['median_bp']['1']['actual_vs_restored_fixed_bp']:+.3f} bp（2／1 lot）。"
+            ),
+            (
+                "The restored-target choices change holdings versus zero tilt in 44/47 intervals at 2 lot and 47/47 at 1 lot. Failure is therefore not simply blocked orders. The fixed control is long duration in all folds, selected by fitting-label means, not by a continuous fixed-strategy ledger. Values above are means of reset-state one-interval labels, not cumulative returns. Restoring realized costs does not create a reoptimized zero-cost environment. [Audited evidence](../cost_signal_review.json)."
+                if en
+                else "所选动作在 2 lot 的 44/47、1 lot 的 47/47 个区间改变了相对零倾斜的持仓，失败不能简单归于订单被挡住。三折固定对照均为加久期，由拟合段单次标签均值选出，并非连续固定账本的最优策略。上述数值为重置持仓后的单区间标签均值，不能累加为连续组合收益；已计成本加回也不等于零成本重优化环境。[完整复核](../cost_signal_review.json)。"
+            ),
+            "![Cost and prediction diagnostic](../delivery_cost_signal.png)",
             "## Acceptance and reproduction" if en else "## 验收与复现",
             (
                 "Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred."
@@ -334,15 +360,15 @@ def render_report(f, plan, english=False):
     lines.extend(
         [
             (
-                "`make reproduce` rebuilds both reports, summary tables and two Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json)."
+                "`make reproduce` rebuilds both reports, summary tables and three Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json)."
                 if en
-                else "`make reproduce` 从已提交证据重建双语报告、汇总表和两张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。"
+                else "`make reproduce` 从已提交证据重建双语报告、汇总表和三张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。"
             ),
             "## Next decision" if en else "## 下一步决策",
             (
-                f"Stop PPO and feature tuning on these three windows. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); costs alone do not explain the failure. A bounded diagnostic now separates net versus cost-restored action-label prediction on identical dates, features and execution paths. It is not zero-cost PPO training and cannot prove universal signal absence. Only predictive evidence can justify one separately frozen execution comparison. New quote/funding data or a futures task require their own availability and execution audit. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and the reserved future period remain unchanged."
+                f"Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. Next audit historical funding-operation announcements, publication versions and full coverage before freezing any new predictive task. Four official sample announcements have been inspected; no complete series or new model is claimed. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged."
                 if en
-                else f"停止同三窗 PPO 与特征调参。沿原成交路径加回相对零倾斜的已计成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，成本不是唯一解释。转向同日期、同特征、同执行路径上的净标签与成本加回标签预测诊断；它不是零成本 PPO 重训，失败也不能证明市场普遍无信号。有预测证据才考虑一个另外冻结的执行对照。新盘口/资金数据或期货任务另做时点与执行审计。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
+                else f"按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。下一步先核验资金操作公告的历史发布版本和完整覆盖，再冻结新的预测任务。目前只核查了四份官方样例，尚未取得完整序列或训练新模型。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
             ),
         ]
     )

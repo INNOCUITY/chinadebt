@@ -156,5 +156,29 @@
       "gain_vs_continuous_fixed_bp": -0.2671226105756695
     }
   },
-  "futures_continue": false
+  "futures_continue": false,
+  "cost_signal": {
+    "restored_prediction_wins": 1,
+    "restored_prediction_gate": false,
+    "actual_cost_economics_gate": false,
+    "route": "stop_this_feature_action_family",
+    "median_bp": {
+      "2": {
+        "restored_selected_bp": 0.061780495629531085,
+        "restored_vs_fixed_bp": -0.4179655308825979,
+        "actual_selected_net_bp": 0.03189265161965024,
+        "actual_vs_net_selector_bp": 0.0,
+        "actual_vs_restored_fixed_bp": -0.34061319949253643
+      },
+      "1": {
+        "restored_selected_bp": 0.356628365830488,
+        "restored_vs_fixed_bp": -0.41797903932214914,
+        "actual_selected_net_bp": 0.04176761998518538,
+        "actual_vs_net_selector_bp": 0.0,
+        "actual_vs_restored_fixed_bp": -0.3406118263546837
+      }
+    },
+    "metric": "Mean paired one-decision-interval value in bp, reset to benchmark state; NOT cumulative or continuous portfolio return. Medians are across three already-viewed folds.",
+    "fixed_control": "Action chosen by the 2-lot fitting-label mean of each target, NOT the best continuous fixed strategy. Restored-target control is long duration in all three folds, reused at 1 lot."
+  }
 }

@@ -67,6 +67,14 @@ def main():
             st.dataframe(pd.read_csv(REPORTS / "long_sample_summary.csv"), use_container_width=True)
     elif page.startswith("RL"):
         st.subheader("奖励、动作、价值估计与执行结果")
+        cost = facts["cost_signal"]
+        st.error(
+            f"最新成本/预测诊断：{cost['restored_prediction_wins']}/3 折降低预测误差，两个冻结门槛均失败。停止当前特征/动作组合。"
+        )
+        st.image(str(REPORTS / "delivery_cost_signal.png"))
+        st.caption(
+            "单区间重置标签均值，非累计收益。固定对照按拟合标签均值选档；成本加回不等于零成本重训。"
+        )
         st.warning("λ=1 平台 3/6；两档相对 λ=0.95 的中位改善均为零。未过扩折门槛。")
         st.dataframe(pd.read_csv(REPORTS / "rl_ablation.csv"), use_container_width=True)
         figure = st.selectbox(

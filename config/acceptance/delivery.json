@@ -73,9 +73,11 @@
         "reports/cost_study_decision_change.csv",
         "reports/research_pivot_cost_audit.json",
         "config/experiments/cost_signal_diagnostic.json",
-        "docs/10_research_pivot.md"
+        "docs/10_research_pivot.md",
+        "reports/cost_signal_review.json",
+        "docs/11_funding_data_feasibility.md"
       ],
-      "remaining": "Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred."
+      "remaining": "Fixed-path cost decomposition and the completed cost-restored label diagnostic fail to justify expansion. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred."
     },
     {
       "id": "actions_rewards",

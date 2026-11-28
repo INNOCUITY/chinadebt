@@ -1,0 +1,3237 @@
+{
+  "plan_sha256": "4acd5811ef6885760f203af7cee6d0ba883248f7af0cbe88f884ea89d5088f88",
+  "runtime_sha256": "21ff9079f50fdfbb0385c1affd52e569426d149f0163c07af9448d13920565ab",
+  "results": [
+    {
+      "fold": 0,
+      "band": 2,
+      "fit_intervals": 29,
+      "held_intervals": 16,
+      "restored_rmse_bp": 4.04907295195176,
+      "restored_fit_mean_rmse_bp": 4.051454864810122,
+      "restored_selected_bp": 2.049752238936449,
+      "restored_vs_fixed_bp": -0.4179655308825979,
+      "actual_selected_net_bp": 1.0374695230767021,
+      "actual_vs_net_selector_bp": 0.7916072965597197,
+      "actual_vs_restored_fixed_bp": -0.34061319949253643,
+      "actual_vs_net_fixed_bp": 1.0374695230767021,
+      "net_fixed_index": 0,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2019-10-12",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.3637635298997375,
+            1.1522938524158324
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.6969630297741947,
+            2.534050852831378
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.4696029241330061,
+            -2.8134167641728496
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.1071767038809948,
+            -1.591784108394508
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-10-18",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.0778632162525352,
+            -0.9288970783716682
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.3331855632634993,
+            0.37482055061034764
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.19388338968958652,
+            -1.8558433055744126
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.43549507582676317,
+            -0.6440302123173158
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-10-25",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.1844161096828785,
+            0.21588731648006332
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.3975447544833057,
+            1.4630408721952484
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.770431750369038,
+            0.5401372627628622
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.147388906778214,
+            1.735605057530375
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-01",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7778618915168118,
+            -0.6321693101998711
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.9622894435930155,
+            0.5616132168888256
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.906085625555069,
+            0.6742430794557867
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.2813047507393707,
+            1.851189146240456
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-08",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.921228995158795,
+            -0.18210972522961277
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.1536845867934828,
+            1.0395421254949608
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.240601596645622,
+            0.21435851247896662
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.3562331379252677,
+            1.1359690049982996
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-15",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7183802393329461,
+            -0.1593310510454108
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.9415930856800533,
+            1.0801927550289356
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -4.486388231583669,
+            2.313769227598796
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -3.5976837114994473,
+            3.2474543254775785
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-22",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.372071495155729,
+            0.7010947173879049
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.6587029390744121,
+            1.9922669384213216
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.098369752611387,
+            0.930180869877645
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.4675316530444942,
+            2.1322221331958744
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-29",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6504789890237743,
+            -1.4381001312399833
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.09260704834549827,
+            -0.16160105058659874
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.928178619038686,
+            0.7013608453509593
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.2985059459680168,
+            1.8686150127439198
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.9565665182839742,
+            0.35749793511505634
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.2896958826567626,
+            1.6699197981782927
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.269754782465905,
+            -0.340543460657659
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.6394654169297811,
+            0.8376637766228268
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-13",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6159839103136904,
+            -1.0778804841247789
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.04887350889926634,
+            0.26530278402292923
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.8349463410224824,
+            0.42787341383543676
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.2054569470740022,
+            1.620523006222526
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.8538837446117329,
+            0.47691550710240527
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.1207968764664191,
+            1.7737456284035193
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -4.999088772708072,
+            2.749674943052379
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -4.105503589525044,
+            3.6423113013447526
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-27",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.5833655324799356,
+            -0.6556105959313844
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.7822311103921507,
+            0.6019309911835122
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.0668685496639194,
+            -0.7192927818446218
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.4331858105732431,
+            0.6698487654951157
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.421550690462526,
+            0.7075913535300734
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.718679236019567,
+            2.0390993468411946
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -5.689412105971249,
+            2.8677627734093414
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -4.78712252487248,
+            3.8368340608480214
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-13",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6062380966957892,
+            -1.836725482419729
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.14168383704557375,
+            -0.5319171964889935
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.0396287983888133,
+            0.7806429291021245
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.4081310141640864,
+            2.1121965212455436
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-19",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.1615653945436482,
+            -1.2023677000192965
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.3682248178613645,
+            0.06891060040449487
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -21.507350090207765,
+            15.578416016433064
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -20.609064344775284,
+            17.02886652585128
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-02-03",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.8926438144637867,
+            -0.628382052000069
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.105380939281478,
+            0.6823403155702594
+          ],
+          "net_values": [
+            0.0,
+            1.8080462502166739,
+            -2.5164220570474676,
+            0.0
+          ],
+          "restored_values": [
+            0.0,
+            1.7342521354437173,
+            -1.960253796411349,
+            0.0
+          ],
+          "restored_choice_different_faces_days": 0
+        }
+      ],
+      "actions_changed_vs_net_selector": 10,
+      "intervals_with_changed_holdings_vs_zero": 15,
+      "selected_action_counts": [
+        0,
+        0,
+        2,
+        14
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.670081279963322,
+        "fee": 0.06860400528350304,
+        "funding": 0.2735974306129216,
+        "total": 1.0122827158597465
+      }
+    },
+    {
+      "fold": 0,
+      "band": 1,
+      "fit_intervals": 29,
+      "held_intervals": 16,
+      "restored_rmse_bp": 4.0547347228629755,
+      "restored_fit_mean_rmse_bp": 4.0613402333739534,
+      "restored_selected_bp": 2.1245661884399434,
+      "restored_vs_fixed_bp": -0.41797903932214914,
+      "actual_selected_net_bp": 1.1413971215017573,
+      "actual_vs_net_selector_bp": 0.9052136075670837,
+      "actual_vs_restored_fixed_bp": -0.3406118263546837,
+      "actual_vs_net_fixed_bp": 1.1413971215017573,
+      "net_fixed_index": 0,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2019-10-12",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.3637635298997375,
+            1.1522938524158324
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.6969630297741947,
+            2.534050852831378
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.4696029241330061,
+            -2.8134167641728496
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.1071767038809948,
+            -1.591784108394508
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-10-18",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.0778632162525352,
+            -0.9288970783716682
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.3331855632634993,
+            0.37482055061034764
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.19388338968958652,
+            -1.8558433055744126
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.43549507582676317,
+            -0.6440302123173158
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-10-25",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.1844161096828785,
+            0.21588731648006332
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.3975447544833057,
+            1.4630408721952484
+          ],
+          "net_values": [
+            0.0,
+            -0.15467415962495135,
+            -1.9251059099939893,
+            0.3854631031379108
+          ],
+          "restored_values": [
+            0.0,
+            -0.43134993429025825,
+            -1.5787388410684722,
+            1.3042551232401167
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-01",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7778618915168118,
+            -0.6321693101998711
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.9622894435930155,
+            0.5616132168888256
+          ],
+          "net_values": [
+            0.0,
+            0.5640961259474357,
+            -1.8927087515550074,
+            1.1992642476254
+          ],
+          "restored_values": [
+            0.0,
+            0.30279031215706775,
+            -1.2812848989669665,
+            1.8511604650189881
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-08",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.921228995158795,
+            -0.18210972522961277
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.1536845867934828,
+            1.0395421254949608
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.2406751728917573,
+            0.21426909697067983
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.3562776735282602,
+            1.136006307630097
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-15",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7183802393329461,
+            -0.1593310510454108
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.9415930856800533,
+            1.0801927550289356
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -4.486535148923,
+            2.31375751285312
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -3.5978015261181033,
+            3.2475606710113287
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-22",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.372071495155729,
+            0.7010947173879049
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.6587029390744121,
+            1.9922669384213216
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.098438023682488,
+            0.9301190444789911
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.4675793996142796,
+            2.1322915056635896
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-11-29",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6504789890237743,
+            -1.4381001312399833
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.09260704834549827,
+            -0.16160105058659874
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.9282413343011953,
+            0.7013021130037925
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.298548180717675,
+            1.868675790662619
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.9565665182839742,
+            0.35749793511505634
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.2896958826567626,
+            1.6699197981782927
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.2697960906189165,
+            -0.3406391317994881
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.6394862202657109,
+            0.8376910278244862
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-13",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6159839103136904,
+            -1.0778804841247789
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.04887350889926634,
+            0.26530278402292923
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.8350060100290169,
+            0.42779787114483264
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.205496146268466,
+            1.6205757025852632
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.8538837446117329,
+            0.47691550710240527
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.1207968764664191,
+            1.7737456284035193
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -4.999251088594558,
+            2.749680924681642
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -4.105636891509645,
+            3.6424295638940682
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2019-12-27",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.5833655324799356,
+            -0.6556105959313844
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.7822311103921507,
+            0.6019309911835122
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.0669029917021517,
+            -0.7194645699000698
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.4331997952410396,
+            0.6698703904249778
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.421550690462526,
+            0.7075913535300734
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.718679236019567,
+            2.0390993468411946
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -5.689595692735291,
+            2.8677290466285745
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -4.7872769964271935,
+            3.836957868358463
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-13",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6062380966957892,
+            -1.836725482419729
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.14168383704557375,
+            -0.5319171964889935
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.0396943399129337,
+            0.7805514344570174
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.4081762631098271,
+            2.1122643946642645
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-01-19",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.1615653945436482,
+            -1.2023677000192965
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.3682248178613645,
+            0.06891060040449487
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -21.508040601802357,
+            15.57860174631472
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -20.609726016149214,
+            17.029413251959184
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2020-02-03",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.8926438144637867,
+            -0.628382052000069
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.105380939281478,
+            0.6823403155702594
+          ],
+          "net_values": [
+            0.0,
+            1.8081031662601879,
+            -3.212663578057526,
+            1.2929707958531982
+          ],
+          "restored_values": [
+            0.0,
+            1.7343067284996159,
+            -2.607543653889127,
+            1.6273859019678558
+          ],
+          "restored_choice_different_faces_days": 5
+        }
+      ],
+      "actions_changed_vs_net_selector": 10,
+      "intervals_with_changed_holdings_vs_zero": 16,
+      "selected_action_counts": [
+        0,
+        0,
+        2,
+        14
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.6406548380982691,
+        "fee": 0.06934159869776035,
+        "funding": 0.2731726301421564,
+        "total": 0.983169066938186
+      }
+    },
+    {
+      "fold": 10,
+      "band": 2,
+      "fit_intervals": 29,
+      "held_intervals": 16,
+      "restored_rmse_bp": 2.8558936570929507,
+      "restored_fit_mean_rmse_bp": 0.38103742867661794,
+      "restored_selected_bp": 0.061780495629531085,
+      "restored_vs_fixed_bp": 0.0,
+      "actual_selected_net_bp": 0.03189265161965024,
+      "actual_vs_net_selector_bp": 0.0,
+      "actual_vs_restored_fixed_bp": 0.0,
+      "actual_vs_net_fixed_bp": 0.03189265161965024,
+      "net_fixed_index": 1,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2022-04-21",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0040793983954135315,
+            -1.9431142825054906,
+            1.3707441830096205
+          ],
+          "restored_predictions": [
+            0.0,
+            3.8206553962795964e-05,
+            -1.7201800927842354,
+            1.4932957135930762
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.06794145512049295,
+            0.0
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.09789303311336241,
+            0.0
+          ],
+          "restored_choice_different_faces_days": 0
+        },
+        {
+          "signal": "2022-04-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0005878057614635054,
+            -3.2839348248197453,
+            2.567168814527764
+          ],
+          "restored_predictions": [
+            0.0,
+            -5.505231499391551e-06,
+            -3.1005064398216913,
+            2.604561202238746
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.1519114264966147
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.1727801642145039
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-07",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.004241200419575734,
+            -3.358130821751735,
+            2.5120356322807043
+          ],
+          "restored_predictions": [
+            0.0,
+            -3.9721948432331804e-05,
+            -3.2525267432086284,
+            2.5836694845256654
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.30264322423631296,
+            0.0
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.2729833012907911,
+            0.0
+          ],
+          "restored_choice_different_faces_days": 0
+        },
+        {
+          "signal": "2022-05-13",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0014297058635608134,
+            -3.576968764580059,
+            2.7346891775169104
+          ],
+          "restored_predictions": [
+            0.0,
+            -1.3390242612360708e-05,
+            -3.4466931743886495,
+            2.806429178121572
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.05913581219700502
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.07983390625403547
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0009169993796221982,
+            -3.9487582122607336,
+            2.867494466979942
+          ],
+          "restored_predictions": [
+            0.0,
+            -8.588370854088805e-06,
+            -3.7604131030582333,
+            3.008882166622664
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.10634644454217138
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.12695878608424285
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0038779745843372337,
+            -2.995246622477616,
+            2.038337133920002
+          ],
+          "restored_predictions": [
+            0.0,
+            3.632007243749778e-05,
+            -2.7737126372272596,
+            2.2150489420717276
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            -0.21888522253255857
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            -0.19842532345868452
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.002013155180088121,
+            -3.848341712592562,
+            2.791642458278393
+          ],
+          "restored_predictions": [
+            0.0,
+            -1.8854672814009942e-05,
+            -3.5615465766022525,
+            2.954679888504903
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.07057245157962777
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.09103098519536697
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-13",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0048637178953718895,
+            -4.182362884241396,
+            3.0299266014976842
+          ],
+          "restored_predictions": [
+            0.0,
+            -4.5552280561336445e-05,
+            -3.9470846440096317,
+            3.198897654977759
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.051578869097958724
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.07196117739090209
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.008648396582377996,
+            -4.207868135041081,
+            2.9172273927889574
+          ],
+          "restored_predictions": [
+            0.0,
+            -8.099856858496168e-05,
+            -3.971358237045535,
+            3.1099007685513476
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            -0.04592439522184013
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            -0.0010304978180589036
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.012983992120538813,
+            -3.8292136311274647,
+            2.5094834140554405
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00012160459644334318,
+            -3.579938142704659,
+            2.7314329284562318
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.04034985540701773
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.08516111637223772
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-04",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.014054393615158681,
+            -4.688968933983054,
+            3.3737582777741997
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00013162969046505763,
+            -4.368240614758979,
+            3.5041663050178613
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.048036012519649625
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.09272249025603002
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-11",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.01558576570748873,
+            -5.247050791665922,
+            3.8585233925148077
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00014597211177612865,
+            -4.9700783234150645,
+            3.9922530861328482
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0714352563736216
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.11599145909476041
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-18",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0076403640602126874,
+            -4.757150831774743,
+            3.494672047210401
+          ],
+          "restored_predictions": [
+            0.0,
+            -7.155760567296399e-05,
+            -4.508200564300446,
+            3.611878821643775
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            -0.01572656949726173
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.028534215491983896
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-25",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.006240517302022391,
+            -4.992999833637269,
+            3.6978208134979345
+          ],
+          "restored_predictions": [
+            0.0,
+            -5.844701545295166e-05,
+            -4.715257625034944,
+            3.821255729883717
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.06426630728472223
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.10833557855785808
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-08-01",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.000805041305634593,
+            -4.0823124027901345,
+            2.967839772016041
+          ],
+          "restored_predictions": [
+            0.0,
+            7.5398014865595075e-06,
+            -3.831634513457721,
+            3.0847395818133867
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.018020838465970045
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.06182890563048822
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-08-08",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            1.4904433931757326e-05,
+            -5.436657456131064,
+            4.427174946310411
+          ],
+          "restored_predictions": [
+            0.0,
+            1.3959094064908904e-07,
+            -5.194553005361627,
+            4.354824449997275
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.1091653392017054
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.0,
+            0.1528049668068312
+          ],
+          "restored_choice_different_faces_days": 5
+        }
+      ],
+      "actions_changed_vs_net_selector": 0,
+      "intervals_with_changed_holdings_vs_zero": 14,
+      "selected_action_counts": [
+        0,
+        0,
+        0,
+        16
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.007780088694549016,
+        "fee": 0.022107755315331837,
+        "funding": 0.0,
+        "total": 0.029887844009880853
+      }
+    },
+    {
+      "fold": 10,
+      "band": 1,
+      "fit_intervals": 29,
+      "held_intervals": 16,
+      "restored_rmse_bp": 2.5734608892940076,
+      "restored_fit_mean_rmse_bp": 0.5816358295076167,
+      "restored_selected_bp": 0.356628365830488,
+      "restored_vs_fixed_bp": 0.0,
+      "actual_selected_net_bp": 0.04176761998518538,
+      "actual_vs_net_selector_bp": 0.0,
+      "actual_vs_restored_fixed_bp": 0.0,
+      "actual_vs_net_fixed_bp": 0.032160902370364036,
+      "net_fixed_index": 1,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2022-04-21",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0040793983954135315,
+            -1.9431142825054906,
+            1.3707441830096205
+          ],
+          "restored_predictions": [
+            0.0,
+            3.8206553962795964e-05,
+            -1.7201800927842354,
+            1.4932957135930762
+          ],
+          "net_values": [
+            0.0,
+            0.03726266625242339,
+            -0.4047291375387402,
+            -0.10295823794230727
+          ],
+          "restored_values": [
+            0.0,
+            0.004339646939384406,
+            -0.10537867467126055,
+            0.16733190495432074
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-04-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0005878057614635054,
+            -3.2839348248197453,
+            2.567168814527764
+          ],
+          "restored_predictions": [
+            0.0,
+            -5.505231499391551e-06,
+            -3.1005064398216913,
+            2.604561202238746
+          ],
+          "net_values": [
+            0.0,
+            0.032993289031318575,
+            -0.9273700654228686,
+            0.3596560751448452
+          ],
+          "restored_values": [
+            0.0,
+            0.00012927621809101508,
+            -0.6544279365405317,
+            0.6542986603223675
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-07",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.004241200419575734,
+            -3.358130821751735,
+            2.5120356322807043
+          ],
+          "restored_predictions": [
+            0.0,
+            -3.9721948432331804e-05,
+            -3.2525267432086284,
+            2.5836694845256654
+          ],
+          "net_values": [
+            0.0,
+            0.03258419251113353,
+            -0.6068206455146343,
+            -0.09997224746726704
+          ],
+          "restored_values": [
+            0.0,
+            -0.00018109607938220779,
+            -0.3075395988039061,
+            0.17053778409738177
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-13",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0014297058635608134,
+            -3.576968764580059,
+            2.7346891775169104
+          ],
+          "restored_predictions": [
+            0.0,
+            -1.3390242612360708e-05,
+            -3.4466931743886495,
+            2.806429178121572
+          ],
+          "net_values": [
+            0.0,
+            -0.0018471926128320595,
+            -0.876519334699109,
+            0.28174873667790906
+          ],
+          "restored_values": [
+            0.0,
+            -0.03888272976303014,
+            -0.6120484165414687,
+            0.572141005097621
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0009169993796221982,
+            -3.9487582122607336,
+            2.867494466979942
+          ],
+          "restored_predictions": [
+            0.0,
+            -8.588370854088805e-06,
+            -3.7604131030582333,
+            3.008882166622664
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.7795021646019769,
+            1.1052853872748056
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.4723888225620003,
+            1.4089245952241167
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-05-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0038779745843372337,
+            -2.995246622477616,
+            2.038337133920002
+          ],
+          "restored_predictions": [
+            0.0,
+            3.632007243749778e-05,
+            -2.7737126372272596,
+            2.2150489420717276
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.7996295565144017,
+            -1.2285762615502707
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.107072507310557,
+            -0.9083759316348039
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-06",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.002013155180088121,
+            -3.848341712592562,
+            2.791642458278393
+          ],
+          "restored_predictions": [
+            0.0,
+            -1.8854672814009942e-05,
+            -3.5615465766022525,
+            2.954679888504903
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.4973232973358282,
+            -0.2203855410660849
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.17446284469938966,
+            0.08286624754594443
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-13",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0048637178953718895,
+            -4.182362884241396,
+            3.0299266014976842
+          ],
+          "restored_predictions": [
+            0.0,
+            -4.5552280561336445e-05,
+            -3.9470846440096317,
+            3.198897654977759
+          ],
+          "net_values": [
+            0.0,
+            0.052714526655098216,
+            -0.39963498857981367,
+            -0.19207068950683154
+          ],
+          "restored_values": [
+            0.0,
+            0.03655674752104005,
+            -0.09372245644263338,
+            0.09430754290880883
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-20",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.008648396582377996,
+            -4.207868135041081,
+            2.9172273927889574
+          ],
+          "restored_predictions": [
+            0.0,
+            -8.099856858496168e-05,
+            -3.971358237045535,
+            3.1099007685513476
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.41881054266079343,
+            -1.0505378251316406
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.7245118622240487,
+            -0.7109807682852229
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-06-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.012983992120538813,
+            -3.8292136311274647,
+            2.5094834140554405
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00012160459644334318,
+            -3.579938142704659,
+            2.7314329284562318
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.3419211173393141,
+            -0.38831251415740586
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.037908431225267325,
+            -0.05055326580912484
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-04",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.014054393615158681,
+            -4.688968933983054,
+            3.3737582777741997
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00013162969046505763,
+            -4.368240614758979,
+            3.5041663050178613
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.470829872671467,
+            -0.25426103329474714
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.1678170568922488,
+            0.0823670444128497
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-11",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.01558576570748873,
+            -5.247050791665922,
+            3.8585233925148077
+          ],
+          "restored_predictions": [
+            0.0,
+            -0.00014597211177612865,
+            -4.9700783234150645,
+            3.9922530861328482
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.440712189380529,
+            0.6987180976436593
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.1379484080678828,
+            1.0349685635387997
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-18",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.0076403640602126874,
+            -4.757150831774743,
+            3.494672047210401
+          ],
+          "restored_predictions": [
+            0.0,
+            -7.155760567296399e-05,
+            -4.508200564300446,
+            3.611878821643775
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.8233241096665932,
+            0.1408006247178341
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.5197850102068644,
+            0.47758176614790837
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-07-25",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            -0.006240517302022391,
+            -4.992999833637269,
+            3.6978208134979345
+          ],
+          "restored_predictions": [
+            0.0,
+            -5.844701545295166e-05,
+            -4.715257625034944,
+            3.821255729883717
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.4402420153427784,
+            0.6862947540544121
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.1359505869569029,
+            1.0236555146650907
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-08-01",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.000805041305634593,
+            -4.0823124027901345,
+            2.967839772016041
+          ],
+          "restored_predictions": [
+            0.0,
+            7.5398014865595075e-06,
+            -3.831634513457721,
+            3.0847395818133867
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.2851776297731001,
+            -0.40466304680176757
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.019699159454269977,
+            -0.06693319976040862
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2022-08-08",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            1.4904433931757326e-05,
+            -5.436657456131064,
+            4.427174946310411
+          ],
+          "restored_predictions": [
+            0.0,
+            1.3959094064908904e-07,
+            -5.194553005361627,
+            4.354824449997275
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.1290101150579845,
+            1.3375156411678235
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.8252921085454858,
+            1.6739163898621596
+          ],
+          "restored_choice_different_faces_days": 5
+        }
+      ],
+      "actions_changed_vs_net_selector": 0,
+      "intervals_with_changed_holdings_vs_zero": 16,
+      "selected_action_counts": [
+        0,
+        0,
+        0,
+        16
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.2672180613672299,
+        "fee": 0.04764268447807278,
+        "funding": 0.0,
+        "total": 0.31486074584530266
+      }
+    },
+    {
+      "fold": 21,
+      "band": 2,
+      "fit_intervals": 29,
+      "held_intervals": 15,
+      "restored_rmse_bp": 3.8490253497159412,
+      "restored_fit_mean_rmse_bp": 3.18721503839296,
+      "restored_selected_bp": 0.05168802591073053,
+      "restored_vs_fixed_bp": -0.44557299723801014,
+      "actual_selected_net_bp": -0.6749225446033521,
+      "actual_vs_net_selector_bp": -0.18915275536980852,
+      "actual_vs_restored_fixed_bp": -0.42115491509221054,
+      "actual_vs_net_fixed_bp": -0.6749225446033521,
+      "net_fixed_index": 0,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2025-01-26",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.0167639117246265,
+            -4.680175873986135
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            3.7194018448709025,
+            -3.8801320918143407
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -3.477533873501133,
+            1.531768716051892
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.6169556349838947,
+            2.1562698243540677
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-08",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.13076776591706918,
+            -1.5834411768585996
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.6359311042592795,
+            -0.8544890050535708
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.4944099740004471,
+            -2.3322668419769435
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.1042168258950167,
+            -1.4429553485820588
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-14",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            1.0202022172324614,
+            -2.1191569848131873
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.7408909310339058,
+            -1.3450747512087742
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            2.467952161742787,
+            -5.416974714160307
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            3.064344992997663,
+            -4.529108474285991
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.8119969519494177,
+            -4.44148484629949
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            4.4623738051039235,
+            -3.5961026450885276
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.223651356115089,
+            1.5644838152823388
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.6271920754339961,
+            2.44078811315599
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-28",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            4.888708901050445,
+            -5.822048249326788
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            5.569283781595148,
+            -5.017435088152589
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            5.855865512532383,
+            -5.633912173105256
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            6.733111810504258,
+            -5.0218773399862915
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-07",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.0618452748542009,
+            -0.02461228618591165
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.24602000959817838,
+            0.623095663266915
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            1.0461970927955968,
+            -3.331701304547575
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.6398279412630803,
+            -2.459741911896959
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.48145920767381756,
+            0.6178603169065549
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.22116145766937167,
+            1.3627131043095075
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -3.1229415910382405,
+            2.937950908455843
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.5391269672735883,
+            3.7847807101278774
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.36479547655750566,
+            -0.2723095369371243
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.0870229698101541,
+            0.45721061885494085
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -3.0201926583283796,
+            1.2246261727106988
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.1698857321517813,
+            1.8254571534740915
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-28",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.2302634286001934,
+            -3.420263307953662
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            3.9333418223020544,
+            -2.651827893336369
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -10.200610147491444,
+            12.202486696712707
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -9.601086218341468,
+            13.059524853786778
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-07",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7031941775166346,
+            1.1634132892210636
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.8524155510218119,
+            1.7736783198152373
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.3995638768811671,
+            0.13787287995669995
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.5300909892509421,
+            0.7509635582922548
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6305075577524877,
+            0.12992884350085837
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.15176725020993276,
+            0.8253071572937591
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.7203914108712502,
+            -1.8501692683633932
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.5892823322272351,
+            -1.2374765584327023
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.1676170830865893,
+            -0.35916018359290736
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.9314455602920999,
+            0.35977543365975184
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.03352031366379688,
+            -1.374520752636741
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.9023670896359471,
+            -0.7619147574785726
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.41360083361734046,
+            0.25662596900202256
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.3752907230617746,
+            0.9470752262673838
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.883189785350057,
+            1.0474775368902949
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.0130571301877036,
+            1.660843121349707
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-05-07",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.3554706361151332,
+            -0.35427253452775487
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.1382646338647793,
+            0.34254242747212005
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            1.5390133241290762,
+            -3.9795939418627846
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            2.151032447374662,
+            -3.1026355603714553
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-05-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.164410488246139,
+            1.8578101430032632
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.3364073101546388,
+            2.4946313335857275
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.8422710992370646,
+            -0.534042172074595
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.2413469993304228,
+            0.3359979637243736
+          ],
+          "restored_choice_different_faces_days": 5
+        }
+      ],
+      "actions_changed_vs_net_selector": 2,
+      "intervals_with_changed_holdings_vs_zero": 15,
+      "selected_action_counts": [
+        0,
+        0,
+        9,
+        6
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.6688882714684525,
+        "fee": 0.057722299045630046,
+        "funding": 0.0,
+        "total": 0.7266105705140827
+      }
+    },
+    {
+      "fold": 21,
+      "band": 1,
+      "fit_intervals": 29,
+      "held_intervals": 15,
+      "restored_rmse_bp": 3.85222337738755,
+      "restored_fit_mean_rmse_bp": 3.1876551321959514,
+      "restored_selected_bp": 0.04394344436911837,
+      "restored_vs_fixed_bp": -0.45232561618645967,
+      "actual_selected_net_bp": -0.6793069955600689,
+      "actual_vs_net_selector_bp": -0.18698438574816736,
+      "actual_vs_restored_fixed_bp": -0.42926521541934726,
+      "actual_vs_net_fixed_bp": -0.6793069955600689,
+      "net_fixed_index": 0,
+      "restored_fixed_index": 3,
+      "decisions": [
+        {
+          "signal": "2025-01-26",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.0167639117246265,
+            -4.680175873986135
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            3.7194018448709025,
+            -3.8801320918143407
+          ],
+          "net_values": [
+            0.0,
+            0.020354806790791043,
+            -3.5767062216637,
+            1.551763291049806
+          ],
+          "restored_values": [
+            0.0,
+            -0.01314645942507139,
+            -2.732370637425266,
+            2.142616266868686
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-08",
+          "net_pick": 0,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.13076776591706918,
+            -1.5834411768585996
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.6359311042592795,
+            -0.8544890050535708
+          ],
+          "net_values": [
+            0.0,
+            0.03510850064683713,
+            0.5261772110506183,
+            -2.2970212730618713
+          ],
+          "restored_values": [
+            0.0,
+            0.0018154005689614075,
+            1.1039606293956044,
+            -1.4426205591644776
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-14",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            1.0202022172324614,
+            -2.1191569848131873
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.7408909310339058,
+            -1.3450747512087742
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            2.4673961833785287,
+            -5.415754382264294
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            3.0636546597152194,
+            -4.52808816021341
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.8119969519494177,
+            -4.44148484629949
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            4.4623738051039235,
+            -3.5961026450885276
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.223147267838964,
+            1.564129156289911
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -1.6268232008593133,
+            2.4402348012939648
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-02-28",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            4.888708901050445,
+            -5.822048249326788
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            5.569283781595148,
+            -5.017435088152589
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            5.854537712652831,
+            -5.632634700478476
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            6.731585097667214,
+            -5.020738644415653
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-07",
+          "net_pick": 0,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.0618452748542009,
+            -0.02461228618591165
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.24602000959817838,
+            0.623095663266915
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            1.0459589745525777,
+            -3.330942997273129
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.6394547104907875,
+            -2.459182065735625
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.48145920767381756,
+            0.6178603169065549
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.22116145766937167,
+            1.3627131043095075
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -3.1222289927904376,
+            2.937280521706225
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.538547584862563,
+            3.7839170922804994
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.36479547655750566,
+            -0.2723095369371243
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.0870229698101541,
+            0.45721061885494085
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -3.019502604006253,
+            1.2243463698374821
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.1693899561542263,
+            1.8250400725984268
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-03-28",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            3.2302634286001934,
+            -3.420263307953662
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            3.9333418223020544,
+            -2.651827893336369
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -10.198286209948241,
+            12.199706684874295
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -9.598898866369867,
+            13.05654958861338
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-07",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -1.7031941775166346,
+            1.1634132892210636
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -0.8524155510218119,
+            1.7736783198152373
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -1.399248714095785,
+            0.13784183285707646
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.5299716199556681,
+            0.750794451495346
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.6305075577524877,
+            0.12992884350085837
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.15176725020993276,
+            0.8253071572937591
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.7202289311390786,
+            -1.8497519743731636
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            1.58892387963634,
+            -1.2371974534129557
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-21",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.1676170830865893,
+            -0.35916018359290736
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.9314455602920999,
+            0.35977543365975184
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            0.033512742915930364,
+            -1.3742103094894211
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            0.9021632850180892,
+            -0.7617426747977175
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-04-27",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -0.41360083361734046,
+            0.25662596900202256
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            0.3752907230617746,
+            0.9470752262673838
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -2.882538819111225,
+            1.0472410375383527
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -2.0126026223938527,
+            1.6604681363907563
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-05-07",
+          "net_pick": 2,
+          "restored_pick": 2,
+          "net_predictions": [
+            0.0,
+            0.0,
+            0.3554706361151332,
+            -0.35427253452775487
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            1.1382646338647793,
+            0.34254242747212005
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            1.5386669009949752,
+            -3.9786981579314986
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            2.150548262221558,
+            -3.1019371747772917
+          ],
+          "restored_choice_different_faces_days": 5
+        },
+        {
+          "signal": "2025-05-14",
+          "net_pick": 3,
+          "restored_pick": 3,
+          "net_predictions": [
+            0.0,
+            0.0,
+            -2.164410488246139,
+            1.8578101430032632
+          ],
+          "restored_predictions": [
+            0.0,
+            0.0,
+            -1.3364073101546388,
+            2.4946313335857275
+          ],
+          "net_values": [
+            0.0,
+            0.0,
+            -0.8420812551547433,
+            -0.5339218013921203
+          ],
+          "restored_values": [
+            0.0,
+            0.0,
+            -0.24129260081235615,
+            0.3359222313097422
+          ],
+          "restored_choice_different_faces_days": 5
+        }
+      ],
+      "actions_changed_vs_net_selector": 2,
+      "intervals_with_changed_holdings_vs_zero": 15,
+      "selected_action_counts": [
+        0,
+        0,
+        9,
+        6
+      ],
+      "selected_incremental_cost_bp": {
+        "spread": 0.6679345165450904,
+        "fee": 0.05531592338409687,
+        "funding": 0.0,
+        "total": 0.7232504399291872
+      }
+    }
+  ],
+  "median_bp": {
+    "2": {
+      "restored_selected_bp": 0.061780495629531085,
+      "restored_vs_fixed_bp": -0.4179655308825979,
+      "actual_selected_net_bp": 0.03189265161965024,
+      "actual_vs_net_selector_bp": 0.0,
+      "actual_vs_restored_fixed_bp": -0.34061319949253643
+    },
+    "1": {
+      "restored_selected_bp": 0.356628365830488,
+      "restored_vs_fixed_bp": -0.41797903932214914,
+      "actual_selected_net_bp": 0.04176761998518538,
+      "actual_vs_net_selector_bp": 0.0,
+      "actual_vs_restored_fixed_bp": -0.3406118263546837
+    }
+  },
+  "restored_prediction_wins": 1,
+  "restored_prediction_gate": false,
+  "actual_cost_economics_gate": false,
+  "route": "stop_this_feature_action_family",
+  "max_ledger_error_yuan": 1.4901161193847656e-08,
+  "rl_training_authorized": false,
+  "scope": "Fixed original execution paths with realized costs restored. Not zero-cost reoptimized trading, not zero-cost PPO training, not an upper bound over all policies.",
+  "verification": {
+    "status": "completed",
+    "source_commit": "125a3f7b41deb845e92d646f54b145320ba4ad1b",
+    "records": 181,
+    "server_tests_passed": 8,
+    "local_frozen_summary_max_abs_difference": 3.552713678800501e-15,
+    "independent_augmented_lstsq_max_prediction_difference": 7.993605777301127e-15,
+    "discrete_fields_and_selected_actions_identical": true,
+    "server_summary_sha256": "9902c6e761d634d82ef66f039d3a7739d26f1fb9382247e93b89db4a56a0c095",
+    "local_frozen_summary_sha256": "f54fce4518dc7403d040ea2af331410b2c3ae7992d8dd982ab53b4d3d86ee227",
+    "record_sha256": {
+      "fold-0/band-1/2019-10-12.json": "31a147b4007e8d244e43bc06d5c4ca9884b2b07f68a51a3c6ac62d18bffb01bd",
+      "fold-0/band-1/2019-10-18.json": "a2cbe325152edd9591c1aaf97a486627b9ab588dbf5d6193b7621a431b78dfd4",
+      "fold-0/band-1/2019-10-25.json": "44587cf6b13c6be06fcdf108ef634e8a826ef0022133015a81e4dbb7a4892858",
+      "fold-0/band-1/2019-11-01.json": "83ff336c601e8def330abf2a76fd92d2b129fc2c55b8d41f4f4531bf5b6bb598",
+      "fold-0/band-1/2019-11-08.json": "b5513c35ac9ed44d03217a63d21e93c195d9a3f18f6220226df43a145927b584",
+      "fold-0/band-1/2019-11-15.json": "e7e62a4fcac6a1c86830a0f3f27cd448b66f5f96540f8fd73fd5830d4ae9fc74",
+      "fold-0/band-1/2019-11-22.json": "1def50adabc7cebfb110488e55686df4acf08b5b39fe2ba332d449308c74d770",
+      "fold-0/band-1/2019-11-29.json": "bdbc9bb49fdc88833de6dde0e3c9d07e16bf703bf1a70dce8902c5311093af4b",
+      "fold-0/band-1/2019-12-06.json": "a103119e8a637d7c15c0931b8f71074f0df791a6a1ed154ad85d115b82f68aad",
+      "fold-0/band-1/2019-12-13.json": "af624a6146d575f32222cce0d5c9927b9f263ddd3148a72f3001ee010ffde960",
+      "fold-0/band-1/2019-12-20.json": "64382f325bb4351bd94526e40370b8e29bfdb88386c1816d45d7b6f20a2ef6dc",
+      "fold-0/band-1/2019-12-27.json": "c560034758053dc3f82f6b3f3ae9bf21ad203dd50aeffa29b8f115597912fd51",
+      "fold-0/band-1/2020-01-06.json": "0c85c7bd18d2f19187e1d037eab2006c63b0266c3e96987035a713e190a26141",
+      "fold-0/band-1/2020-01-13.json": "a24ec33c8dad670a60b8f964b3b814fa285b63f775773bb53f926003da14779a",
+      "fold-0/band-1/2020-01-19.json": "575fdd9de41bc85b5ec31f2f0ba0d3aff4a67f60fd94e545657d204da94b058c",
+      "fold-0/band-1/2020-02-03.json": "3ddd7ed4324afe3697b93cd7b857a743bc19620c40c85fd8ff1940dbcdcefa00",
+      "fold-0/band-2/2019-03-06.json": "48787b5bf17fb0edb86cd47e7d4f0f1ee5b58bc42f3bb0da0b21c247987a9db3",
+      "fold-0/band-2/2019-03-13.json": "cf59bd5dc0ee313d58eb1735b46e908f3cd99929a3e522a2c46439eba5d8ec6d",
+      "fold-0/band-2/2019-03-20.json": "9310538ecea3b6db6c870710264c9503155637f8ab9a9148ce5402666d6ac6ae",
+      "fold-0/band-2/2019-03-27.json": "8b5bc5d986c7f1fbe6117d516c86e31f2d5904ead81b478f7597060353b46a6a",
+      "fold-0/band-2/2019-04-03.json": "066fa7cafa2c1e1cfce3ea12028c5e964e27482fab39cff9d0b213e7fb340e48",
+      "fold-0/band-2/2019-04-11.json": "24bc11b40da168ae1b4e18129001d523b5caf840808e66af00e3d10765d6e5e4",
+      "fold-0/band-2/2019-04-18.json": "5b5e76485a0e61c524a5e5c35bf7322f5731789034de22973216bc12b537331d",
+      "fold-0/band-2/2019-04-25.json": "169c9c2ed6ae7600293708d9cea5921fc279ba0ae429950f9d22a597e218faf1",
+      "fold-0/band-2/2019-05-05.json": "e3d99d7d1f739b157645b28cacec64337a6dd93db8ecab4a1604f59084b3b318",
+      "fold-0/band-2/2019-05-10.json": "04d40cb6c4f7c0fe411821f3f3d897d760efedb5b7ae33f46562b93ddda1e7a0",
+      "fold-0/band-2/2019-05-17.json": "4c24ad1ad343201423ca17d2c184885c9071fd2958855837953bd8494298bbcc",
+      "fold-0/band-2/2019-05-24.json": "5a4a2d65fcdedc95f410f252e2f1139b8d71b4bb9ab9b9244ea08ffc31667c2a",
+      "fold-0/band-2/2019-05-31.json": "9851171957eb63531cd1b21aaebe221cfc434002aeae16fcc27af65ddfe63171",
+      "fold-0/band-2/2019-06-10.json": "42813de6f0df37e9ab8208dc1894c761d49b8c60ffe2f80e8b938e5a677675b4",
+      "fold-0/band-2/2019-06-17.json": "09bbe4c2519eb88b7a9f542d4729240e2143dad7bf1c7f347462f8f2c30b75ca",
+      "fold-0/band-2/2019-06-24.json": "80d60f352abd6fedeb08ea78aa039c50e3b5ec0d70e9f4136503551a13aadb8e",
+      "fold-0/band-2/2019-07-01.json": "7c725600d0ce98910a1458e33c155bc2e49a90dccf320cba27d400c63af3c6b3",
+      "fold-0/band-2/2019-07-08.json": "c6b93bf61a5a8c776972166f22b6626c155a2acccdcaf4d8d258bcffd7752af4",
+      "fold-0/band-2/2019-07-15.json": "5ae63ce0e841b1cc60793321df251e5e656b7cbb5f4b65f676f1c56c58d3b80b",
+      "fold-0/band-2/2019-07-22.json": "721302d2c493eeb864547d90b323657eebe124544b7944280ad70e4a78cc3fb7",
+      "fold-0/band-2/2019-07-29.json": "7f4693cf8083ab7785f242ec098f8c06a549c487447b22cf780cfb9e2b33f420",
+      "fold-0/band-2/2019-08-05.json": "d9330859ce18ee077e456ef59aaddd19d38fbc99f83e10a79c930bc389bb29e2",
+      "fold-0/band-2/2019-08-12.json": "15bf10fabcd2eff742de26b44397d5ce67fa4dfdabaee4c5b207f516c82b7da9",
+      "fold-0/band-2/2019-08-19.json": "24cc9b0f586834474eda8d2b2df97d74e816d11a2084fdd89e0a52bbf0922ae9",
+      "fold-0/band-2/2019-08-26.json": "ae90408b1447e0406b776fa383b8e19778928ad63b66b10d3da420ae85ada50c",
+      "fold-0/band-2/2019-09-02.json": "ef50e94920616d806d771fce7a0515c29490d3de414e9ce406edafcd6908877b",
+      "fold-0/band-2/2019-09-09.json": "0e5207f69563621d83fe2c3c721e23627039f4bfa3161c1728fe3e26f791b572",
+      "fold-0/band-2/2019-09-17.json": "8373c4f2428a5b802f988e3531f1660b055973f99fccc27915948e8df8368b9f",
+      "fold-0/band-2/2019-09-24.json": "4a327cee0526b9dc95c779c5c6a035fd55dae2e2929bf5aa3f989d0bcbc6ec04",
+      "fold-0/band-2/2019-10-12.json": "fa85c48fbcaa541fdfcb48fd2b4881a68a32c451a106ff7938224d289874bc36",
+      "fold-0/band-2/2019-10-18.json": "867d057f28bebf550dca43baef04c4a92559135b25006593df76eec7a87ed475",
+      "fold-0/band-2/2019-10-25.json": "ce829f2965eb5fdb3ccac772501f32f8f021fb14fe2d6d715224a5eb78f2d663",
+      "fold-0/band-2/2019-11-01.json": "b2d60d8e01360b89abdeabfd2f4701c0cb8177e05c29459f4e4926d63da79eb9",
+      "fold-0/band-2/2019-11-08.json": "28d099217cffff000505b019ca42f972785c3fa2d5ed3fd36d5d25c1d99fdb35",
+      "fold-0/band-2/2019-11-15.json": "e35dbe70e690dce3c940315df385103cd6cdf9bf9fd2fa7b39df85d1fd86ab77",
+      "fold-0/band-2/2019-11-22.json": "07d874d343d54cbab4f94e1d06716189f89bcdc32894bf4c112c0d9d978b267c",
+      "fold-0/band-2/2019-11-29.json": "eb35301c7584fa437e371c0827a81b3586b5029f8e1ee4ca86a07887e9a21566",
+      "fold-0/band-2/2019-12-06.json": "eb30696213b37abc2aa8beb47b7fda003164639c35120f459a5358a5785c5d97",
+      "fold-0/band-2/2019-12-13.json": "5ac0a04ea3e204fa9b87206728a15d34a807b9a543c6bb549133740484d1cc03",
+      "fold-0/band-2/2019-12-20.json": "368609e0c7b60f272d2e6a2b9022a5a2855c516ae75da3f0bd18a5f25290815c",
+      "fold-0/band-2/2019-12-27.json": "32df603cc68265c669c94931327bc64985650d251154696fc993a616395edf4b",
+      "fold-0/band-2/2020-01-06.json": "44ec60dbf087b598afadde52202e569019b55ca4d13cb86c5659341c55877929",
+      "fold-0/band-2/2020-01-13.json": "18db8f437f42aee599650dcae81556926dd8b419d05be41153e42f432661f74b",
+      "fold-0/band-2/2020-01-19.json": "dfd884ebe80ab5e612b3ae7b6afe9e07e199b976eb558ab2853598102bcb35b6",
+      "fold-0/band-2/2020-02-03.json": "ac0f491df7441a12863a52bbc44a5187334f1128d880804c5002fa203f17114f",
+      "fold-10/band-1/2022-04-21.json": "edebd87fdfa7a49d995747612f203e226f712fbb9978f53621867cf418d43b7f",
+      "fold-10/band-1/2022-04-27.json": "8dd9a8ffd769b697a3eb8bcbdfbc4e75a2a8dfa1450418f8bab07ed551209b94",
+      "fold-10/band-1/2022-05-07.json": "def6913a8af64ba43b9cda462ce174be20e4a60c480b53e13a28e35f86870680",
+      "fold-10/band-1/2022-05-13.json": "1bff05572219cb6ed01f3ec3243f9a01719f1661963464e147aedfa4023c8ce5",
+      "fold-10/band-1/2022-05-20.json": "9ca3ef8f24052a7b14bde74339eb25c76d5d6b7aaa28a4ffb1f043e97d3ccd9c",
+      "fold-10/band-1/2022-05-27.json": "4b381a36cd9c8f5343fa050f3f9b5d3689ae43cf00feaa70dc71a40eb5465567",
+      "fold-10/band-1/2022-06-06.json": "46a4f9707c8e24ca212368e2a7c89532383c92bfede362f5cb7af6ce314ea5e3",
+      "fold-10/band-1/2022-06-13.json": "67d40ab5a57dcbb0fbe62a104deda9db55486c7c033f4c6249d3b37b22989038",
+      "fold-10/band-1/2022-06-20.json": "f98cf48a451b94ea39af64fcf9aab6b393d4964e1dc8667369b71d0b7f310d9e",
+      "fold-10/band-1/2022-06-27.json": "4b7bd410624b0bdefb15ab3c053e250a0c294e3d5ecb56042f07334147a42587",
+      "fold-10/band-1/2022-07-04.json": "d54554272af064b91e2184e25ee8fd42e60d27aacfe9b67dd1a649915eb4ab97",
+      "fold-10/band-1/2022-07-11.json": "d06a044952c3c5de4a4a4dd747177c71ded9de7f42498b98c6415cb7b094de5d",
+      "fold-10/band-1/2022-07-18.json": "11c8416278e8e95998564bc35875fc2cdd4613ff99e75a4277462a506e39a6ed",
+      "fold-10/band-1/2022-07-25.json": "47665be971154795a28ad1de97402551887712b7a9627ff53b1a46d956674b7e",
+      "fold-10/band-1/2022-08-01.json": "bbcad9936c53e05f78369d7549f187a9e8c8c550420c4e01f2be2998f04aa812",
+      "fold-10/band-1/2022-08-08.json": "511662986aaf7eb8a452c8d15fbda56000d15420ccebca8d7a531f1e1a0d2f04",
+      "fold-10/band-2/2021-09-10.json": "6a51711c0647d1f6fe3aa975f7e13fbe8653600fd3072097b4d5d2ce8e4e368b",
+      "fold-10/band-2/2021-09-17.json": "f165a7e502d47f68086dbc31b8a54f72df4095b5a0a8c36abc196676dc5b55dc",
+      "fold-10/band-2/2021-09-26.json": "cdd2d9c9674f81a1e78fba2d348686fcb4dc81193ae55e5e7c71f50d32f70298",
+      "fold-10/band-2/2021-10-08.json": "8472d36598c6a6e7654e74ee157b50075fab7d161986e1aa735248c15722c813",
+      "fold-10/band-2/2021-10-14.json": "6ec880297d4d14cecdb266335d62bf1fab320061365dba33cb01d684c2cfe0fe",
+      "fold-10/band-2/2021-10-21.json": "530bc43b962391b1b084ff11b67b6237caa6062cce720bc72f7b8a8dd5b8a111",
+      "fold-10/band-2/2021-10-28.json": "53864ebd267098836df38cc73cb36e4072b91d629da969453a1146bd44ec19db",
+      "fold-10/band-2/2021-11-04.json": "19349563024051241e3e6d013cceb4e1531592769bd67b63b750988ee5173b3f",
+      "fold-10/band-2/2021-11-11.json": "12feeb144b6cfa501c238516c6ab01a89343422b2b4948b778492781205c1b0a",
+      "fold-10/band-2/2021-11-18.json": "ad2304a7f27a4334360a95bc16c7a9d37b2c9cb13ccdd3b275e990c14f468d25",
+      "fold-10/band-2/2021-11-25.json": "c2a3f2f011e1ba2d0aac0228cd0e1f0f737af2a99b233230ed0cc0eb2d6d268c",
+      "fold-10/band-2/2021-12-02.json": "588e11dd73ef226cf3539c3fada6b4c9a697911f0c25b7ee71e5c30fe671c787",
+      "fold-10/band-2/2021-12-09.json": "f813d50938d34ba12048ce01dfa293b001c016c38372cc8994e533b9985c63b2",
+      "fold-10/band-2/2021-12-16.json": "7ebec0ce8d97f9ed8325cba9a6b2ebcf5969a6aec5d9f51fb770f0dddb5c80de",
+      "fold-10/band-2/2021-12-23.json": "49d12387353898c5145aefddaa6ffe77cd90ad4be4b7d5c72d7cacdb4386611c",
+      "fold-10/band-2/2021-12-30.json": "a1e23a3e4e4f1354caee7b3ab2fb1e5adf382ff5abc1ac20d0170332ecb3b6ad",
+      "fold-10/band-2/2022-01-07.json": "703c2a6e1e0abde8d447d7631478e5e8ce337ccb92cf4ea04322c5d661ad21fb",
+      "fold-10/band-2/2022-01-14.json": "b897146586dc2ae7f2fdb04d63aa62c885f608c5618ac61ebeb23abf751b7c61",
+      "fold-10/band-2/2022-01-21.json": "ddb57ffaae98c186bda594beaca9db911adbbf351ff4d9966eef43f81a41c7eb",
+      "fold-10/band-2/2022-01-28.json": "36e3a45e3b9606e8c32f6cf6ba583d053d5a07eb3fed5bd3c83e2a6d7304eb1b",
+      "fold-10/band-2/2022-02-09.json": "e6526d71c9cec6ae8cfac56b69dec4161ec23551fea4761ae5c58c76d26f2a0b",
+      "fold-10/band-2/2022-02-16.json": "42992690a66c57f42473913f5586134ea402566b562bd4f0a78347304d69335f",
+      "fold-10/band-2/2022-02-23.json": "993d5e348c40a1356556e261bef092ee738cb875fb1e0da0bcbc333668d0729d",
+      "fold-10/band-2/2022-03-02.json": "8d9465998573179d64b3409ab8755015a12bc563f49b883479019fd01b498b28",
+      "fold-10/band-2/2022-03-09.json": "d6eef3e8195f1be3ebfedde525d088addced26cee07d265c3a7b2b2b584d50d4",
+      "fold-10/band-2/2022-03-16.json": "a500fdecea93bc79c6e249037f5633bdbad139ce33a00ac96d111b76a12d94a4",
+      "fold-10/band-2/2022-03-23.json": "9ca33d491ef5a963320323497f2bd13a6f42b6bd34c3957a7e34eb8cc3c1f2fa",
+      "fold-10/band-2/2022-03-30.json": "0c6d2bb11bf7a95ec94b5a899d4b1f3f4779e918b5dcd1c04cfae86bc9bb2cd0",
+      "fold-10/band-2/2022-04-07.json": "2bc029d1db713d25883f02c752f24ca8793e88627d10df8fa1b1492bbc0ff96c",
+      "fold-10/band-2/2022-04-21.json": "906884b92327e85500ee759810eb8f1dada60efdef6bcd5d15396ad9933e8599",
+      "fold-10/band-2/2022-04-27.json": "57b675e3186153c1c8fb7e9ba91b3c3ea8733cfd337aff935058aa7ce556c49c",
+      "fold-10/band-2/2022-05-07.json": "5119412d6b93a9ba8229cb0ab5f50453388fea5b2741bb4288a1522e18d0af76",
+      "fold-10/band-2/2022-05-13.json": "cdc96b846e2b56ccb654967aab80c8139cd035c09b0cb02913ac885e36aabfd6",
+      "fold-10/band-2/2022-05-20.json": "2c40399f7016cbfce4482824d7b2017ead1223fecebcd33b2d788c1b592abbc2",
+      "fold-10/band-2/2022-05-27.json": "584a10f6130a81b1178be291af8f984fed34d20b98c940480486c8bb22550d82",
+      "fold-10/band-2/2022-06-06.json": "7b79c00bb910412060c8208096f0b664e4b4eeb332a2056ea0921679679885b5",
+      "fold-10/band-2/2022-06-13.json": "27e902aecd17d7d1a55257136b4fc3165fa0454fc1ef3268478d02146050f93c",
+      "fold-10/band-2/2022-06-20.json": "d95de055ad2e1c2236933f109133f37a7cee472e75a7ab3839c041243de2a8ea",
+      "fold-10/band-2/2022-06-27.json": "849c618eda622e224638a7840676359b5cd19284005290e5239735c3eb439a4d",
+      "fold-10/band-2/2022-07-04.json": "3fe57d0fc69846615b4bff4b77b76ee6b5d537ba566198fd0f9842d21d957ad1",
+      "fold-10/band-2/2022-07-11.json": "822e48c125f94107cc46407f320fc0805744b49cb4a6bd470af33fe367c0acef",
+      "fold-10/band-2/2022-07-18.json": "0097862d0a515fb0dcdc8038516db9d6f92e859b32dc2f4a14379200fe07d1d7",
+      "fold-10/band-2/2022-07-25.json": "03569df6f603211e10524e699f936935b0847c600e00e488cf9e386997be6991",
+      "fold-10/band-2/2022-08-01.json": "93e323d4d396d8376db5ebf25e0b4a16504246616057c39c66c37d0a2f864480",
+      "fold-10/band-2/2022-08-08.json": "e4e2bfcaec830ff2b03fcc289749db8ecaf2bddef8161a681ca70b176f883d12",
+      "fold-21/band-1/2025-01-26.json": "341c81ec098af160042f35da779dfb9a84fd1c0186cd5a8f126ba97d18efe029",
+      "fold-21/band-1/2025-02-08.json": "f91cbd85169a9c638639411968de24ef382c39ea90b1c01d0c127d10259994a5",
+      "fold-21/band-1/2025-02-14.json": "5b83f42956e2fd7df9d403cd359f5e2f01aafe646b7a2fdf615ca28cca035f7f",
+      "fold-21/band-1/2025-02-21.json": "e6ff66e1af0c4df8acb364a06171eab317ce6ab51d825145f699102970bb9deb",
+      "fold-21/band-1/2025-02-28.json": "473a518fcf04b60da8dd548f45c2d21731423f84a9fa36d38744e480f0ea5c47",
+      "fold-21/band-1/2025-03-07.json": "f3d50dce0ce508ad4c11094707b44ff251a4c1f84f2fcf5ae6c12d7694c6cc90",
+      "fold-21/band-1/2025-03-14.json": "504429c0fc910195dbaaf9c6741821b59727d8dc9ecaeaf02442e4125aab7adf",
+      "fold-21/band-1/2025-03-21.json": "0e05c10a06755b47c13333ef9c19e7a3ea71752ca3365f1f69bf903869278bdc",
+      "fold-21/band-1/2025-03-28.json": "0cab4e3a082083086a09ace5a9be53a5e137116c4c2de56acb454f641a18a03a",
+      "fold-21/band-1/2025-04-07.json": "2551ef8515e9808235ba982332ef6d16890c1048596026c20450e9a49c2e69bf",
+      "fold-21/band-1/2025-04-14.json": "abde6153c94566cb1968fef8e3b07d0a8a5cd5c368176ce1e65600da347422ba",
+      "fold-21/band-1/2025-04-21.json": "2ab2e633f35512f55c16d24c7b451ae71d88f3403e1260037aeca50ca7973dd1",
+      "fold-21/band-1/2025-04-27.json": "9a3fe57aba3f425b56d7862084ae123b28483e010bd27a5246f3fb42a4174ca7",
+      "fold-21/band-1/2025-05-07.json": "aa74ef0ea06124cba7a969a7dcbf6b2fe67e7883898ad050a83e30d8a3f49d8f",
+      "fold-21/band-1/2025-05-14.json": "57a27faaad9e4067d7145aeb018eae6b35718c811d51e88c4f4c59e3450bae9c",
+      "fold-21/band-2/2024-06-24.json": "aecc77bb9daa7f5572ecdc26f57fb66253e9db816a3ce8dfe18147646a7f6b57",
+      "fold-21/band-2/2024-07-01.json": "13b3f8627237239afa17fd0c07dacb44761958c8fe48a8d91e14166db9c0c26a",
+      "fold-21/band-2/2024-07-08.json": "06c3a3951574ac813a4f9370c143086b2c8f7922140be955de3650b2c9df4707",
+      "fold-21/band-2/2024-07-15.json": "8189613e9303154d5fee14f422663f48f20135d741c14eab705d6a7667893631",
+      "fold-21/band-2/2024-07-22.json": "77674c4bcfdc815a4d6dc6979f6c281b476fb2eb33307ec0ec0995cb47207724",
+      "fold-21/band-2/2024-07-29.json": "e6ecf193434ee4230946529d3dafec5c408ca7ab5f473bda0490f85dd4580c7a",
+      "fold-21/band-2/2024-08-05.json": "8fdbf8107b7215be764297b39cf5e26b9da3531145971ea6813b0c96d91ce235",
+      "fold-21/band-2/2024-08-12.json": "3494e67f543f69027e8163d5dfb292f4d57f871c8f2f51e80e869cc9d7ecc4a1",
+      "fold-21/band-2/2024-08-19.json": "1ffb8af9b7897de42dc1a3179603d393a42d50b119888360c031345b5e104bfd",
+      "fold-21/band-2/2024-08-26.json": "ba9bd43b8aef7d0641bda32ee6d99b51dc9acd4026bb1b64c5a923ac5f13c7de",
+      "fold-21/band-2/2024-09-02.json": "7e837d60caccd9c6da4b3259d614edbea38b90fc32a195820e8079d23d22a6a8",
+      "fold-21/band-2/2024-09-09.json": "6fa34ff5089c36d62d13369a1f858ebbe87e9c7e168c209316eb6820a5fe3f7a",
+      "fold-21/band-2/2024-09-14.json": "5f7f104c48ffd222d1c60d2d0db63318ad9a87d4b541eaa5d657960a6f956110",
+      "fold-21/band-2/2024-09-24.json": "1f5536bf8807e2f2665929f0336d847d7347846ca185be4a5c61ae032e7f837e",
+      "fold-21/band-2/2024-09-30.json": "1a1f18644bae9190c1275ae29022d5bbbd4b070505828e708b9e9a37ec727ae3",
+      "fold-21/band-2/2024-10-12.json": "0ea3e63749cab49c15a59375e1da779b784cb0b2cede836004a769a5dfe190d7",
+      "fold-21/band-2/2024-10-18.json": "6867b0770f8a17c04fdb1d359753734c99d3e35cfa73eee03f7b11283c2c1e86",
+      "fold-21/band-2/2024-10-25.json": "01cdc0e43d306cffbbcd5e761eb032939e1014a909aae570a73b2f7a74dfc630",
+      "fold-21/band-2/2024-11-01.json": "fb0ed3fb2ab178af111ca76f878883ab5cd31861f303843f5779ec7ed9a3aed9",
+      "fold-21/band-2/2024-11-08.json": "e46c19376d6a2372af118562bc6fe89262f07d39e4a6af7c52e55e7e1066a5ce",
+      "fold-21/band-2/2024-11-15.json": "5248be9ff7c3479c92c0167ed154868c927de3055c37c8e54e44915b5da02363",
+      "fold-21/band-2/2024-11-22.json": "f627e48925d68842cdfe3b012a93412e0a655de9b61805b5008c23723f2f7fcc",
+      "fold-21/band-2/2024-11-29.json": "bc91cee9cf98e6aab6519a69f159b3b66e00a9d48cdd55c5c8909ddf8ddbd20d",
+      "fold-21/band-2/2024-12-06.json": "9321d1d969b249548a9645713865215f56315f722008a39ffc0ea6d2a72ed9ae",
+      "fold-21/band-2/2024-12-13.json": "f1b17b92f94862a6204c5c1ef1e1e3b0f249bb50742d746aad5049b10167ce4e",
+      "fold-21/band-2/2024-12-20.json": "087c0aadc709c3cf63cf056abfa4e5d9b9d217b7096dc40e09f90ac0c6535f8a",
+      "fold-21/band-2/2024-12-27.json": "f1ed6ac8ea584f910c2ec460f51c04468c05a2a63334e40d73be21e3e489b7c9",
+      "fold-21/band-2/2025-01-06.json": "662a360b99507fb7e106716b539becd0a211419491956f8ea5018e8d3272fea2",
+      "fold-21/band-2/2025-01-13.json": "6df8c3d5f41f9c005dd22f91fee966c19d01ef9ff8a385cf6d2a051d9048d172",
+      "fold-21/band-2/2025-01-26.json": "1f4e73537c8b6e095de55b6c166e172fbe99754b3757efba08b485897a98d5b9",
+      "fold-21/band-2/2025-02-08.json": "0c82cec0a8e9edf2d5fa4a569bf5761bc0531cc06e407ca70594ac3e06e84de1",
+      "fold-21/band-2/2025-02-14.json": "ed6eba882579b0fe3dd3e4fee5af3177f2f041817fb9b72e81441e588b38c0d1",
+      "fold-21/band-2/2025-02-21.json": "8f951a239058cc6aa388811030b701b3d7b8a9345e0394ae12092d7a76c2decf",
+      "fold-21/band-2/2025-02-28.json": "a664abd68d9194c66bc16151423e1c3f55f1b3f3f79e9721915769b853fee357",
+      "fold-21/band-2/2025-03-07.json": "126b2b5f4b139aeea3bbe1ab2a3feba3c58508d5a179f6b6e8ab82e7a9b1ad03",
+      "fold-21/band-2/2025-03-14.json": "86aad9adf26f016e7179840f8aa47a7126223fc5c1d2278ba8186f4f1aa5d5dd",
+      "fold-21/band-2/2025-03-21.json": "364fa083faf396550e3eba94757bf0f0db24f2325e86626cf780c90476d462c9",
+      "fold-21/band-2/2025-03-28.json": "b6d8f689a6970f9a082f443374e64a58d5fc940aa10558d40deadeefdd8bcd80",
+      "fold-21/band-2/2025-04-07.json": "5263fc3b84fd8e346c3eb422cfe3d0db4877c83d36a6eeb953145585fd059e25",
+      "fold-21/band-2/2025-04-14.json": "f5c0af9ce1c70d5177b5c4e76edb9dbc3324489bfa5ae1ba65e4c0c00b514b9f",
+      "fold-21/band-2/2025-04-21.json": "f26763dd90ae297b5915acc93f8d53cee5219bc35b8a79cb263a682bb9224643",
+      "fold-21/band-2/2025-04-27.json": "a707cd181bfbd2771bb4defdf14b84c7c33c24ca5e69aa9ef94ba86e60e2f04d",
+      "fold-21/band-2/2025-05-07.json": "abf09cc4223ea00b55066cb0012bb232a91e4b93c16892a6b728d3e17c08f170",
+      "fold-21/band-2/2025-05-14.json": "b5e6d925f5f166a2099ab1832de24d41b8982767239e3126558f8c99ccae1be7"
+    }
+  },
+  "metric": "Mean paired one-decision-interval value in bp, reset to benchmark state; NOT cumulative or continuous portfolio return. Medians are across three already-viewed folds.",
+  "fixed_control": "Action chosen by the 2-lot fitting-label mean of each target, NOT the best continuous fixed strategy. Restored-target control is long duration in all three folds, reused at 1 lot."
+}

@@ -42,6 +42,14 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 额外延迟一日后，相对原 Ridge 的中位标签增量为 -0.027/-0.025 bp (2/1 lot).
 
+## 成本与预测拆分终局
+
+181 个区间记录、724 个动作价值全部完成，本地复算及独立增广最小二乘核验通过。2 lot 的成本加回预测仅 1/3 折优于拟合均值预测，低于至少 2/3 的门槛；预测与真实成本经济门槛均失败。实际净价值相对原净目标 Ridge 的三折中位增量为 +0.000／+0.000 bp，相对成本加回目标的拟合段固定动作则为 -0.341／-0.341 bp（2／1 lot）。
+
+所选动作在 2 lot 的 44/47、1 lot 的 47/47 个区间改变了相对零倾斜的持仓，失败不能简单归于订单被挡住。三折固定对照均为加久期，由拟合段单次标签均值选出，并非连续固定账本的最优策略。上述数值为重置持仓后的单区间标签均值，不能累加为连续组合收益；已计成本加回也不等于零成本重优化环境。[完整复核](../cost_signal_review.json)。
+
+![Cost and prediction diagnostic](../delivery_cost_signal.png)
+
 ## 验收与复现
 
 已归档账本验收为 71/71、92/92、92/92，这是保留的既有结果，不是本轮重新执行。报告和界面正确不能替代未完成研究。以下逐项保留原计划差距，不推断任何豁免。
@@ -56,7 +64,7 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 - `risk_penalty` — **deferred**: 显式风险惩罚及去惩罚对照 / Risk penalty and removal. Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training. [Evidence / 证据](../../src/ficc/rl/collector.py)
 
-- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
+- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path cost decomposition and the completed cost-restored label diagnostic fail to justify expansion. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
 
 - `actions_rewards` — **evidenced**: 动作与奖励消融 / Action and reward ablations. Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed. [Evidence / 证据](../../reports/ppo_factorial_validation.json)
 
@@ -74,8 +82,8 @@ GAE λ=1 联合平台为 3/6；相对 λ=0.95 两档均为两胜三平一负，�
 
 - `reproduction` — **partial**: 复现入口 / Reproduction entry points. Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes. [Evidence / 证据](../../Makefile)
 
-`make reproduce` 从已提交证据重建双语报告、汇总表和两张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。
+`make reproduce` 从已提交证据重建双语报告、汇总表和三张 Python 图，不执行训练，也不需要许可原始数据。`make delivery-check` 检查源文件与产物漂移，`make serve` 启动四页只读展示。[复现边界](../../docs/09_reproduction.md)、[五分钟演示与问答](../../docs/05_defense_qa.md)、[验收状态](../acceptance_status.json)。
 
 ## 下一步决策
 
-停止同三窗 PPO 与特征调参。沿原成交路径加回相对零倾斜的已计成本后，2／1 lot 中位超额仍为 -0.654／-9.289 bp，成本不是唯一解释。转向同日期、同特征、同执行路径上的净标签与成本加回标签预测诊断；它不是零成本 PPO 重训，失败也不能证明市场普遍无信号。有预测证据才考虑一个另外冻结的执行对照。新盘口/资金数据或期货任务另做时点与执行审计。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。
+按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 -0.654／-9.289 bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。下一步先核验资金操作公告的历史发布版本和完整覆盖，再冻结新的预测任务。目前只核查了四份官方样例，尚未取得完整序列或训练新模型。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。

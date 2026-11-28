@@ -52,3 +52,16 @@ PYTHONPATH=src:scripts .venv/bin/python scripts/probe_futures_signal.py \
 ## English quick guide
 
 `make reproduce` rebuilds public evidence summaries, bilingual reports and Python figures. It does **not** reproduce private-data research, retrain PPO, or rerun financial acceptances. `make delivery-check` verifies source hashes and deterministic text outputs. `make serve` shows four read-only pages. CI runs the explicit public contract suite, including Torch CPU tests and Streamlit page tests. Full integration requires the archived licensed market snapshots, exact label lineage and checkpoints; missing or mismatched inputs fail closed. No credentials, server endpoints or raw data belong in Git.
+
+## 成本/预测诊断复核边界
+
+`make reproduce` 另生成 `reports/delivery_cost_signal.png`，从公开的 `reports/cost_signal_review.json` 绘图，不重新拟合。该报告含逐区间派生预测/价值和原记录散列，不包含市场输入或原始标签文件。完整复算需要忽略目录中的原始 181 条区间记录及原拟合归档。
+
+原始 `run_cost_signal_diagnostic.py summary` 会核验运行代码指纹，必须在冻结源码 `125a3f7`、原配套数据/拟合标签的隔离目录执行；不能在随后添加报告代码的工作区冒充旧版本。先保留下载的服务器 summary，再保存冻结代码本地重算的 summary。之后可在当前版本执行：
+
+```bash
+python scripts/review_cost_signal.py --root <区间记录目录> \
+  --server-summary <服务器原始汇总> --local-summary <冻结版本本地汇总>
+```
+
+该命令检查源身份、成本闭合、区间边界，并用独立增广最小二乘复算预测、动作和门槛。它不重跑市场账本，也不接触前瞻行情。四份资金公告样例只是可行性记录，不属于预测数据集。

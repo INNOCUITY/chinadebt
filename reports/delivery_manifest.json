@@ -5,19 +5,21 @@
   "inputs": {
     ".github/workflows/ci.yml": "b263fb1f03f1ebd57bf9bbdf899abc1a41f7b711b1146aafeefb28df39503f2a",
     "Makefile": "2abd873ad0bc90c45115678fd9954b722eddab23b56ccf6e2bfd77303ddc9adb",
-    "apps/dashboard/app.py": "040a16f6b2e069ca9fe55f0d2fd81810bdcaceeaf85d044749710f8e1728c805",
-    "config/acceptance/delivery.json": "e0a5b93244487b95463d19a129829be4899b7258d022570fedaea253f0f75267",
+    "apps/dashboard/app.py": "8a9dd64438afc2c57f3045e8d9d5c8ea5a5a3b168d9fa2616e917d23757d2f6b",
+    "config/acceptance/delivery.json": "8d21f33ac325d0322556500df5a42aed59214be1e0d7c23dcccde2911aa33cd8",
     "config/acceptance/public_tests.txt": "8d5c4ed6c19f0d15e8dade411b251026cde0896349a6a3dfd24e251554290c6d",
     "config/experiments/cost_signal_diagnostic.json": "4acd5811ef6885760f203af7cee6d0ba883248f7af0cbe88f884ea89d5088f88",
     "config/experiments/ppo_evaluation.json": "6d634d64daf902a97f622d2fe2d57ba9af60da16218c434835ae379a1bc3ef5a",
-    "docs/01_project_plan.md": "1446b82f02bffb3a1bf4fbc2d4bbdf92ed774721af473fecb061135cc707825d",
+    "docs/01_project_plan.md": "299823d22eff4672e14974f6a581fcdc1bf53169192931ed37467324f918d3d3",
     "docs/05_defense_qa.md": "405ed0a42f9962fecbe1e54aac829cd70726c5ab31281261eaa01b20438e3942",
     "docs/06_ppo_matrix_review.md": "f158e4fb185e7c1e92c03d3e8716b92b4f33c1bf56a762a894aa6b66d0893485",
-    "docs/09_reproduction.md": "4b66beaaa3feb466ce4dd5845ab93b5f5dbb51a8830e0892e07f207fa5200266",
-    "docs/10_research_pivot.md": "221cfa60d71b222416377ad5db6b60dc83c6629ef6cdc40542137bf3939c0778",
+    "docs/09_reproduction.md": "2fd9be52b8e7ea144bdd8e43556d2b5e1482ae3e476e13d74de4afd1c53935b1",
+    "docs/10_research_pivot.md": "2c40e025c798ba2003fc4cae3f21643799036200a89b136e494376a23304fb46",
+    "docs/11_funding_data_feasibility.md": "a516ae17763e53ddfeb1b2df13ba76bce694e271d5a070453e76a87a13e9d90a",
     "reports/acceptance_summary.csv": "14e528cc16fec2dec701230edc5c5c59ce29e310e6d4af57357fa8b075a0f021",
     "reports/acceptance_summary_rolling.csv": "20fddb36007388a101e3391dc748274e0e4c32a0dfe5388f89cfbf61d88f746b",
     "reports/acceptance_summary_rolling_extended.csv": "32ae4f649f91d111891a338cffcad21acb82f119d35e568a1ac3af0d9e9c7b65",
+    "reports/cost_signal_review.json": "51a7d28f6feb17ecb6d8558667431776ebf0e4afd933300953ba953b962470bf",
     "reports/cost_study_decision_change.csv": "e67c0fe0268f906442731523ad903e2b5e79168698d596b0cdae7b2b7d41ccee",
     "reports/cost_study_fixed_path.csv": "553166f599174d1d18f3ac9787b874e539f624525287a62b745f97ced6cd87f8",
     "reports/curve_fit_summary.csv": "c52fa447855e264809094f63422a0a288a55b56fa80fc6751d01084bb6dcc010",
@@ -40,23 +42,25 @@
     "reports/research_pivot_cost_audit.json": "ded61dd4393a0ad0ccd3d8e72d3b133cdbc951f22f540f60eec3c09f9d98d474",
     "reports/stress_test.csv": "7345490f0e5c74a6779cd1f2a7b502712b860f98ded3735944f5683b064ca0c8",
     "reports/var_es.csv": "50ca725a263c33f3f2ec6622eb402b1c0347ce0e349dfb5eb7cb111ff9873e81",
-    "scripts/build_report.py": "40a33938e43162eaf003b49afb552e6cc36b3428316517373b00091e1b92942b",
+    "scripts/build_report.py": "64386658e4f619bdc3b3ef1756cbb2d2ed2e88d092da12327d66a458a64dfbf7",
+    "scripts/review_cost_signal.py": "7a72ea9ef875f9cf727e3716237d33e79c16ce7d5d394c8e63dc6652911f7480",
     "src/ficc/portfolio/constraints.py": "4ef171a355b9a34a822d0d4e49ba1ddec57610443bec8cb4709505c93d355333",
-    "src/ficc/reporting/delivery.py": "c901856e0e9213715e9096bed807367447b0cf8b038aaf8197068bd53cfb68b3",
+    "src/ficc/reporting/delivery.py": "1bf066a46c4ad7e9c52584705e8d8f553ed2ac82e018ee46f11ca3d34c3e8527",
     "src/ficc/rl/collector.py": "7d5a42259aec0649ce92eb1d7f76fb5e2f5bccbec7351bde9fa9e2f57a42f3dc",
     "src/ficc/rl/ppo.py": "55c1adb3c534f840fd5399bb6c76cbfcdd40795f30befca9e751624b1635d44a"
   },
   "text_outputs": {
-    "reports/delivery_facts.json": "ae996b2c7a52ad0aa4b6cf8e8da1688ced70d2a74ee6124e64ced4577f420959",
-    "reports/acceptance_status.json": "63751d67570535dbaa6b3f77673319d942fc1a26b5a615908b5dbf20aea79bf8",
+    "reports/delivery_facts.json": "ececb6bb71688568ef3dbc4487d6e1ac517ed079592b52c9e90ce63f5f509071",
+    "reports/acceptance_status.json": "7b1381eeab92764a35b7734addfddffa4d4bd71e9552f1d7fe38ecdfa726ff2e",
     "reports/unified_baselines.csv": "a9e7360a382cdf0dd2e1822dfd5cf4e298210429d938f045ab447e8eae2a40a9",
     "reports/rl_ablation.csv": "863d3c9e19d593f5a4b448a9bdec4e3b0028368e9e1f263a717846696742d6eb",
-    "reports/zh/final_report.md": "e9c2e6f5ebd545316a87dc5add08a8ab1400a11fb617fd1ce03c6f20442abeba",
-    "reports/en/final_report.md": "d7fbdbfedb469866f59f8cbc7ae692de9fa998e588c3e3296fe838a795b18f0f"
+    "reports/zh/final_report.md": "9333088ead987dfd1b7d97fa4dee5ff17518dab74328265269e2078ea149dbbf",
+    "reports/en/final_report.md": "6149dd5b4cb7c3f7ee5f93cffbf2e71d06865daef7955f53d9874701d9297d6d"
   },
   "figures": [
     "reports/delivery_baselines.png",
-    "reports/delivery_futures.png"
+    "reports/delivery_futures.png",
+    "reports/delivery_cost_signal.png"
   ],
   "figure_check": "Figures regenerate from the same facts; PNG bytes may vary by renderer/OS."
 }

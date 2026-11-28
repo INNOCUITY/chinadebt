@@ -84,6 +84,43 @@ def test_futures_gate_and_report_dates_from_archived_predictions():
     assert report["consider_continuous_replay"] is False
 
 
+def test_cost_signal_decisions_and_failed_gate_remain_visible():
+    report = json.loads((ROOT / "reports/cost_signal_review.json").read_text())
+    assert report["verification"]["records"] == 181
+    assert report["verification"]["independent_augmented_lstsq_max_prediction_difference"] < 1e-9
+    for row in report["results"]:
+        ds = row["decisions"]
+        net = np.array([d["net_values"] for d in ds])
+        picks = np.array([d["restored_pick"] for d in ds])
+        old = np.array([d["net_pick"] for d in ds])
+        assert (
+            picks.tolist() == np.array([d["restored_predictions"] for d in ds]).argmax(1).tolist()
+        )
+        assert row["restored_fixed_index"] == 3
+        assert row["actions_changed_vs_net_selector"] == int((picks != old).sum())
+        idx = np.arange(len(ds))
+        assert row["actual_vs_net_selector_bp"] == pytest.approx(
+            float((net[idx, picks] - net[idx, old]).mean()), abs=1e-12
+        )
+        assert row["actual_vs_restored_fixed_bp"] == pytest.approx(
+            float((net[idx, picks] - net[:, 3]).mean()), abs=1e-12
+        )
+    assert (
+        sum(
+            r["restored_rmse_bp"] < r["restored_fit_mean_rmse_bp"]
+            for r in report["results"]
+            if r["band"] == 2
+        )
+        == report["restored_prediction_wins"]
+        == 1
+    )
+    assert not report["restored_prediction_gate"] and not report["actual_cost_economics_gate"]
+    facts = collect(ROOT)[0]
+    assert facts["cost_signal"]["route"] == "stop_this_feature_action_family"
+    assert facts["cost_signal"]["median_bp"]["2"]["actual_vs_restored_fixed_bp"] < 0
+    assert not facts["full_original_plan_accepted"]
+
+
 def test_dashboard_all_pages_are_read_only(monkeypatch):
     from streamlit.testing.v1 import AppTest
 

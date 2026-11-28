@@ -42,6 +42,14 @@ The frozen four-feature Ridge probe wins against both original Ridge and the fit
 
 Additional-delay median gains versus original Ridge are -0.027/-0.025 bp (2/1 lot).
 
+## Cost versus prediction diagnostic
+
+All 181 interval records (724 action values) completed and reproduced locally; an independent augmented least-squares fit verified both target models. Cost-restored prediction beats the fitting-mean forecast in 1/3 folds at 2 lot, below the required 2/3. Both registered gates fail. Median actual net gain versus original net-target Ridge is +0.000/+0.000 bp; versus the restored-target fit-selected fixed action it is -0.341/-0.341 bp (2/1 lot).
+
+The restored-target choices change holdings versus zero tilt in 44/47 intervals at 2 lot and 47/47 at 1 lot. Failure is therefore not simply blocked orders. The fixed control is long duration in all folds, selected by fitting-label means, not by a continuous fixed-strategy ledger. Values above are means of reset-state one-interval labels, not cumulative returns. Restoring realized costs does not create a reoptimized zero-cost environment. [Audited evidence](../cost_signal_review.json).
+
+![Cost and prediction diagnostic](../delivery_cost_signal.png)
+
 ## Acceptance and reproduction
 
 Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred.
@@ -56,7 +64,7 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 - `risk_penalty` — **deferred**: 显式风险惩罚及去惩罚对照 / Risk penalty and removal. Hard risk constraints and active reward are implemented; neither substitutes for an EWMA/drawdown/CVaR penalty ablation. Specify risk budget and objective before training. [Evidence / 证据](../../src/ficc/rl/collector.py)
 
-- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path realized-cost decomposition and a frozen cost-restored label diagnostic are available. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
+- `rl_no_cost` — **deferred**: RL 去交易成本训练 / RL cost-removal training. Fixed-path cost decomposition and the completed cost-restored label diagnostic fail to justify expansion. Neither is PPO trained in a zero-cost environment. Original RL no-cost-training item remains deferred. [Evidence / 证据](../../reports/cost_study_fixed_path.csv)
 
 - `actions_rewards` — **evidenced**: 动作与奖励消融 / Action and reward ablations. Available paired experiments failed expansion gates; action comparison also changes parameterization/exploration. No clean network-capacity ablation claimed. [Evidence / 证据](../../reports/ppo_factorial_validation.json)
 
@@ -74,8 +82,8 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 - `reproduction` — **partial**: 复现入口 / Reproduction entry points. Public reports and figures rebuild from tracked summaries. End-to-end research additionally needs licensed source snapshots, ignored label archives and checkpoints with matching hashes. [Evidence / 证据](../../Makefile)
 
-`make reproduce` rebuilds both reports, summary tables and two Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json).
+`make reproduce` rebuilds both reports, summary tables and three Python figures from tracked evidence, without training or licensed raw data. `make delivery-check` detects source/summary drift. `make serve` opens four read-only pages. [Reproduction boundaries](../../docs/09_reproduction.md), [five-minute demonstration and Q&A](../../docs/05_defense_qa.md), [acceptance status](../acceptance_status.json).
 
 ## Next decision
 
-Stop PPO and feature tuning on these three windows. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); costs alone do not explain the failure. A bounded diagnostic now separates net versus cost-restored action-label prediction on identical dates, features and execution paths. It is not zero-cost PPO training and cannot prove universal signal absence. Only predictive evidence can justify one separately frozen execution comparison. New quote/funding data or a futures task require their own availability and execution audit. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and the reserved future period remain unchanged.
+Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. Next audit historical funding-operation announcements, publication versions and full coverage before freezing any new predictive task. Four official sample announcements have been inspected; no complete series or new model is claimed. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged.

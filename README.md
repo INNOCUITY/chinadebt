@@ -40,7 +40,7 @@
 
 **当前进展（2026-11-28）**：PPO 训练/恢复与 22 折、5 seed 已完成；同口径累计净超额中位数为 2 lot −3.93 bp、1 lot −33.31 bp，尚无稳健策略价值证据。奖励、执行、价值估计等后续实验未通过扩折门槛，当前冻结容量和训练预算、保留前瞻期。官方期货成交量/OI/跨月结算价差已完成覆盖与时点审计，限定特征增量检验未通过。
 
-**审查后的方向调整**：[复核与转向决定](docs/10_research_pivot.md)。停止原窗口 PPO 与特征调参，先做固定执行路径的预测/成本拆分。加回已计增量成本后 PPO 中位超额仍负，不能把失败全归因于成本；新诊断不等于零成本重训，也不启用前瞻期。
+**审查后的方向调整**：[复核与转向决定](docs/10_research_pivot.md)。固定执行路径成本/预测诊断已完成 181/181 个区间记录，本地与独立求解器核验通过；仅 1/3 折优于均值预测，两个冻结门槛均失败。两档相对原 Ridge 的净价值中位改善为零，相对拟合标签均值选出的固定动作均约 −0.341 bp（单区间标签均值，非累计收益）。停止此特征／动作组合的继续调参，不启动执行网格或 PPO。下一项为[资金操作信息可行性审计](docs/11_funding_data_feasibility.md)，四份官方样例已读，完整序列和新模型尚未启动。
 
 **交付入口**：[中文报告](reports/zh/final_report.md) · [English report](reports/en/final_report.md) · [统一基线](reports/unified_baselines.csv) · [RL 消融](reports/rl_ablation.csv) · [验收差距](reports/acceptance_status.json) · [复现指南](docs/09_reproduction.md) · [演示与问答](docs/05_defense_qa.md)。`make reproduce` 重建公开证据报告与 Python 图；`make serve` 启动四页只读 Dashboard。GitHub CI 运行公开契约测试及漂移检查，不代替有许可原始数据的完整集成验收。
 
