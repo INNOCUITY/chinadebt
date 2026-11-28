@@ -44,8 +44,9 @@ def require_purged(fit, held):
         raise ValueError("fit information clock differs")
 
 
-def run(archive, holdout_path):
-    plan, design, holdout = read(PLAN), read(DESIGN), read(holdout_path)
+def run(archive, holdout_path, *, plan_path=None, feature_reader=None):
+    plan_path = PLAN if plan_path is None else plan_path
+    plan, design, holdout = read(plan_path), read(DESIGN), read(holdout_path)
     if sha(DESIGN) != plan["original_design_sha256"] or sha(holdout_path) != plan["holdout_sha256"]:
         raise ValueError("frozen label provenance differs")
     rows = []
@@ -74,8 +75,13 @@ def run(archive, holdout_path):
         baseline, fixed = fit_selector(fit, design)
         x = np.array([r["features"] for r in fit])
         y = np.array([r["net_bp"] for r in fit])
-        frame = extra_features(market.panel)
-        extra = frame.loc[pd.to_datetime([r["cutoff"] for r in fit])].to_numpy()
+        frame = extra_features(market.panel) if feature_reader is None else None
+        fit_cutoffs = pd.to_datetime([r["cutoff"] for r in fit])
+        extra = (
+            frame.loc[fit_cutoffs].to_numpy()
+            if feature_reader is None
+            else feature_reader(fit_cutoffs)
+        )
         mean = np.nanmean(extra, axis=0)
         extended = augment(x, extra, mean)
         heads = [fit_ridge(extended, col, plan["ridge_alpha"]) for col in y.T[1:]]
@@ -97,7 +103,12 @@ def run(archive, holdout_path):
                 market.calendar.prev_trading_day(date.fromisoformat(r["signal"])) for r in held
             ]
             bx = np.array([features(c) for c in cutoffs])
-            ex = augment(bx, frame.loc[pd.to_datetime(cutoffs)].to_numpy(), mean)
+            extra_held = (
+                frame.loc[pd.to_datetime(cutoffs)].to_numpy()
+                if feature_reader is None
+                else feature_reader(cutoffs)
+            )
+            ex = augment(bx, extra_held, mean)
             original = np.array([baseline(v) for v in bx])
             np.testing.assert_allclose(
                 original, [r["predicted_bp"] for r in held], atol=1e-9, rtol=0
@@ -168,7 +179,7 @@ def run(archive, holdout_path):
     }
     gate = better >= 2 and min(medians[2].values()) > 0 and min(medians[1].values()) >= 0
     return dict(
-        design_sha256=sha(PLAN),
+        design_sha256=sha(plan_path),
         runtime_sha256=runtime_digest(ROOT),
         rows=rows,
         prediction_wins_at_2_lot=better,

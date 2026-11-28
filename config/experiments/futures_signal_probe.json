@@ -1,0 +1,41 @@
+{
+  "version": "official-futures-activity-spread-v1",
+  "folds": [
+    0,
+    10,
+    21
+  ],
+  "bands": [
+    2,
+    1
+  ],
+  "ridge_alpha": 10.0,
+  "change": "Append four T-family EOD features to the original nine market features: log total volume / 20-session median volume, aggregate OI 5-session change, log volume/OI, nearest-minus-next active maturity settlement spread. No new feature search, reward/network changes or PPO updates.",
+  "preprocessing": "Use only reports at or before the previous-session curve cutoff; available time modeled as next calendar day 00:00 Asia/Shanghai. Training-only scaling. No stitched dominant-contract return.",
+  "target": "Reuse archived next-decision four-action net labels at benchmark openings. Fit only 2 lot; identical forecasts and actions at 1 lot.",
+  "split": "Original 29 purged fit intervals per fold and original last-third inner holdout. Already viewed development periods, not independent confirmation.",
+  "controls": "Original nine-feature Ridge, zero tilt, fit-label mean selected fixed action, and the fixed action selected on the original continuous fit ledger.",
+  "screen": "At 2 lot beat both original Ridge and fit-mean RMSE in at least two folds; require positive three-fold median selected-label gains versus all four controls. At 1 lot require all median gains nonnegative. A pass permits a continuous replay on these inner development windows only; never PPO expansion or forward confirmation.",
+  "original_design_sha256": "dc144d990142a9652b724347261f9796d3f260c3f0afbd2cb53e6c15abf1f310",
+  "holdout_sha256": "269ac560184b93e9880adab61e3d2ec2fc63959a1bb5d5ab7b4053b6c166b608",
+  "fit_sha256": {
+    "0": "4756dca88ab683e6969992a31cf7eb605d5d784e39f04db3853b061d819b6cf7",
+    "10": "b6a9adbe1f9dc950668bed2cf4ea762b271123ae9d8070c410248e16c5890afc",
+    "21": "eff1e750550d161e38fe0ae64ac5449c68d06d2a8edd9a7a4f6ed9a275d81676"
+  },
+  "market_sha256": {
+    "0": "d764157ec31760cd0cb89f7f675ba5fe4da8eab3d267820c4eb162e617d65913",
+    "10": "c47b7f10bf0df8e404deb418d0e102a0f11ae19002fd8b30c39c61ed7d693455",
+    "21": "9141da23bf5f21bde41c49cd22bd483b74842bb77f6c92cb043d2fa190001c13"
+  },
+  "publication_lag_sensitivity_sessions": [
+    0,
+    1
+  ],
+  "delay_gate": "Primary label screen must pass; additionally one-extra-futures-session-delay median gain vs original Ridge must be nonnegative in both execution bands.",
+  "calendar_sha256": "a3833c82d1e361a5a5482a86d4e3cbc23c779ef8e54f4bebf1fdd05f769555a0",
+  "data_sha256": {
+    "contracts.parquet": "ce30db234c5d94472effccb00c1a68e514667c5af61bcb0c25bc13b7a2bb11cf",
+    "features.parquet": "1de1fafe360a56e346785df6ed08574b27c2e7a8c2a39f46464f4a506bebf7c1"
+  }
+}
