@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from evaluate_rl import Market, load_actor, replay, score, sha
-from train_rl import EVAL_SPEC, FACTOR_SPEC, NEUTRAL_SPEC, dump, training_spec
+from train_rl import EVAL_SPEC, FACTOR_SPEC, LAMBDA_SPEC, NEUTRAL_SPEC, dump, training_spec
 
 
 def decision_ledger(rollout, proposals, book, start):
@@ -72,7 +72,7 @@ def compare(rows, zero):
     )
 
 
-def audit_pair(root, output, fold, band, probes_only=False, neutral=False):
+def audit_pair(root, output, fold, band, probes_only=False, neutral=False, lambda_one=False):
     design = json.loads(FACTOR_SPEC.read_text())
     plan = json.loads(EVAL_SPEC.read_text())
     if fold not in design["folds"] or band not in design["bands"]:
@@ -140,7 +140,7 @@ def audit_pair(root, output, fold, band, probes_only=False, neutral=False):
         dump(dest / f"{name}-days.json", list(rows.values()))
         dump(dest / f"{name}.json", report)
 
-    if neutral:
+    if neutral or lambda_one:
         for seed in design["seeds"]:
             spec = training_spec(
                 fold,
@@ -152,6 +152,7 @@ def audit_pair(root, output, fold, band, probes_only=False, neutral=False):
                 invested_start=True,
                 actor_step=True,
                 neutral_actor=True,
+                lambda_one=lambda_one,
             )
             src = root / f"fold-{fold}/seed-{seed}"
             archived = json.loads((src / "validation.json").read_text())
@@ -161,10 +162,12 @@ def audit_pair(root, output, fold, band, probes_only=False, neutral=False):
                 archived["fold"],
                 archived["seed"],
                 archived["neutral_actor_sha256"],
+                archived.get("lambda_sha256"),
                 row["checkpoint_sha256"],
-            ) != (fold, seed, sha(NEUTRAL_SPEC), sha(ck)):
+            ) != (fold, seed, sha(NEUTRAL_SPEC), sha(LAMBDA_SPEC) if lambda_one else None, sha(ck)):
                 raise ValueError("neutral actor archive mismatch")
-            record(f"neutral-{seed}", load_actor(ck, spec, 16, market, market.cfg), row, ck)
+            name = "lambda" if lambda_one else "neutral"
+            record(f"{name}-{seed}", load_actor(ck, spec, 16, market, market.cfg), row, ck)
         return
     for name, z in (("hold", None), ("short_duration", -1.0), ("long_duration", 1.0)):
         record(name, lambda ctx, prev, z=z: z)
@@ -194,6 +197,7 @@ if __name__ == "__main__":
     p.add_argument("--band", type=int, required=True)
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--neutral", action="store_true")
+    mode.add_argument("--lambda-one", action="store_true")
     mode.add_argument("--probes-only", action="store_true")
     a = p.parse_args()
-    audit_pair(a.root, a.output, a.fold, a.band, a.probes_only, a.neutral)
+    audit_pair(a.root, a.output, a.fold, a.band, a.probes_only, a.neutral, a.lambda_one)

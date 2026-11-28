@@ -1,0 +1,31 @@
+{
+  "version": "five-day-curve-signal-probe-v1",
+  "folds": [
+    0,
+    10,
+    21
+  ],
+  "bands": [
+    2,
+    1
+  ],
+  "ridge_alpha": 10.0,
+  "change": "Append only five-session yield changes at 2y/5y/10y and twenty-session 2s10s slope change. Preserve original nine features, original labels, Ridge alpha and time split. No feature subset or hyperparameter search.",
+  "preprocessing": "Previous-session cutoff; added-feature imputation means and Ridge scaling use fit rows only. Add missing flags. Original calibration and missing flags remain unchanged.",
+  "target": "Reuse archived next-decision four-action net labels at benchmark openings. Fit only 2 lot; identical forecasts and actions at 1 lot.",
+  "split": "Original 29 purged fit intervals per fold and original last-third inner holdout. Already viewed development periods, not independent confirmation.",
+  "controls": "Original nine-feature Ridge, zero tilt, fit-label mean selected fixed action, and the fixed action selected on the original continuous fit ledger.",
+  "screen": "At 2 lot beat both original Ridge and fit-mean RMSE in at least two folds; require positive three-fold median selected-label gains versus all four controls. At 1 lot require all median gains nonnegative. A pass permits a continuous replay on these inner development windows only; never PPO expansion or forward confirmation.",
+  "original_design_sha256": "dc144d990142a9652b724347261f9796d3f260c3f0afbd2cb53e6c15abf1f310",
+  "holdout_sha256": "269ac560184b93e9880adab61e3d2ec2fc63959a1bb5d5ab7b4053b6c166b608",
+  "fit_sha256": {
+    "0": "4756dca88ab683e6969992a31cf7eb605d5d784e39f04db3853b061d819b6cf7",
+    "10": "b6a9adbe1f9dc950668bed2cf4ea762b271123ae9d8070c410248e16c5890afc",
+    "21": "6f906c944fbe71e505279092be91b3b692acd40fa6326e6aab83d8093566a1db"
+  },
+  "market_sha256": {
+    "0": "d764157ec31760cd0cb89f7f675ba5fe4da8eab3d267820c4eb162e617d65913",
+    "10": "c47b7f10bf0df8e404deb418d0e102a0f11ae19002fd8b30c39c61ed7d693455",
+    "21": "9141da23bf5f21bde41c49cd22bd483b74842bb77f6c92cb043d2fa190001c13"
+  }
+}
