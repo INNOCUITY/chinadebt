@@ -58,6 +58,12 @@ A fixed-alpha Ridge adds three announcement features to the original nine inputs
 
 ![Funding prediction RMSE](../delivery_funding.png)
 
+## Contract and expectation coverage
+
+A further 283 official articles were audited. MLF balance tables cover 79 reference months (including the opening month); 76 operation reports match their amounts, but six explicitly refer to post-operation balances and seven tables were published before calendar month-end. These are as-published observations, not reconstructed daily outstanding stock. Treasury deposits have 56 matched notice/award pairs, including 46 contracts on 43 value dates in scope; stated dates are contractual, without verified cash-transfer confirmation. Ordinary repo maturity dates and continuous ex-ante market consensus remain unverified.
+
+Funding-pressure risk is a better-motivated candidate than further long-yield tuning, not a proven predictive result. Local FDR/FR fixings cover 1,619/1,623 sessions; they must not be relabeled as full-session weighted DR/R rates. Audit true target history, units and availability before defining one new experiment. No new model experiment, PPO training or reserved-forward-data access occurred. [Detailed audit and next steps](../../docs/12_funding_contract_audit.md).
+
 ## Acceptance and reproduction
 
 Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred.
@@ -94,4 +100,4 @@ Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior r
 
 ## Next decision
 
-Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. Next establish value/maturity rules or an independently motivated liquidity/risk-control task before considering a new preregistration. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged.
+Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains -0.654/-9.289 bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. The contract audit establishes some published balance observations and contractual schedules, but does not admit daily stock or policy-surprise features. Next audit a funding-risk target before considering a new preregistration. [Current data decision](../../docs/12_funding_contract_audit.md). Original-plan gaps and reserved forward data remain unchanged.

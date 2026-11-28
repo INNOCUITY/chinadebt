@@ -1,0 +1,193 @@
+{
+  "mlf": {
+    "expected_months": 79,
+    "verified_months": 79,
+    "reference_period": [
+      "2018-11",
+      "2025-05"
+    ],
+    "cross_report_equal_amounts": 76,
+    "post_operation_not_month_end": 6,
+    "table_publications_before_calendar_month_end": 7,
+    "monthly_table_observations_available_by_scope_end": 78,
+    "advance_plans_in_scope": 3,
+    "monthly_release_lag_calendar_days": [
+      -7,
+      9
+    ],
+    "daily_actual_stock_verified": false,
+    "explicit_value_maturity_dates_verified": 0,
+    "availability": "Last published monthly observation only, with reference month and age. Post-operation reports have a different reference instant. Plans are not expectations or actual awards."
+  },
+  "treasury": {
+    "paired_contracts": 56,
+    "unique_value_dates": 53,
+    "contracts_in_scope": 46,
+    "unique_value_dates_in_scope": 43,
+    "plan_lead_calendar_days": [
+      3,
+      5
+    ],
+    "holiday_adjustment_clauses": 56,
+    "actual_cash_settlements_verified": 0,
+    "opening_stock_verified": false,
+    "by_year": {
+      "2018": 11,
+      "2019": 5,
+      "2020": 5,
+      "2021": 7,
+      "2022": 3,
+      "2023": 10,
+      "2024": 9,
+      "2025": 6
+    },
+    "availability": "Matched planned and awarded contractual dates; not proof of cash transfer. Contract issue sequences are contiguous within observed years; no all-government-liquidity coverage claim."
+  },
+  "outright": {
+    "monthly_reports": 8,
+    "advance_plans_in_scope": 0,
+    "advance_plans_outside_scope": 2,
+    "daily_actual_stock_verified": false,
+    "explicit_value_maturity_dates_verified": 0
+  },
+  "version": "funding-contract-audit-v1",
+  "scope": [
+    "2018-12-01",
+    "2025-05-30"
+  ],
+  "archived_articles": 283,
+  "channel_counts": {
+    "mlf_table": 80,
+    "mlf_news": 81,
+    "treasury": 112,
+    "outright_tender": 10
+  },
+  "raw_snapshot_sha256": "aaf53431e3bf40b39c349247b4bc5979acdaa3addb06e2e69c1af848a4a7a6a2",
+  "calendar_sha256": "23588687cb1834b7f823a7bf826813484e1bc86105d5ae15a5bd22a9f0bb3cd4",
+  "ordinary_reverse_repo": {
+    "rows": 1424,
+    "value_dates_verified": 0,
+    "maturity_dates_verified": 0,
+    "nominal_date_plus_tenor_non_sessions": 134,
+    "nominal_dates_are_not_actual_maturity_dates": true,
+    "net_injection_and_stock_admitted": false
+  },
+  "target": {
+    "expected_sessions": 1623,
+    "observed": {
+      "FDR001": 1619,
+      "FDR007": 1619,
+      "FR007": 1619
+    },
+    "missing_dates": {
+      "FDR001": [
+        "2018-12-30",
+        "2018-12-31",
+        "2022-12-31",
+        "2023-12-31"
+      ],
+      "FDR007": [
+        "2018-12-30",
+        "2018-12-31",
+        "2022-12-31",
+        "2023-12-31"
+      ],
+      "FR007": [
+        "2018-12-30",
+        "2018-12-31",
+        "2022-12-31",
+        "2023-12-31"
+      ]
+    },
+    "missing_columns": [
+      "DR001",
+      "DR007",
+      "R007"
+    ],
+    "scope_sha256": "c10b748093635aca19f5487e446a43658645c67ad6337c78a7a5ac5ca7de3e53",
+    "definition": "FDR/FR: morning fixing, not full-session volume-weighted DR/R. No target imputation. Provider APIs exist; their full historical coverage, units, release timestamps and access have not yet been audited."
+  },
+  "expectations": {
+    "continuous_ordinary_repo_consensus_verified": false,
+    "planned_quantity_is_market_expectation": false,
+    "unobserved_expectations": null,
+    "samples": [
+      {
+        "source": "Reuters syndicated report",
+        "url": "https://www.streetinsider.com/Reuters/China%2Bcentral%2Bbank%2Bset%2Bto%2Bcut%2Bkey%2Brate,%2Bboost%2Bliquidity%2BMonday%2Bto%2Baid%2Beconomy/22625244.html",
+        "published_at": "2024-01-12T01:10:00-05:00",
+        "event_date": "2024-01-15",
+        "instrument": "MLF",
+        "respondents": 35,
+        "expected_rate_cut": 19,
+        "expected_net_injection": 30,
+        "complete_quantity_forecast_distribution": false,
+        "immutable_vintage_verified": false
+      },
+      {
+        "source": "Reuters syndicated report",
+        "url": "https://www.investing.com/news/economy/china-central-bank-set-to-leave-policy-rate-unchanged-drain-some-liquidity-3376039",
+        "published_date": "2024-04-12",
+        "published_at": null,
+        "event_date": "2024-04-15",
+        "instrument": "MLF",
+        "respondents": 31,
+        "expected_unchanged_rate": 31,
+        "complete_quantity_forecast_distribution": false,
+        "immutable_vintage_verified": false,
+        "limitation": "Displayed clock timezone not verified; not admitted as exact-time feature."
+      }
+    ]
+  },
+  "decision": {
+    "new_experiment_frozen": false,
+    "new_experiment_run": false,
+    "ppo_training_added": false,
+    "forward_period_accessed": false,
+    "recommended_task": "Funding-pressure / short-end liquidity-risk feasibility, before any prediction or portfolio claim.",
+    "admitted_components": [
+      "As-published monthly MLF balance observations, with reference month and age",
+      "Treasury planned and awarded contractual event dates, separated by publication time"
+    ],
+    "not_admitted": [
+      "Daily ordinary repo net injection or outstanding stock",
+      "Actual treasury cash transfers or complete starting balance",
+      "Continuous ex-ante market consensus or identified policy surprises",
+      "FDR relabeled as full-session DR"
+    ],
+    "next_step": "Audit actual DR001/DR007 and, if available, R007 target history, publication/vintage and units; independently reconcile cashflow rules and opening balances only if those features are proposed. Define one risk target and unseen evaluation allocation before any experiment. Do not tune old windows."
+  },
+  "availability": "Displayed source publication time; next independent session, plus one-session sensitivity. Current cached pages do not establish immutable historical vintages. No interpolation or zero filling of unknown operations, stock, expectations or targets.",
+  "sources": [
+    {
+      "cache": "rules/omo2024-3.html",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/5392190/index.html",
+      "sha256": "e7fc3b0c991c5c3c018a5e18c2460a1aca3e311d65e4e4329cb8d69cd25d7e27"
+    },
+    {
+      "cache": "rules/omo2024-4.html",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/5409998/index.html",
+      "sha256": "03722cb8570590b3668c4ed3d90e9efa88c627b10ef493e3791b85845a118507"
+    },
+    {
+      "cache": "rules/omo2024-5.html",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/5468922/index.html",
+      "sha256": "2d0b27f9367a9aba3effded19d97e0a2635236c0e9b3e91640a3205767787402"
+    },
+    {
+      "cache": "rules/omo2024-7.html",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/5488585/index.html",
+      "sha256": "9446fe1142c02b10da46f57a16284f68eaa34b8d57755a12cf95e76108c2601f"
+    },
+    {
+      "cache": "rules/omo-2026-13.html",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125469/2026103016375865177/index.html",
+      "sha256": "ea13d9f5915d55fbc90a342e61f537866102744f026198f69222f98b57e9c2a8"
+    },
+    {
+      "cache": "rules/fdr-method.html",
+      "url": "https://www.chinamoney.com.cn/english/bmkfrr/",
+      "sha256": "00eb9e9543f26f2801c256ee58e6c8494b9ea817d188cbb5ccfc0b348c063670"
+    }
+  ]
+}

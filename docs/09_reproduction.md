@@ -67,3 +67,8 @@ python scripts/review_cost_signal.py --root <区间记录目录> \
 该命令检查源身份、成本闭合、区间边界，并用独立增广最小二乘复算预测、动作和门槛。它不重跑市场账本，也不接触前瞻行情。资金公告已另行完成完整审计及一项冻结跨年预测；与原成本标签是不同任务，不能混报成绩。
 
 资金公告审计、冻结预测与数据边界见 [专项复现记录](11_funding_data_feasibility.md)。四张 Python 汇总图均可由 `make reproduce` 离线重建；原始公告、行情和逐行预测仍不进入公开仓库。
+
+
+## 资金合同、余额与预期审计
+
+新增 `scripts/fetch_funding_contracts.py` 与 `scripts/audit_funding_contracts.py`，前者限定历史公告范围，后者完全离线核对目录、正文、参考月、计划/结果、发布时间及独立日历。规则与汇总分别在 `config/baselines/funding_contract_audit.json`、`reports/funding_contract_coverage.json`；来源版本改变会失败，不自动更新冻结散列。复算还需忽略目录内的普通公告解析快照与本地资金序列，公开 CI 使用合成边界测试。[字段、范围与限制](12_funding_contract_audit.md)。此入口仅审计数据，没有新预测目标/模型实验，也不启动训练；双语报告及 Dashboard 已同步。

@@ -478,3 +478,10 @@ FR/FDR数值，冲突报错，不使用keep-last静默吞掉。2022-12-31及2023
 ## 资金操作公告历史快照（2026-11-28）
 
 新增 `ficc.data.funding_announcements` 单列公告显示发布时间、业务日、UTC 采集时点、来源/正文 SHA256、工具、期限原文/数字/单位、亿元操作量和百分数利率。`value_date`/`maturity_date` 未核实保持 null；不能从期限和银行间日历推导净投放。金额零只来自明确无操作公告；特殊现金开市日无例行公告为 null。特征只使用截止日之前已达到次交易日可用规则的公告，另做额外一日敏感性。原始快照位于 Git 忽略目录，公开文件只有独立日历规则、覆盖与预测汇总。[完整契约与限制](11_funding_data_feasibility.md)。
+
+
+## 资金合同与余额披露快照（2026-11-28）
+
+`ficc.data.funding_contracts` 区分 `instrument`、`kind`、`reference_month`、`reported_operation_date`、带时区的 `published_at` 与保守 `available_session`/`extra_lag_session`。月度表为月份余额观察，操作后余额另列，不能反填成月初或每日真实存量。`planned_amount_100m` 与 `actual_amount_100m` 不相互覆盖；市场预期另记，未核实为 null。国库定存按年份/期号标识，`stated_value_date`/`stated_maturity_date` 为公告约定日，`actual_cash_settlement_verified` 为 false；同日不同期保留。金额单位亿元，利率百分数。
+
+普通逆回购和买断式逆回购未核实实际起息/到期；名义期限加日只用于说明推算风险，不产生特征。FDR/FR 仅为上午定盘，不改名为全天加权 DR/R。审计配置固定来源与日历散列；原始 HTML、解析行和原行情忽略，公开覆盖汇总见 [合同审计](12_funding_contract_audit.md)。

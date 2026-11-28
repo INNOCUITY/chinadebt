@@ -189,6 +189,7 @@ def collect(root):
     cost = read(root, "reports/cost_signal_review.json")
     funding_audit = read(root, "reports/funding_data_coverage.json")
     funding_probe = read(root, "reports/funding_signal_probe.json")
+    contracts = read(root, "reports/funding_contract_coverage.json")
     checks = []
     for name in [
         "acceptance_summary",
@@ -258,6 +259,10 @@ def collect(root):
     }
     summary["funding_probe"] = {
         k: funding_probe[k] for k in ("primary", "delay_sensitivity", "gate")
+    }
+    summary["funding_contracts"] = {
+        k: contracts[k]
+        for k in ("archived_articles", "mlf", "treasury", "outright", "target", "decision")
     }
     return summary, plan, baselines(matrix), ablations(root)
 
@@ -373,6 +378,17 @@ def render_report(f, plan, english=False):
                 else f"固定 alpha 的 Ridge 只增加三项公告特征，预测五个交易日的十年期收益率变化。五个跨年开发窗口、215 个留出区间中，{funding['primary']['wins']}/5 同时胜过全部对照；相对原 Ridge 的年度 RMSE 中位降低量为 {funding['primary']['median_rmse_gain_bp']:+.4f} bp，额外延迟后为 {funding['delay_sensitivity']['median_rmse_gain_bp']:+.4f} bp。门槛失败，停止这套特征/目标组合；没有运行或宣称成本后组合收益。"
             ),
             "![Funding prediction RMSE](../delivery_funding.png)",
+            "## Contract and expectation coverage" if en else "## 合同、余额与事前预期覆盖",
+            (
+                "A further 283 official articles were audited. MLF balance tables cover 79 reference months (including the opening month); 76 operation reports match their amounts, but six explicitly refer to post-operation balances and seven tables were published before calendar month-end. These are as-published observations, not reconstructed daily outstanding stock. Treasury deposits have 56 matched notice/award pairs, including 46 contracts on 43 value dates in scope; stated dates are contractual, without verified cash-transfer confirmation. Ordinary repo maturity dates and continuous ex-ante market consensus remain unverified."
+                if en
+                else "另核对 283 份官方公告。MLF 余额表覆盖 79 个参考月份（含起始月），76 份开展情况报告金额相符；其中六份明确为操作后余额，七张表在自然月末前发布，不能补造成每日真实存量。国库定存 56 组通知/结果配对，主范围内 46 份合同、43 个起息日期；约定日期已核实，实际现金划转尚未确认。普通逆回购真实到期和连续事前市场预期仍未核实。"
+            ),
+            (
+                "Funding-pressure risk is a better-motivated candidate than further long-yield tuning, not a proven predictive result. Local FDR/FR fixings cover 1,619/1,623 sessions; they must not be relabeled as full-session weighted DR/R rates. Audit true target history, units and availability before defining one new experiment. No new model experiment, PPO training or reserved-forward-data access occurred. [Detailed audit and next steps](../../docs/12_funding_contract_audit.md)."
+                if en
+                else "资金压力风险在经济机制上是更直接的候选任务，尚不是预测增量结论。本地 FDR/FR 定盘值覆盖 1,619/1,623 日，不能冒充全天加权 DR/R。下一步先核对真实目标历史、单位和可用时点，再决定是否登记一个新实验。本轮未运行新模型、未追加 PPO、未使用保留前瞻数据。[详细审计与下一步](../../docs/12_funding_contract_audit.md)。"
+            ),
             "## Acceptance and reproduction" if en else "## 验收与复现",
             (
                 "Archived ledger acceptances: 71/71, 92/92 and 92/92. These are preserved prior results, not freshly rerun experiments. Report and UI correctness cannot replace missing research. The original-plan checklist follows; no waiver is inferred."
@@ -395,9 +411,9 @@ def render_report(f, plan, english=False):
             ),
             "## Next decision" if en else "## 下一步决策",
             (
-                f"Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. Next establish value/maturity rules or an independently motivated liquidity/risk-control task before considering a new preregistration. [Review and revised route](../../docs/10_research_pivot.md). Original-plan gaps and reserved forward data remain unchanged."
+                f"Stop this feature/action family under the registered route. After restoring realized incremental costs on the original PPO paths, median excess remains {f['fixed_path_cost_restored_median_bp']['2']:+.3f}/{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp (2/1 lot); the completed label diagnostic also fails its prediction gate. Neither result establishes universal signal absence. Do not launch the execution-frequency grid or resume PPO. The historical funding-announcement audit is complete for gross operations, but its frozen five-session yield-prediction increment also fails. Do not launch more hyperparameter or horizon searches on these windows. The contract audit establishes some published balance observations and contractual schedules, but does not admit daily stock or policy-surprise features. Next audit a funding-risk target before considering a new preregistration. [Current data decision](../../docs/12_funding_contract_audit.md). Original-plan gaps and reserved forward data remain unchanged."
                 if en
-                else f"按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。资金公告的新操作信息审计已完成，但冻结的五日收益率预测增量亦未过门。不继续在这些窗口搜索超参数或期限；下一步先补起息/到期证据，或论证独立的资金压力/风险控制任务，再决定是否登记新实验。[审查复核与新路线](../../docs/10_research_pivot.md)。原计划缺项与前瞻隔离保持不变。"
+                else f"按冻结规则停止这套特征／动作组合。沿原 PPO 成交路径加回成本后，2／1 lot 中位超额仍为 {f['fixed_path_cost_restored_median_bp']['2']:+.3f}／{f['fixed_path_cost_restored_median_bp']['1']:+.3f} bp，本轮标签预测门槛也失败；均不能外推为市场普遍无信号。不启动交易频率网格或恢复 PPO。资金公告的新操作信息审计已完成，但冻结的五日收益率预测增量亦未过门。不继续在这些窗口搜索超参数或期限；本轮合同审计取得部分余额披露和约定日历，仍不准入日频存量或政策意外特征。下一步先核对资金风险目标，再决定是否登记新实验。[当前数据决定](../../docs/12_funding_contract_audit.md)。原计划缺项与前瞻隔离保持不变。"
             ),
         ]
     )

@@ -505,5 +505,112 @@
       "economic_value_tested": false,
       "ppo_authorized": false
     }
+  },
+  "funding_contracts": {
+    "archived_articles": 283,
+    "mlf": {
+      "expected_months": 79,
+      "verified_months": 79,
+      "reference_period": [
+        "2018-11",
+        "2025-05"
+      ],
+      "cross_report_equal_amounts": 76,
+      "post_operation_not_month_end": 6,
+      "table_publications_before_calendar_month_end": 7,
+      "monthly_table_observations_available_by_scope_end": 78,
+      "advance_plans_in_scope": 3,
+      "monthly_release_lag_calendar_days": [
+        -7,
+        9
+      ],
+      "daily_actual_stock_verified": false,
+      "explicit_value_maturity_dates_verified": 0,
+      "availability": "Last published monthly observation only, with reference month and age. Post-operation reports have a different reference instant. Plans are not expectations or actual awards."
+    },
+    "treasury": {
+      "paired_contracts": 56,
+      "unique_value_dates": 53,
+      "contracts_in_scope": 46,
+      "unique_value_dates_in_scope": 43,
+      "plan_lead_calendar_days": [
+        3,
+        5
+      ],
+      "holiday_adjustment_clauses": 56,
+      "actual_cash_settlements_verified": 0,
+      "opening_stock_verified": false,
+      "by_year": {
+        "2018": 11,
+        "2019": 5,
+        "2020": 5,
+        "2021": 7,
+        "2022": 3,
+        "2023": 10,
+        "2024": 9,
+        "2025": 6
+      },
+      "availability": "Matched planned and awarded contractual dates; not proof of cash transfer. Contract issue sequences are contiguous within observed years; no all-government-liquidity coverage claim."
+    },
+    "outright": {
+      "monthly_reports": 8,
+      "advance_plans_in_scope": 0,
+      "advance_plans_outside_scope": 2,
+      "daily_actual_stock_verified": false,
+      "explicit_value_maturity_dates_verified": 0
+    },
+    "target": {
+      "expected_sessions": 1623,
+      "observed": {
+        "FDR001": 1619,
+        "FDR007": 1619,
+        "FR007": 1619
+      },
+      "missing_dates": {
+        "FDR001": [
+          "2018-12-30",
+          "2018-12-31",
+          "2022-12-31",
+          "2023-12-31"
+        ],
+        "FDR007": [
+          "2018-12-30",
+          "2018-12-31",
+          "2022-12-31",
+          "2023-12-31"
+        ],
+        "FR007": [
+          "2018-12-30",
+          "2018-12-31",
+          "2022-12-31",
+          "2023-12-31"
+        ]
+      },
+      "missing_columns": [
+        "DR001",
+        "DR007",
+        "R007"
+      ],
+      "scope_sha256": "c10b748093635aca19f5487e446a43658645c67ad6337c78a7a5ac5ca7de3e53",
+      "definition": "FDR/FR: morning fixing, not full-session volume-weighted DR/R. No target imputation. Provider APIs exist; their full historical coverage, units, release timestamps and access have not yet been audited."
+    },
+    "decision": {
+      "new_experiment_frozen": false,
+      "new_experiment_run": false,
+      "ppo_training_added": false,
+      "forward_period_accessed": false,
+      "recommended_task": "Funding-pressure / short-end liquidity-risk feasibility, before any prediction or portfolio claim.",
+      "admitted_components": [
+        "As-published monthly MLF balance observations, with reference month and age",
+        "Treasury planned and awarded contractual event dates, separated by publication time"
+      ],
+      "not_admitted": [
+        "Daily ordinary repo net injection or outstanding stock",
+        "Actual treasury cash transfers or complete starting balance",
+        "Continuous ex-ante market consensus or identified policy surprises",
+        "FDR relabeled as full-session DR"
+      ],
+      "next_step": "Audit actual DR001/DR007 and, if available, R007 target history, publication/vintage and units; independently reconcile cashflow rules and opening balances only if those features are proposed. Define one risk target and unseen evaluation allocation before any experiment. Do not tune old windows."
+    }
   }
 }

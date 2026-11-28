@@ -39,6 +39,11 @@ def main():
         st.json(facts["funding_audit"])
         st.caption("特殊现金开市日为 null；未核实起息/到期日，不构造净投放。2026 年前瞻期未使用。")
         st.image(str(REPORTS / "delivery_funding.png"))
+        st.subheader("合同与余额：部分信息可用，尚未启动新模型")
+        st.json(facts["funding_contracts"])
+        st.caption(
+            "MLF 月份余额不是每日存量；定存约定日期不是现金划转确认；FDR 不是全天加权 DR。先核对资金风险目标，不恢复 PPO。"
+        )
     elif page.startswith("基线"):
         st.subheader("同期间、同执行带、同账本")
         df = pd.read_csv(REPORTS / "unified_baselines.csv")
